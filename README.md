@@ -8,9 +8,9 @@ Built with Electrobun, Bun, React, TypeScript, Effect, and Tailwind CSS v4.
 
 ## Platform status
 
-The signed [0.2.0 release](RELEASE.md) targets macOS 14+ on arm64.
-Linux desktop behavior and mandatory Ubuntu native CI are implemented in source; actual Linux execution is not yet verified.
-Windows has a packaging command only; its runtime port remains out of scope.
+macOS builds target macOS 14+ on arm64; development builds and native lifecycle checks have passed locally.
+Linux desktop behavior and an Ubuntu native CI job are implemented in source; native Linux execution remains unverified.
+Windows provides experimental packaging commands only; its runtime remains unsupported.
 
 ## Use
 
@@ -161,4 +161,4 @@ bun run test:e2e && bun run test:components && bun run test:unit
 ```
 
 Browser tests require Google Chrome and use synthetic servers, not real Bear notes.
-See [test details](tests/README.md) and [release results](RELEASE.md).
+See [test details](tests/README.md) for coverage and verification limits.
