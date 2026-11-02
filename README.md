@@ -9,8 +9,8 @@ Built with Electrobun, Bun, React, TypeScript, Effect, and Tailwind CSS v4.
 ## Platform status
 
 macOS builds target macOS 14+ on arm64; development builds and native lifecycle checks have passed locally.
-Linux desktop behavior and an Ubuntu native CI job are implemented in source; native Linux execution remains unverified.
-Windows provides experimental packaging commands only; its runtime remains unsupported.
+Linux desktop behavior and an Ubuntu native CI job are implemented in source, but native Linux execution and a hosted CI run remain unverified.
+Windows provides experimental packaging commands only; its runtime remains unsupported, and storage security and descendant cleanup are not ported or bypassed.
 
 ## Use
 
@@ -27,9 +27,21 @@ Use `127.0.0.1` for access from this Mac only.
 **Mounted** means the route is ready; backends connect when clients use them.
 
 **Cmd+W** closes the window without stopping the gateway; **Cmd+Q** stops the listener and owned backends, then exits.
-On Linux, closing minimizes to a reachable taskbar entry, retaining the gateway and Logs without a tray extension.
+On Linux, closing minimizes to a reachable taskbar entry and keeps the gateway and Logs running without a tray extension.
 Use the visible **Quit MCP Gateway** button to stop the app; Linux application-menu shortcuts are unavailable.
 The macOS-only Bear preset permits all accessible notes and tools, including writes; encrypted notes remain subject to Bear's restrictions.
+
+### Startup and logs
+
+**Launch app at login** opens the macOS menu-bar app in the background; automatic registration is unavailable on Linux.
+**Start gateway when the app opens** independently enables automatic exposure.
+Both are off by default; apply login changes through the UI, not just the configuration file.
+On macOS, keep the app in a stable location before enabling login startup; approval may be required under **System Settings > General > Login Items**.
+
+**Logs** stay in memory: closing the window keeps them, and quitting discards them.
+Retention is limited to 500 entries / 4 MiB, with 32 KiB per entry.
+Logs are not saved automatically or exposed over the LAN.
+Dismissing a banner does not resolve the underlying failure; a new occurrence can appear again.
 
 ## Security
 
@@ -50,8 +62,7 @@ An absolute `MCP_GATEWAY_DATA_DIR` overrides either location.
 - `.json` requires strict JSON; `.jsonc` accepts comments and trailing commas.
 - Both files present is an error; when neither exists, the app creates `mcp.json`.
 - Quit before renaming the file, then reopen the app.
-- UI edits preserve retained comments and unchanged saves preserve bytes.
-- Files are owner-only; symlinks are refused and invalid external edits stop the gateway.
+- UI edits preserve retained comments and unchanged saves preserve bytes; files are owner-only, symlinks are refused, and invalid external edits stop the gateway.
 
 ```json
 {
@@ -84,22 +95,6 @@ Tokens require 32 to 512 non-space printable ASCII characters; configuration is 
 If a crash leaves `mcp.json.lock`, quit every instance and confirm no writer is active before removing it.
 After repairing invalid configuration, start the gateway explicitly.
 
-## Startup
-
-- **Launch app at login:** opens the macOS menu-bar app in the background; automatic registration is explicitly unavailable on Linux.
-- **Start gateway when the app opens:** independently enables automatic exposure.
-
-Both are off by default.
-Apply login changes through the UI, not just the configuration file; macOS may require approval under **System Settings > General > Login Items**.
-Keep the app in a stable location before enabling login startup.
-
-## Logs and notifications
-
-**Logs**, below Settings, supports level/server/text filtering and clearing.
-History stays in memory: closing the window keeps it; quitting discards it.
-Retention is limited to 500 entries / 4 MiB, with 32 KiB per entry; logs are not automatically saved or exposed over the LAN.
-Dismissing a banner does not fix or clear the underlying failure; a new occurrence can appear again.
-
 ## Build from source
 
 Install Bun 1.4.4 and Node, then install dependencies:
@@ -108,23 +103,29 @@ Install Bun 1.4.4 and Node, then install dependencies:
 bun install --ignore-scripts --cache-dir .cache/bun
 ```
 
+Use `MCP_GATEWAY_BUILD_ROOT` to select a project-relative output folder.
+`dist/` holds generated UI, `build/` holds app bundles, and `artifacts/` holds distributions and verification files.
+
 ### macOS builds
 
-Requires an arm64 Mac and Apple's Command Line Tools.
-SDK preparation and UI compilation are automatic.
+Requires an arm64 Mac and Apple's Command Line Tools; SDK preparation and UI compilation are automatic.
 
 ```sh
 bun run build  # Development package
 bun run dev    # Build and launch
 ```
 
+<details>
+<summary>Release signing and notarization</summary>
+
 `bun run release` signs and notarizes the app.
 It requires a Developer ID Application identity in Keychain and `APPLE_ID`, `APPLE_TEAM_ID`, and `APPLE_APP_PASSWORD`.
 Export them or use a local `.env` based on `.env.example`; exported values take precedence.
 Never commit credentials.
-Use `MCP_GATEWAY_BUILD_ROOT` to select a project-relative output folder.
 
-### Linux source builds
+</details>
+
+### Linux source builds (experimental, native)
 
 Build natively on Linux x64 or arm64, with GTK3, WebKitGTK 4.1, Ayatana AppIndicator, librsvg, and an X11/XWayland desktop.
 
@@ -135,24 +136,13 @@ bun run build:linux   # Experimental unsigned stable packaging
 
 The development launcher is `build/dev-linux-x64/MCPGateway-dev/bin/launcher` (substitute arm64 when applicable).
 No Apple credentials or macOS login library are used on Linux.
-Native Linux execution, Wayland/XWayland desktops, tray interaction, and installed packages remain unverified pending a native run.
-CI checks the development bundle under isolated Xvfb, DBus, and Openbox without disabling the WebKit sandbox.
 
 ### Windows packaging only
 
 `bun run build:windows` selects experimental unsigned stable packaging on Windows x64 or arm64.
-The Windows runtime remains explicitly unsupported; storage security and descendant cleanup are not ported or bypassed.
 See [platform prerequisites](https://docs.electrobun.dev/electrobun/guides/cross-platform-development/) for native libraries and WebView2 requirements.
 
-### Generated directories
-
-`dist/` holds generated UI, `build/` holds app bundles, and `artifacts/` holds distributions and verification files.
-Keep `dist/` ignored at the project root; Vite clears its contents, including a nested `.gitignore`.
-
 ### Tests
-
-[GitHub Actions](.github/workflows/test.yml) requires these checks plus a development build and native WebKitGTK smoke on Ubuntu 24.04 x64 for pushes, pull requests, and manual runs.
-Hosted execution has not yet been performed.
 
 ```sh
 bun run prepare:sdk
@@ -161,4 +151,4 @@ bun run test:e2e && bun run test:components && bun run test:unit
 ```
 
 Browser tests require Google Chrome and use synthetic servers, not real Bear notes.
-See [test details](tests/README.md) for coverage and verification limits.
+See [test details](tests/README.md) for test layers, native smoke, CI, and verification limits.
