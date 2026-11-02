@@ -1,21 +1,33 @@
 import { randomUUID } from "node:crypto";
-import { createServer, type IncomingHttpHeaders } from "node:http";
+import { createServer, type IncomingHttpHeaders, type ServerResponse } from "node:http";
 import type { Socket } from "node:net";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 
-export async function httpFixture(options: { modernDiscovery?: "json" | "sse" } = {}): Promise<{
+export async function httpFixture(
+  options: {
+    modernDiscovery?: "json" | "sse";
+    modernStream?: {
+      newline: "\n" | "\r\n" | "\r";
+      splitBytes?: boolean;
+      fault?: "invalid-json" | "invalid-message" | "unterminated";
+      holdOpen?: boolean;
+    };
+  } = {},
+): Promise<{
   url: string;
   token: string;
   receivedAuthorization: string[];
   receivedHeaders: IncomingHttpHeaders[];
   sessionCount(): number;
+  activeReplyCount(): number;
   close(): Promise<void>;
 }> {
   const sessions = new Map<string, StreamableHTTPServerTransport>();
   const transports = new Set<StreamableHTTPServerTransport>();
   const sockets = new Set<Socket>();
+  const replies = new Set<ServerResponse>();
   const token = "synthetic-upstream-only-credential";
   const receivedAuthorization: string[] = [];
   const receivedHeaders: IncomingHttpHeaders[] = [];
@@ -66,6 +78,33 @@ export async function httpFixture(options: { modernDiscovery?: "json" | "sse" } 
             .map((line) => `data: ${line}`)
             .join("\n")}\n\n`,
         );
+      } else if (message.method !== "server/discover" && options.modernStream) {
+        const { newline, splitBytes, holdOpen } = options.modernStream;
+        const fault = message.method === "tools/call" ? options.modernStream.fault : undefined;
+        const payload =
+          fault === "invalid-json"
+            ? "{synthetic-private-stream-value"
+            : JSON.stringify(
+                fault === "invalid-message" ? { private: "synthetic-private-stream-value" } : reply,
+                null,
+                2,
+              );
+        const frame = `\uFEFF: keepalive${newline}id: priming${newline}data${newline}${newline}data:${newline}${newline}${payload
+          .split("\n")
+          .map((line) => `data: ${line}`)
+          .join(newline)}${newline}${fault === "unterminated" ? "" : newline}`;
+        replies.add(res);
+        res.once("close", () => replies.delete(res));
+        res.writeHead(200, { "Content-Type": "text/event-stream" });
+        const bytes = Buffer.from(frame);
+        if (splitBytes) {
+          for (const byte of bytes) {
+            if (res.destroyed) return;
+            res.write(Buffer.from([byte]));
+            await new Promise((resolve) => setTimeout(resolve, 1));
+          }
+        } else res.write(bytes);
+        if (!holdOpen) res.end();
       } else {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(reply));
@@ -129,6 +168,7 @@ export async function httpFixture(options: { modernDiscovery?: "json" | "sse" } 
     receivedAuthorization,
     receivedHeaders,
     sessionCount: () => sessions.size,
+    activeReplyCount: () => replies.size,
     close: async () => {
       await Promise.all([...transports].map((transport) => transport.close()));
       for (const socket of sockets) socket.destroy();

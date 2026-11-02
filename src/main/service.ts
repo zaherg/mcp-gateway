@@ -77,29 +77,46 @@ export class AppService {
     };
   }
 
-  private run<A>(work: () => Promise<A> | A): Promise<AppResult<A>> {
-    const effect = this.semaphore.withPermits(1)(
-      Effect.tryPromise({ try: async () => work(), catch: (error) => error }),
+  /** Map any failure to a sanitized local RPC result, never to a raw request. */
+  private reply<A>(result: { ok: true; value: A } | { ok: false; error: unknown }): AppResult<A> {
+    if (result.ok) return { ok: true, value: result.value };
+    const error = result.error;
+    if (!(error instanceof GatewayError) && !(error instanceof RequestError))
+      this.controller.recordLocalError(error);
+    return {
+      ok: false,
+      error: {
+        occurrenceId:
+          error instanceof GatewayError ? error.occurrenceId : `request-${++requestSequence}`,
+        ...(error instanceof GatewayError || error instanceof RequestError
+          ? { code: error.code, message: error.message }
+          : {
+              code: "OperationFailed",
+              message: "The application operation failed. Open Logs for details.",
+            }),
+      },
+    };
+  }
+
+  private settle<A>(work: () => Promise<A> | A, serialized: boolean): Promise<AppResult<A>> {
+    const attempt = Effect.tryPromise({ try: async () => work(), catch: (error) => error });
+    const effect = serialized ? this.semaphore.withPermits(1)(attempt) : attempt;
+    return Effect.runPromise(Effect.result(effect)).then((result) =>
+      Result.isSuccess(result)
+        ? this.reply({ ok: true, value: result.success })
+        : this.reply({ ok: false, error: result.failure }),
     );
-    return Effect.runPromise(Effect.result(effect)).then((result) => {
-      if (Result.isSuccess(result)) return { ok: true, value: result.success };
-      const error = result.failure;
-      if (!(error instanceof GatewayError) && !(error instanceof RequestError))
-        this.controller.recordLocalError(error);
-      return {
-        ok: false,
-        error: {
-          occurrenceId:
-            error instanceof GatewayError ? error.occurrenceId : `request-${++requestSequence}`,
-          ...(error instanceof GatewayError || error instanceof RequestError
-            ? { code: error.code, message: error.message }
-            : {
-                code: "OperationFailed",
-                message: "The application operation failed. Open Logs for details.",
-              }),
-        },
-      };
-    });
+  }
+
+  private run<A>(work: () => Promise<A> | A): Promise<AppResult<A>> {
+    return this.settle(work, true);
+  }
+
+  // Stop, Quit and lifecycle status must not wait behind a configuration
+  // operation whose validation a Stop or Quit is meant to cancel. Each still
+  // validates its own parameters before it can cancel anything.
+  private lifecycle<A>(work: () => Promise<A> | A): Promise<AppResult<A>> {
+    return this.settle(work, false);
   }
 
   readonly handlers = {
@@ -128,36 +145,43 @@ export class AppService {
         return this.snapshot();
       }),
     quit: (input?: unknown) =>
-      this.run(() => {
+      this.lifecycle(() => {
         empty(input);
         const status = this.desktop.requestQuit();
         // The accepted attempt identifies later failures, not completed cleanup.
         return { requested: true as const, status };
       }),
     quitStatus: (input?: unknown) =>
-      this.run(() => {
+      this.lifecycle(() => {
         empty(input);
         return this.desktop.quitStatus();
       }),
-    start: (input?: unknown) =>
-      this.run(async () => {
+    start: (input?: unknown) => {
+      // Capture cancellation ownership before this request waits for the
+      // service queue; a Stop that arrives meanwhile must cancel it.
+      const operation = this.controller.operation();
+      return this.run(async () => {
         empty(input);
-        await this.controller.start();
+        await this.controller.start(operation);
         return this.snapshot();
-      }),
+      });
+    },
     stop: (input?: unknown) =>
-      this.run(async () => {
+      this.lifecycle(async () => {
         empty(input);
         await this.controller.stop();
         return this.snapshot();
       }),
-    restartServer: (input: unknown) =>
-      this.run(async () => {
-        await this.controller.restartServer(serverName(input));
+    restartServer: (input: unknown) => {
+      const operation = this.controller.operation();
+      return this.run(async () => {
+        await this.controller.restartServer(serverName(input), operation);
         return this.snapshot();
-      }),
-    saveConfig: (input: unknown) =>
-      this.run(async () => {
+      });
+    },
+    saveConfig: (input: unknown) => {
+      const operation = this.controller.operation();
+      return this.run(async () => {
         if (this.desktop.quitStatus().phase !== "idle")
           throw new RequestError("Quit cleanup has started. Retry Quit to close the app.");
         const { text, expectedRevision } = decode(SaveRequest, input);
@@ -167,7 +191,10 @@ export class AppService {
         const config = parseConfig(text, process.env, previous.configFormat);
         // Persist first: a stale/invalid save must never mutate macOS registration.
         // OS registration is a separate, observable result, not an atomic file operation.
-        await this.controller.saveConfig(text, expectedRevision);
+        await this.controller.saveConfig(text, expectedRevision, operation);
+        // Quit cleanup may have begun while this save waited; do not touch a
+        // login library that native cleanup may already have released.
+        if (this.desktop.quitStatus().phase !== "idle") return this.snapshot();
         let previousLogin = false;
         try {
           previousLogin =
@@ -181,7 +208,8 @@ export class AppService {
         if (wanted !== previousLogin || needsLoginRetry(actual, wanted))
           this.login.setEnabled(wanted);
         return this.snapshot();
-      }),
+      });
+    },
     copyEndpoint: (input: unknown) =>
       this.run(() => {
         const name = serverName(input);

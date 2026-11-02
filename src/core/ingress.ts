@@ -4,10 +4,11 @@ import type { Socket } from "node:net";
 import type { StatefulMount } from "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js";
 import type { GatewayConfig, InterfaceChoice, ServerSnapshot, VisibleError } from "../shared/types";
 import { backendSummary, closeMount, createMount } from "./adapter";
+import { BackendCalls, MAX_BACKEND_CALLS } from "./backend-work";
 import { isHttpServer, serverFingerprint } from "./config";
 import { failure, visible } from "./errors";
 import { LogBuffer } from "./logs";
-import { peerAllowed, rejectSelfProxy, selectInterface } from "./network";
+import { peerAllowed, rejectSelfProxy, type SelfProxyOptions, selectInterface } from "./network";
 import { ResourceAdmission } from "./resource-admission";
 
 export const MAX_BODY_BYTES = 4 * 1024 * 1024;
@@ -30,6 +31,8 @@ export class GatewayIngress {
   private readonly backendErrors = new Map<string, VisibleError>();
   private readonly closingMounts = new Map<string, StatefulMount>();
   private readonly admission = new ResourceAdmission(MAX_SESSIONS);
+  // One backend-work budget shared by every endpoint and session.
+  private readonly work = new BackendCalls(MAX_BACKEND_CALLS);
   private selected: InterfaceChoice;
   private activeRequests = 0;
   private rateStart = Date.now();
@@ -72,11 +75,12 @@ export class GatewayIngress {
     config: GatewayConfig,
     report: (error: VisibleError) => void,
     logs = new LogBuffer(),
+    control?: SelfProxyOptions,
   ): Promise<GatewayIngress> {
-    await rejectSelfProxy(config);
+    await rejectSelfProxy(config, control);
     const ingress = new GatewayIngress(config, report, logs);
     try {
-      await ingress.reconcile(config);
+      await ingress.reconcile(config, control);
       await new Promise<void>((resolve, reject) => {
         const failed = (error: Error) =>
           reject(
@@ -137,8 +141,8 @@ export class GatewayIngress {
     });
   }
 
-  async reconcile(config: GatewayConfig): Promise<void> {
-    await rejectSelfProxy(config);
+  async reconcile(config: GatewayConfig, control?: SelfProxyOptions): Promise<void> {
+    await rejectSelfProxy(config, control);
     if (this.closed) throw failure("Closed", "The listener is closed.");
     this.config = config;
     await Promise.all([...this.closingMounts.keys()].map((name) => this.remove(name)));
@@ -163,6 +167,7 @@ export class GatewayIngress {
           this.report(error);
         },
         this.admission,
+        this.work,
         this.logs,
       );
       this.endpoints.set(name, {
@@ -173,12 +178,12 @@ export class GatewayIngress {
     }
   }
 
-  async restart(name: string): Promise<void> {
+  async restart(name: string, control?: SelfProxyOptions): Promise<void> {
     const server = this.config.mcpServers[name];
     if (!Object.hasOwn(this.config.mcpServers, name) || !server || server.disabled)
       throw failure("BackendFailure", "Select an enabled configured server to restart.");
     await this.remove(name);
-    await this.reconcile(this.config);
+    await this.reconcile(this.config, control);
   }
 
   private async remove(name: string): Promise<void> {

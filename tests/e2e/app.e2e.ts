@@ -631,6 +631,191 @@ test("dismissed local bind failure does not return as a polled banner; a new ide
   await expect(banner).toHaveCount(1);
 });
 
+test("Quit freezes settings and raw drafts while keeping keyboard copy, Logs and retry available", async ({
+  page,
+  bridge,
+}) => {
+  await page.goto(`${bridge.url}/#${bridge.secret}`);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByLabel("Port", { exact: true }).fill(String(bridge.port));
+  await page.getByRole("button", { name: /Authoritative configuration/ }).click();
+  const raw = page.getByLabel("mcp.json", { exact: true });
+  const draft = await raw.inputValue();
+  const before = await bridge.control("inspect");
+  await bridge.control("quit-hold");
+  await bridge.control("quit-fail-once");
+  await page.getByRole("button", { name: "Quit MCP Gateway" }).click();
+  await page.getByRole("button", { name: "Discard changes and quit" }).click();
+  await expect(page.getByRole("button", { name: "Quitting…" })).toBeDisabled();
+  for (const phase of ["pending", "failed"]) {
+    if (phase === "failed") {
+      await bridge.control("quit-release");
+      await expect(page.getByRole("button", { name: "Retry Quit" })).toBeEnabled();
+    }
+    for (const label of ["Interface / address", "Port", "Bearer token", "mcp.json"]) {
+      await expect(page.getByLabel(label, { exact: true })).toHaveAttribute("readonly", "");
+      await expect(page.getByLabel(label, { exact: true })).toBeEnabled();
+    }
+    await expect(page.getByRole("button", { name: "Generate secure token" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Save changes" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Discard", exact: true })).toBeDisabled();
+    await expect(page.getByRole("switch", { name: /Launch app at login/ })).toBeDisabled();
+    await expect(page.getByRole("switch", { name: /Start gateway when/ })).toBeDisabled();
+    await raw.focus();
+    await page.keyboard.press("ControlOrMeta+A");
+    // Capture the browser copy event without replacing the user's system clipboard.
+    await raw.evaluate((field) => {
+      if (!(field instanceof HTMLTextAreaElement)) throw new Error("Expected draft textarea");
+      field.addEventListener(
+        "copy",
+        (event) => {
+          event.preventDefault();
+          field.dataset.copied = field.value.slice(field.selectionStart, field.selectionEnd);
+        },
+        { once: true },
+      );
+    });
+    await page.keyboard.press("ControlOrMeta+C");
+    await expect(raw).toHaveAttribute("data-copied", draft);
+    await page.keyboard.type("unsavable edit");
+    await expect(raw).toHaveValue(draft);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: `.cache/review-f1-f3/${phase}-settings-desktop.png` });
+    await page.setViewportSize({ width: 390, height: 650 });
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: `.cache/review-f1-f3/${phase}-settings-mobile.png` });
+    await raw.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: `.cache/review-f1-f3/${phase}-draft-mobile.png` });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.getByRole("button", { name: "Logs", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Clear logs" })).toBeEnabled();
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+  }
+  expect((await bridge.control("inspect")).snapshot.configText).toBe(before.snapshot.configText);
+  const retry = page.getByRole("button", { name: "Retry Quit" });
+  await retry.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("button", { name: "Quitting…" })).toBeDisabled();
+  await expect(page.getByRole("dialog")).not.toBeVisible();
+});
+
+test("lost Quit acknowledgement and unavailable status never unlock unsavable settings", async ({
+  page,
+  bridge,
+}) => {
+  await page.goto(`${bridge.url}/#${bridge.secret}`);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const port = page.getByLabel("Port", { exact: true });
+  await expect(port).not.toHaveAttribute("readonly", "");
+  const saved = await port.inputValue();
+  await bridge.control("quit-hold");
+  let unavailable = true;
+  await page.route("**/rpc/quitStatus", (route) =>
+    unavailable ? route.abort("failed") : route.continue(),
+  );
+  await page.route("**/rpc/quit", async (route) => {
+    const accepted = await route.fetch();
+    expect((await accepted.json()).value.status.phase).toBe("pending");
+    await route.abort("failed");
+  });
+  await page.getByRole("button", { name: "Quit MCP Gateway" }).click();
+  await expect(
+    page.getByText("Could not request Quit. Check application status before retrying."),
+  ).toBeVisible();
+  await expect(port).toHaveAttribute("readonly", "");
+  await expect(
+    page.getByText("Could not read Quit status. Cleanup completion is unknown."),
+  ).toBeVisible();
+  await expect(port).toHaveAttribute("readonly", "");
+  await port.focus();
+  await page.keyboard.press("ControlOrMeta+A");
+  await page.keyboard.type("9999");
+  await expect(port).toHaveValue(saved);
+  await expect(page.getByRole("button", { name: "Generate secure token" })).toBeDisabled();
+  unavailable = false;
+  await expect(page.getByRole("button", { name: "Quitting…" })).toBeDisabled();
+  await expect(port).toHaveAttribute("readonly", "");
+  await bridge.control("quit-release");
+});
+
+for (const action of ["add", "edit", "delete"] as const) {
+  test(`native Quit locks an open ${action} dialog and restores focus to draft recovery`, async ({
+    page,
+    bridge,
+  }) => {
+    await page.goto(`${bridge.url}/#${bridge.secret}`);
+    await page.getByRole("button", { name: /Authoritative configuration/ }).click();
+    const raw = page.getByLabel("mcp.json", { exact: true });
+    const config = JSON.parse(await raw.inputValue());
+    config.mcpServers.existing = { url: bridge.upstream.url };
+    await raw.fill(JSON.stringify(config));
+    await save(page);
+    const saved = await raw.inputValue();
+    const opener = page.getByRole("button", {
+      name: action === "add" ? "Add server" : action === "edit" ? "Edit server" : "Delete existing",
+      exact: true,
+    });
+    await opener.click();
+    if (action !== "delete")
+      await page.getByLabel("Server name", { exact: false }).fill("retained");
+    await bridge.control("quit-hold");
+    await bridge.control("quit-fail-once");
+    await bridge.control("native-quit");
+    const apply = page.getByRole("button", {
+      name: action === "delete" ? "Delete server" : "Apply to draft",
+      exact: true,
+    });
+    await expect(apply).toBeDisabled();
+    if (action !== "delete") {
+      const name = page.getByLabel("Server name", { exact: false });
+      await expect(name).toHaveAttribute("readonly", "");
+      await name.focus();
+      await page.keyboard.press("ControlOrMeta+A");
+      await page.keyboard.type("unsavable edit");
+      await expect(name).toHaveValue("retained");
+      await expect(page.getByLabel("Transport", { exact: true })).toBeDisabled();
+      await expect(page.getByLabel("Disabled (do not mount this endpoint)")).toBeDisabled();
+    }
+    await bridge.control("quit-release");
+    await expect(page.locator("[data-action=quit]")).toHaveText("Retry Quit");
+    await expect(page.locator("[data-action=quit]")).toBeDisabled();
+    await expect(apply).toBeDisabled();
+    await page.screenshot({ path: `.cache/review-f1-f3/${action}-dialog-desktop.png` });
+    await page.setViewportSize({ width: 390, height: 650 });
+    await page.screenshot({ path: `.cache/review-f1-f3/${action}-dialog-mobile.png` });
+    const cancel = page.getByRole("button", { name: "Cancel", exact: true });
+    await cancel.focus();
+    await expect(cancel).toBeFocused();
+    // Native Chrome dialogs can Tab into browser chrome at the end; test in-dialog order instead.
+    await page.keyboard.press("Shift+Tab");
+    await expect(
+      action === "add"
+        ? page.getByLabel("Working directory", { exact: true })
+        : action === "edit"
+          ? page.getByLabel("Headers (JSON object)", { exact: true })
+          : page.getByRole("button", { name: "Close dialog" }),
+    ).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(cancel).toBeFocused();
+    await cancel.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: `.cache/review-f1-f3/${action}-dialog-actions-mobile.png` });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).not.toBeVisible();
+    await expect(page.getByRole("button", { name: /Authoritative configuration/ })).toBeFocused();
+    await expect(raw).toHaveValue(saved);
+    await expect(raw).toHaveAttribute("readonly", "");
+    await expect(opener).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Retry Quit" })).toBeEnabled();
+    expect((await bridge.control("inspect")).snapshot.configText).toBe(saved);
+  });
+}
+
 test.describe("Linux desktop controls", () => {
   test.use({ scenario: "linux" });
   test("unavailable login, independent autoStart, dirty Quit cancel/focus and validated local Quit", async ({

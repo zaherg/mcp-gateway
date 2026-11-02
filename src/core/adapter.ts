@@ -1,7 +1,15 @@
 import { spawn } from "node:child_process";
 import { constants } from "node:os";
 import type { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import {
+  isJSONRPCRequest,
+  JSONRPCErrorResponseSchema,
+  type JSONRPCMessage,
+  JSONRPCMessageSchema,
+  JSONRPCResultResponseSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 import cors from "cors";
+import { createParser } from "eventsource-parser";
 import express from "express";
 import { StatefulSession } from "supergateway/dist/gateways/statefulSession.js";
 import { StatefulSessions } from "supergateway/dist/gateways/statefulSessions.js";
@@ -10,6 +18,9 @@ import type {
   GatewayLogger,
   GatewayRequest,
   GatewayResponse,
+  Peer,
+  PeerFactory,
+  PeerOwner,
   Source,
   StatefulMount,
 } from "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js";
@@ -36,6 +47,15 @@ import { streamableHttpApp } from "supergateway/dist/lib/streamableHttpApp.js";
 import { UpstreamModernChild } from "supergateway/dist/lib/upstreamModernChild.js";
 import type { LogLevel } from "../shared/logs";
 import type { HttpServerConfig, StdioServerConfig } from "../shared/types";
+import {
+  BACKEND_CAPACITY_ERROR,
+  BACKEND_ID_EXHAUSTED_ERROR,
+  type BackendCalls,
+  BackendWireIds,
+  DUPLICATE_REQUEST_ERROR,
+  releaseAfterCleanup,
+  type WorkOwner,
+} from "./backend-work";
 import { isHttpServer } from "./config";
 import { UpstreamDiscovery } from "./discovery";
 import { failure } from "./errors";
@@ -47,14 +67,25 @@ export const SHUTDOWN_MS = 8_000;
 
 class CapacityError extends Error {}
 
+// A fixed, payload-free local diagnostic for a legacy backend line that parsed
+// as JSON but is not a valid terminal response envelope.
+const MALFORMED_LEGACY_RESPONSE = "Legacy backend response envelope was malformed.";
+const DUPLICATE_DROPPED = "Duplicate in-flight legacy request was dropped.";
+
 // Unlike an HTTP response, these ownership callbacks settle after Supergateway's
 // process-group termination or upstream session cleanup. Keep failed cleanup charged.
-function leasedOwner(children: OwnedChildProcesses, lease: ResourceLease): ChildrenOwner {
+function leasedOwner(
+  children: OwnedChildProcesses,
+  lease: ResourceLease,
+  confirm?: () => void,
+): ChildrenOwner {
   const track = (stop: () => Promise<void>) =>
-    children.track(async () => {
-      await stop();
-      lease.release();
-    });
+    children.track(() =>
+      releaseAfterCleanup(stop(), () => {
+        lease.release();
+        confirm?.();
+      }),
+    );
   return {
     get closing() {
       return children.closing;
@@ -69,6 +100,165 @@ function leasedOwner(children: OwnedChildProcesses, lease: ResourceLease): Child
   };
 }
 
+// A session's validated client messages reach the backend exactly here, after
+// the session transport has accepted them. Client ids are not forwarded: each
+// admitted request gets the next backend-facing wire id, so a late reply for a
+// cancelled or reused client id cannot match newer work. Only active mappings
+// are retained and wire ids are never reused within this peer. Server-originated
+// requests, client responses to them, progress tokens and payload data pass
+// through untouched.
+function admitPeer(
+  factory: PeerFactory,
+  owner: PeerOwner,
+  work: WorkOwner,
+  wires: BackendWireIds,
+  calls: BackendCalls,
+  localFailure: (error: unknown) => void,
+): Peer {
+  // A refusal answers a request the session already recorded in
+  // pendingRequests/progressOf. Delivering the error through the inherited
+  // owner.message settlement path clears that bookkeeping; a raw transport.send
+  // leaks retained IDs and breaks later server-originated routing.
+  const refuse = (id: string | number, error: { code: number; message: string }) => {
+    const response = { jsonrpc: "2.0" as const, id, error };
+    owner.message(response, JSON.stringify(response));
+  };
+  const peer = factory({
+    ...owner,
+    message: (message, line) => {
+      const raw: unknown = message;
+      if (typeof raw !== "object" || raw === null) {
+        localFailure(MALFORMED_LEGACY_RESPONSE);
+        return;
+      }
+      if ("method" in message) {
+        owner.message(message, line);
+        return;
+      }
+      const valid =
+        JSONRPCResultResponseSchema.safeParse(raw).success ||
+        JSONRPCErrorResponseSchema.safeParse(raw).success;
+      if (!valid) {
+        // Not a terminal response: keep its wire mapping and work reservation.
+        localFailure(MALFORMED_LEGACY_RESPONSE);
+        return;
+      }
+      if (!("id" in raw) || typeof raw.id !== "number") return;
+      const original = wires.take(raw.id);
+      // A valid late or otherwise unmapped reply is not delivered.
+      if (original === undefined) return;
+      calls.settle(work, original);
+      const translated = { ...raw, id: original };
+      owner.message(translated as JSONRPCMessage, JSON.stringify(translated));
+    },
+  });
+  return {
+    write: (message) => {
+      if (!("method" in message)) {
+        // A client's response to a server-originated request.
+        peer.write(message);
+        return;
+      }
+      const id = "id" in message ? message.id : undefined;
+      if (typeof id === "string" || typeof id === "number") {
+        if (wires.holds(id)) {
+          // The pre-transport gate refuses duplicates. If one still reaches this
+          // peer, drop it without settling the original request's bookkeeping.
+          localFailure(DUPLICATE_DROPPED);
+          return;
+        }
+        if (!calls.admit(work, id)) {
+          refuse(id, BACKEND_CAPACITY_ERROR);
+          return;
+        }
+        const wire = wires.register(id);
+        if (wire === undefined) {
+          calls.settle(work, id);
+          refuse(id, BACKEND_ID_EXHAUSTED_ERROR);
+          return;
+        }
+        try {
+          peer.write({ ...message, id: wire });
+        } catch (error) {
+          wires.release(id);
+          calls.settle(work, id);
+          throw error;
+        }
+        return;
+      }
+      if (message.method === "notifications/cancelled") {
+        const requestId = (message.params as { requestId?: unknown } | undefined)?.requestId;
+        if (typeof requestId === "string" || typeof requestId === "number") {
+          const wire = wires.wireOf(requestId);
+          // An id this peer never forwarded has nothing to cancel; forwarding it
+          // unchanged could cancel a different wire id.
+          if (wire === undefined) return;
+          try {
+            peer.write({ ...message, params: { ...message.params, requestId: wire } });
+          } catch (error) {
+            // A failed forward keeps its mapping and work charged for cleanup.
+            localFailure(error);
+            return;
+          }
+          wires.release(requestId);
+          calls.settle(work, requestId);
+          return;
+        }
+      }
+      peer.write(message);
+    },
+    end: () => peer.end(),
+    stop: () => peer.stop(),
+    get gone() {
+      return peer.gone;
+    },
+  };
+}
+
+// A complete single or legacy batch body, using the installed SDK schema.
+// Undefined means malformed: the inherited SDK path owns that error response.
+function legacyMessages(body: unknown): JSONRPCMessage[] | undefined {
+  const items = Array.isArray(body) ? body : [body];
+  const messages: JSONRPCMessage[] = [];
+  for (const item of items) {
+    const parsed = JSONRPCMessageSchema.safeParse(item);
+    if (!parsed.success) return undefined;
+    messages.push(parsed.data);
+  }
+  return messages;
+}
+
+// Only requests consume in-dispatch claims; notifications and client responses
+// to server-originated requests do not.
+function legacyRequestIds(messages: readonly JSONRPCMessage[]): (string | number)[] {
+  return messages.filter(isJSONRPCRequest).map((message) => message.id);
+}
+
+// Only the owned close promise proves that backend work ended.
+function cleanupConfirmed(child: ModernChild): boolean {
+  return "cleanedUp" in child && child.cleanedUp === true;
+}
+
+type ModernSend = Parameters<PerRequestHTTPServerTransport["send"]>;
+
+// A per-request modern transport that reports its terminal reply. Only a
+// message for this request's own id ends its work; progress, unrelated late
+// replies and server-originated messages do not.
+class WorkTransport extends PerRequestHTTPServerTransport {
+  private readonly replied: (message: ModernSend[0]) => void;
+  constructor(
+    options: ConstructorParameters<typeof PerRequestHTTPServerTransport>[0],
+    replied: (message: ModernSend[0]) => void,
+  ) {
+    super(options);
+    this.replied = replied;
+  }
+  override async send(message: ModernSend[0], options?: ModernSend[1]): Promise<void> {
+    if (!("method" in message) && "id" in message) this.replied(message);
+    await super.send(message, options);
+  }
+}
+
 // Coupled to Supergateway 4.2.1's exported lifecycle primitives, not its CLI.
 // Protocol dispatch, validation, opaque continuations and transports stay upstream.
 // The command object takes childCommand.js's shell:false argument-array branch.
@@ -77,6 +267,7 @@ export function createMount(
   server: StdioServerConfig | HttpServerConfig,
   onDiagnostic: (summary: string) => void,
   admission: ResourceAdmission,
+  calls: BackendCalls,
   logs = new LogBuffer(),
 ): StatefulMount {
   const discard = (..._args: unknown[]) => {};
@@ -109,6 +300,10 @@ export function createMount(
         },
       };
   const children = new OwnedChildProcesses(logger);
+  // Local send failures are not backend diagnostics; keep them out of the
+  // backend status while retaining the observation in app-local Logs.
+  const localFailure = (error: unknown) =>
+    logs.append({ server: name, level: "error", source: "logger" }, [error]);
   const reserve = () => {
     if (children.closing) throw failure("Closed", "The backend is closing.");
     const lease = admission.acquire();
@@ -117,6 +312,26 @@ export function createMount(
   };
 
   class LeasedSessions extends StatefulSessions {
+    private readonly sessionWires = new WeakMap<StreamableHTTPServerTransport, BackendWireIds>();
+    private readonly dispatching = new WeakMap<
+      StreamableHTTPServerTransport,
+      Set<string | number>
+    >();
+
+    wireIdsOf(transport: StreamableHTTPServerTransport): BackendWireIds | undefined {
+      return this.sessionWires.get(transport);
+    }
+
+    /** In-dispatch request ids, claimed synchronously before inherited post(). */
+    claimsFor(transport: StreamableHTTPServerTransport): Set<string | number> {
+      let claims = this.dispatching.get(transport);
+      if (!claims) {
+        claims = new Set();
+        this.dispatching.set(transport, claims);
+      }
+      return claims;
+    }
+
     override async open(res: GatewayResponse): Promise<StreamableHTTPServerTransport> {
       const lease = reserve();
       let transport: StreamableHTTPServerTransport | undefined;
@@ -142,7 +357,12 @@ export function createMount(
       };
       res.once("finish", end);
       res.once("close", end);
-      const owner = leasedOwner(children, lease);
+      const work = calls.owner();
+      const wires = new BackendWireIds();
+      const owner = leasedOwner(children, lease, () => {
+        calls.settleOwner(work);
+        wires.clear();
+      });
       try {
         const session = await StatefulSession.open(
           this,
@@ -153,7 +373,8 @@ export function createMount(
             transport = opened;
             if (children.closing || ended) throw failure("Closed", "The request ended.");
             this.openResponses.set(opened, responses);
-            return startServer(
+            this.sessionWires.set(opened, wires);
+            const factory = startServer(
               spawn,
               source,
               {
@@ -164,6 +385,7 @@ export function createMount(
               sessionLogger,
               "Session",
             );
+            return (peerOwner) => admitPeer(factory, peerOwner, work, wires, calls, localFailure);
           },
         );
         transport = session.transport;
@@ -190,18 +412,22 @@ export function createMount(
   // Both wrappers keep the lease through retention and idempotent actual close.
   class LeasedStdio extends OwnedStdioTransport {
     override close: () => Promise<void>;
+    cleanedUp = false;
     constructor(lease: ResourceLease) {
       if (!source.stdioCmd) throw new Error("Expected stdio source");
       super(source.stdioCmd, children, logger);
-      this.close = children.track(async () => {
-        await super.close();
-        lease.release();
-      });
+      this.close = children.track(() =>
+        releaseAfterCleanup(super.close(), () => {
+          lease.release();
+          this.cleanedUp = true;
+        }),
+      );
     }
   }
   class LeasedUpstream extends UpstreamModernChild {
     private readonly sending = new Set<Promise<void>>();
     override close: () => Promise<void>;
+    cleanedUp = false;
 
     override async send(message: Parameters<ModernChild["send"]>[0]): Promise<void> {
       const pending = super.send(message);
@@ -213,19 +439,50 @@ export function createMount(
       }
     }
 
+    override async events(response: Response, deliver: (value: unknown) => void): Promise<void> {
+      if (!response.body) throw new Error("Upstream event stream has no body");
+      const parser = createParser({
+        onEvent: ({ data }) => {
+          if (data) deliver(JSON.parse(data));
+        },
+      });
+      const decoder = new TextDecoder();
+      let afterCR = false;
+      const feed = (text: string) => {
+        if (!text) return;
+        // Normalize immediately: the pinned parser otherwise defers a terminal CR.
+        const normalized = afterCR && text.startsWith("\n") ? text.slice(1) : text;
+        afterCR = text.endsWith("\r");
+        parser.feed(normalized.replace(/\r\n?/g, "\n"));
+      };
+      for await (const chunk of response.body) {
+        feed(decoder.decode(chunk, { stream: true }));
+        await this.held;
+      }
+      feed(decoder.decode());
+      // Do not flush incomplete events; read() requires a fully framed reply.
+    }
+
     constructor(
       lease: ResourceLease,
       declared: { version: string | undefined; params: Record<string, string> },
     ) {
       if (!source.upstream) throw new Error("Expected upstream source");
       super(source.upstream, declared, logger);
-      this.close = children.track(async () => {
-        await super.close();
-        // Abort alone does not settle pending fetches or body readers.
-        await Promise.allSettled(this.sending);
-        await Promise.allSettled(this.reading);
-        lease.release();
-      });
+      this.close = children.track(() =>
+        releaseAfterCleanup(
+          (async () => {
+            await super.close();
+            // Abort alone does not settle pending fetches or body readers.
+            await Promise.allSettled(this.sending);
+            await Promise.allSettled(this.reading);
+          })(),
+          () => {
+            lease.release();
+            this.cleanedUp = true;
+          },
+        ),
+      );
     }
   }
 
@@ -263,70 +520,134 @@ export function createMount(
         const route = await admit(req, res, value, speaks);
         if (res.destroyed || res.writableEnded || children.closing) return;
         if (typeof route === "boolean") {
-          if (!route) await sessions.post(req, res);
+          if (!route) {
+            const sessionId = req.headers["mcp-session-id"];
+            const session =
+              typeof sessionId === "string" ? sessions.transports.get(sessionId) : undefined;
+            const sessionWires = session ? sessions.wireIdsOf(session) : undefined;
+            if (session && sessionWires) {
+              const messages = legacyMessages(req.body);
+              const ids = messages ? legacyRequestIds(messages) : undefined;
+              if (ids) {
+                // All checks and claims are synchronous: no await sits between
+                // them, so concurrent POSTs and batches cannot both pass.
+                const claims = sessions.claimsFor(session);
+                const unique = new Set(ids);
+                const collision =
+                  unique.size !== ids.length ||
+                  ids.some((id) => sessionWires.holds(id) || claims.has(id));
+                if (collision) {
+                  rejectWith(req, res, 400, DUPLICATE_REQUEST_ERROR);
+                  return;
+                }
+                for (const id of ids) claims.add(id);
+                try {
+                  await sessions.post(req, res);
+                } finally {
+                  for (const id of ids) claims.delete(id);
+                }
+                return;
+              }
+            }
+            // Unknown sessions, initialization and malformed bodies keep the
+            // inherited SDK validation and error paths.
+            await sessions.post(req, res);
+          }
           return;
         }
-        const transport = new PerRequestHTTPServerTransport({
-          classification: route.classification,
-        });
-        const continuation =
-          route.messageKind === "request" ? route.message.params?.requestState : undefined;
-        let reused: ReusedChild | undefined;
-        if (isContinuationHandle(continuation)) {
-          const waiting = new AbortController();
-          const cancel = () => waiting.abort();
-          res.once("close", cancel);
-          if (res.destroyed) cancel();
-          try {
-            reused = await retained.take(continuation, waiting.signal);
-          } finally {
-            res.off("close", cancel);
-          }
-          if (!reused) {
-            await transport.close();
-            if (!res.destroyed)
-              rejectWith(req, res, 400, {
-                code: -32602,
-                message: "Continuation expired or backend unavailable",
-              });
-            return;
-          }
+        const requestId = route.messageKind === "request" ? route.message.id : undefined;
+        const work = requestId === undefined ? undefined : calls.owner();
+        if (work && requestId !== undefined && !calls.admit(work, requestId)) {
+          // Still at the HTTP admission boundary, before any continuation is
+          // taken or backend resource is reserved.
+          rejectWith(req, res, 429, BACKEND_CAPACITY_ERROR);
+          return;
         }
-        let child = reused?.child;
-        if (!child) {
-          let lease: ResourceLease | undefined;
-          try {
-            lease = reserve();
-            child = source.stdioCmd
-              ? new LeasedStdio(lease)
-              : new LeasedUpstream(lease, {
-                  version: value("mcp-protocol-version"),
-                  params: paramHeaders(req),
-                });
-          } catch (error) {
-            lease?.release();
-            await transport.close();
-            throw error;
-          }
-        }
-        const request = new ModernRequest({
-          req,
-          res,
-          route,
-          value,
-          transport,
-          reused,
-          child,
-          retained,
-          active,
-          children,
-          logger,
-        });
+        let released = false;
+        const releaseWork = () => {
+          if (!work || released) return;
+          released = true;
+          calls.settleOwner(work);
+        };
+        let child: ModernChild | undefined;
         try {
-          await request.serve();
+          const transport = new WorkTransport(
+            { classification: route.classification },
+            (message) => {
+              const id = "id" in message ? message.id : undefined;
+              if (
+                requestId !== undefined &&
+                (typeof id === "string" || typeof id === "number") &&
+                id === requestId
+              )
+                releaseWork();
+            },
+          );
+          const continuation =
+            route.messageKind === "request" ? route.message.params?.requestState : undefined;
+          let reused: ReusedChild | undefined;
+          if (isContinuationHandle(continuation)) {
+            const waiting = new AbortController();
+            const abort = () => waiting.abort();
+            res.once("close", abort);
+            try {
+              reused = await retained.take(continuation, waiting.signal);
+            } finally {
+              res.off("close", abort);
+            }
+            if (!reused) {
+              await transport.close();
+              if (!res.destroyed) {
+                rejectWith(req, res, 400, {
+                  code: -32602,
+                  message: "Continuation expired or backend unavailable",
+                });
+              }
+              return;
+            }
+          }
+          child = reused?.child;
+          if (!child) {
+            let lease: ResourceLease | undefined;
+            try {
+              lease = reserve();
+              child = source.stdioCmd
+                ? new LeasedStdio(lease)
+                : new LeasedUpstream(lease, {
+                    version: value("mcp-protocol-version"),
+                    params: paramHeaders(req),
+                  });
+            } catch (error) {
+              lease?.release();
+              await transport.close();
+              throw error;
+            }
+          }
+          const request = new ModernRequest({
+            req,
+            res,
+            route,
+            value,
+            transport,
+            reused,
+            child,
+            retained,
+            active,
+            children,
+            logger,
+          });
+          try {
+            await request.serve();
+          } finally {
+            // Also cover a failed transport.start(), before serve's own finally.
+            await request.stop();
+          }
+          // A terminal reply already ended this work. Without one, only the
+          // owned child's confirmed cleanup frees its slot.
+          if (child && cleanupConfirmed(child)) releaseWork();
         } finally {
-          // Also cover a failed transport.start(), before serve's own finally.
-          await request.stop();
+          // Refusals before a child exists cannot have dispatched backend work.
+          if (!child) releaseWork();
         }
       }),
     );

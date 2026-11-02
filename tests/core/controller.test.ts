@@ -7,12 +7,16 @@ import {
   alive,
   configFor,
   connect,
+  controlledResolver,
   eventually,
+  failListener,
+  freePort,
   pids,
   setup,
   stdio,
   TOKEN,
   testDirectory,
+  within,
 } from "./helpers";
 
 const call = (client: Awaited<ReturnType<typeof connect>>["client"], value: string) =>
@@ -413,6 +417,59 @@ describe("McpGatewayController", () => {
     }
   }, 15_000);
 
+  test("self-closed listener snapshots follow saved settings without losing cleanup ownership", async () => {
+    const context = await setup(await configFor({ kept: stdio(), removed: stdio() }));
+    try {
+      const started = await context.controller.start();
+      failListener(context.controller);
+      expect(context.controller.snapshot().running).toBe(false);
+      const next = await configFor({
+        kept: { ...stdio(), disabled: true },
+        added: { url: "http://127.0.0.1:1/mcp" },
+      });
+      next.gateway.token = "changed-synthetic-token-0123456789abcdef";
+      const saved = await context.controller.saveConfig(JSON.stringify(next), started.revision);
+      expect(saved.running).toBe(false);
+      expect(saved.address).toBeNull();
+      expect(JSON.parse(saved.configText)).toEqual(next);
+      expect(saved.servers).toEqual([
+        {
+          name: "kept",
+          type: "stdio",
+          endpoint: `http://127.0.0.1:${next.gateway.port}/mcp/kept`,
+          enabled: false,
+          status: "disabled",
+          error: null,
+        },
+        {
+          name: "added",
+          type: "http",
+          endpoint: `http://127.0.0.1:${next.gateway.port}/mcp/added`,
+          enabled: true,
+          status: "stopped",
+          error: null,
+        },
+      ]);
+      const restarted = await context.controller.start();
+      expect(restarted.address).toBe(`http://127.0.0.1:${next.gateway.port}`);
+      expect(restarted.servers).toEqual([
+        saved.servers[0],
+        { ...saved.servers[1], status: "mounted" },
+      ]);
+      for (const [token, status] of [
+        [TOKEN, 401],
+        [next.gateway.token, 404],
+      ] as const) {
+        const response = await fetch(`${restarted.address}/mcp/removed`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        expect(response.status).toBe(status);
+      }
+    } finally {
+      await context.cleanup();
+    }
+  });
+
   test("listener bind failures stay stopped and produce a typed redacted operational error", async () => {
     const occupied = createServer();
     await new Promise<void>((resolve) => occupied.listen(0, "127.0.0.1", resolve));
@@ -584,3 +641,281 @@ test("strict JSON comments and ambiguous autoStart both refuse exposure visibly"
     await context.cleanup();
   }
 });
+
+test("Stop cancels a stalled self-proxy check, preserves saved bytes and permits a later fresh save", async () => {
+  const resolver = controlledResolver();
+  const context = await setup(await configFor(), "json", undefined, { resolve: resolver.resolve });
+  try {
+    const started = await context.controller.start();
+    expect(started.running).toBe(true);
+    const before = context.controller.snapshot();
+    const next = JSON.parse(before.configText);
+    next.mcpServers.stalled = { url: `http://stall.synthetic:${context.config.gateway.port}/mcp` };
+    const candidate = `${JSON.stringify(next, null, 2)}\n`;
+    const save = context.controller.saveConfig(candidate, before.revision);
+    save.catch(() => {});
+    await eventually(() => resolver.calls.length === 1 && resolver.pending === 1);
+    const stopped = await within(context.controller.stop());
+    expect(stopped).toMatchObject({ running: false, address: null });
+    await expect(save).rejects.toMatchObject({ code: "Cancelled" });
+    expect(await readFile(context.path, "utf8")).toBe(before.configText);
+    expect(context.controller.snapshot().revision).toBe(before.revision);
+    expect(context.controller.snapshot().configError).toBeNull();
+    expect(context.controller.snapshot().operationalError).toBeNull();
+    // A later explicit save after a nonterminal Stop validates afresh.
+    resolver.release();
+    const saved = await context.controller.saveConfig(candidate, before.revision);
+    expect(saved.revision).not.toBe(before.revision);
+    expect(await readFile(context.path, "utf8")).toBe(candidate);
+  } finally {
+    resolver.release();
+    await context.cleanup();
+  }
+}, 15_000);
+
+test("self-proxy validation refuses a stalled candidate at its deadline without persisting or replacing the listener", async () => {
+  const resolver = controlledResolver();
+  const context = await setup(await configFor(), "json", undefined, { resolve: resolver.resolve });
+  try {
+    const started = await context.controller.start();
+    const before = context.controller.snapshot();
+    const next = JSON.parse(before.configText);
+    next.mcpServers.stalled = { url: `http://stall.synthetic:${context.config.gateway.port}/mcp` };
+    const candidate = `${JSON.stringify(next, null, 2)}\n`;
+    const save = context.controller.saveConfig(candidate, before.revision);
+    save.catch(() => {});
+    await eventually(() => resolver.pending === 1);
+    const began = Date.now();
+    const settled = await within(
+      save.then(
+        (value) => ({ ok: true as const, value }),
+        (error: unknown) => ({ ok: false as const, error }),
+      ),
+      8_000,
+    );
+    expect(Date.now() - began).toBeGreaterThanOrEqual(4_000);
+    expect(settled).toMatchObject({ ok: false, error: { code: "NetworkPolicy" } });
+    expect(await readFile(context.path, "utf8")).toBe(before.configText);
+    expect(context.controller.snapshot().revision).toBe(before.revision);
+    expect(context.controller.snapshot()).toMatchObject({
+      running: true,
+      address: started.address,
+    });
+    expect(context.controller.snapshot().configError).toBeNull();
+    // A late answer cannot apply the refused candidate.
+    resolver.release();
+    await Bun.sleep(50);
+    expect(await readFile(context.path, "utf8")).toBe(before.configText);
+    expect(context.controller.snapshot().revision).toBe(before.revision);
+    expect(context.controller.snapshot().running).toBe(true);
+  } finally {
+    resolver.release();
+    await context.cleanup();
+  }
+}, 20_000);
+
+test("Stop cancels a save that was queued before it, not only the validation already waiting", async () => {
+  const resolver = controlledResolver();
+  const context = await setup(await configFor(), "json", undefined, { resolve: resolver.resolve });
+  try {
+    await context.controller.start();
+    const before = context.controller.snapshot();
+    const next = JSON.parse(before.configText);
+    next.mcpServers.stalled = { url: `http://stall.synthetic:${context.config.gateway.port}/mcp` };
+    const candidate = `${JSON.stringify(next, null, 2)}\n`;
+    const first = context.controller.saveConfig(candidate, before.revision);
+    first.catch(() => {});
+    await eventually(() => resolver.pending === 1);
+    const queued = context.controller.saveConfig(candidate, before.revision);
+    queued.catch(() => {});
+    const stopped = await within(context.controller.stop());
+    expect(stopped.running).toBe(false);
+    await expect(first).rejects.toMatchObject({ code: "Cancelled" });
+    await expect(queued).rejects.toMatchObject({ code: "Cancelled" });
+    expect(resolver.calls).toEqual(["stall.synthetic"]);
+    expect(await readFile(context.path, "utf8")).toBe(before.configText);
+    expect(context.controller.snapshot().revision).toBe(before.revision);
+    resolver.release();
+    const saved = await context.controller.saveConfig(candidate, before.revision);
+    expect(saved.revision).not.toBe(before.revision);
+  } finally {
+    resolver.release();
+    await context.cleanup();
+  }
+}, 15_000);
+
+test("Stop cancels a queued save whose candidate needs no hostname lookup", async () => {
+  const resolver = controlledResolver();
+  const context = await setup(await configFor(), "json", undefined, { resolve: resolver.resolve });
+  try {
+    await context.controller.start();
+    const before = context.controller.snapshot();
+    const gateway = JSON.parse(before.configText).gateway;
+    const stalled = JSON.stringify({
+      gateway,
+      mcpServers: {
+        stalled: { url: `http://stall.synthetic:${context.config.gateway.port}/mcp` },
+      },
+    });
+    const stdioOnly = `${JSON.stringify(
+      { gateway, mcpServers: { echo: stdio({ SYNTHETIC_ENV: "queued" }) } },
+      null,
+      2,
+    )}\n`;
+    const first = context.controller.saveConfig(stalled, before.revision);
+    first.catch(() => {});
+    await eventually(() => resolver.pending === 1);
+    const queued = context.controller.saveConfig(stdioOnly, before.revision);
+    queued.catch(() => {});
+    const stopped = await within(context.controller.stop());
+    expect(stopped.running).toBe(false);
+    await expect(first).rejects.toMatchObject({ code: "Cancelled" });
+    // A stdio-only candidate has no hostname to check; cancellation still owns it.
+    await expect(queued).rejects.toMatchObject({ code: "Cancelled" });
+    expect(await readFile(context.path, "utf8")).toBe(before.configText);
+    expect(context.controller.snapshot().revision).toBe(before.revision);
+    resolver.release();
+    const saved = await context.controller.saveConfig(stdioOnly, before.revision);
+    expect(saved.revision).not.toBe(before.revision);
+    expect(await readFile(context.path, "utf8")).toBe(stdioOnly);
+  } finally {
+    resolver.release();
+    await context.cleanup();
+  }
+}, 15_000);
+
+test("a cancelled external refresh is revalidated by the next Start instead of reopening the old configuration", async () => {
+  const resolver = controlledResolver();
+  const context = await setup(await configFor(), "json", undefined, { resolve: resolver.resolve });
+  try {
+    const started = await context.controller.start();
+    const before = context.controller.snapshot();
+    const nextPort = await freePort();
+    const next = {
+      gateway: {
+        ...JSON.parse(before.configText).gateway,
+        port: nextPort,
+        token: "changed-external-token-0123456789abcdef",
+      },
+      mcpServers: {
+        other: stdio(),
+        stalled: { url: `http://external.synthetic:${nextPort}/mcp` },
+      },
+    };
+    const text = `${JSON.stringify(next, null, 2)}\n`;
+    await writeFile(context.path, text, { mode: 0o600 });
+    // The watcher reads B and begins the same-port lookup that Stop cancels.
+    await eventually(() => resolver.calls.length === 1 && resolver.pending === 1);
+    const stopped = await within(context.controller.stop());
+    expect(stopped.running).toBe(false);
+    expect(started.address).toBe(`http://127.0.0.1:${JSON.parse(before.configText).gateway.port}`);
+    resolver.release();
+    const restarted = await within(context.controller.start(), 5_000);
+    expect(restarted.configText).toBe(text);
+    expect(restarted.revision).not.toBe(before.revision);
+    expect(restarted.running).toBe(true);
+    expect(restarted.address).toBe(`http://127.0.0.1:${nextPort}`);
+    expect(restarted.servers.map((server) => server.name).sort()).toEqual(["other", "stalled"]);
+    expect(await readFile(context.path, "utf8")).toBe(text);
+    const noop = await context.controller.saveConfig(text, restarted.revision);
+    expect(noop.revision).toBe(restarted.revision);
+
+    const initialize = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-03-26",
+        capabilities: {},
+        clientInfo: { name: "external-refresh", version: "1" },
+      },
+    });
+    const headers = {
+      Authorization: `Bearer ${next.gateway.token}`,
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+    };
+    const active = await fetch(`${restarted.address}/mcp/other`, {
+      method: "POST",
+      headers,
+      body: initialize,
+    });
+    expect(active.status).toBe(200);
+    await active.text();
+    const staleToken = await fetch(`${restarted.address}/mcp/other`, {
+      method: "POST",
+      headers: { ...headers, Authorization: `Bearer ${TOKEN}` },
+      body: initialize,
+    });
+    expect(staleToken.status).toBe(401);
+    await staleToken.text();
+    const staleRoute = await fetch(`${restarted.address}/mcp/echo`, {
+      method: "POST",
+      headers,
+      body: initialize,
+    });
+    expect(staleRoute.status).toBe(404);
+    await staleRoute.text();
+  } finally {
+    resolver.release();
+    await context.cleanup();
+  }
+}, 20_000);
+
+test.each(["queued behind a stalled save", "still in its debounce window"])(
+  "a watch event admitted before Stop cannot begin a fresh uncancelled validation (%s)",
+  async (state) => {
+    const resolver = controlledResolver();
+    const context = await setup(await configFor(), "json", undefined, {
+      resolve: resolver.resolve,
+    });
+    try {
+      await context.controller.start();
+      const before = context.controller.snapshot();
+      const gateway = JSON.parse(before.configText).gateway;
+      const stalled = JSON.stringify({
+        gateway,
+        mcpServers: {
+          stalled: { url: `http://stall.synthetic:${context.config.gateway.port}/mcp` },
+        },
+      });
+      const save = context.controller.saveConfig(stalled, before.revision);
+      save.catch(() => {});
+      await eventually(() => resolver.pending === 1);
+      const external = `${JSON.stringify(
+        {
+          gateway,
+          mcpServers: {
+            external: stdio(),
+            stalled: { url: `http://external.synthetic:${context.config.gateway.port}/mcp` },
+          },
+        },
+        null,
+        2,
+      )}\n`;
+      await writeFile(context.path, external, { mode: 0o600 });
+      await Bun.sleep(state === "queued behind a stalled save" ? 60 : 10);
+      const stopped = await within(context.controller.stop());
+      expect(stopped.running).toBe(false);
+      await expect(save).rejects.toMatchObject({ code: "Cancelled" });
+      // A write can deliver late filesystem notifications after Stop. Restore
+      // the pre-Stop document so those notifications read a no-op revision
+      // instead of being mistaken for a new external operation.
+      await writeFile(context.path, before.configText, { mode: 0o600 });
+      await Bun.sleep(120);
+      // Only the save's lookup may exist: the pre-Stop watch event is cancelled,
+      // not retried with a fresh lifetime after Stop.
+      expect(resolver.calls).toEqual(["stall.synthetic"]);
+      resolver.release();
+      // A genuinely new external write after Stop may validate anew.
+      await writeFile(context.path, external, { mode: 0o600 });
+      const restarted = await within(context.controller.start(), 5_000);
+      expect(restarted.configText).toBe(external);
+      expect(restarted.running).toBe(true);
+    } finally {
+      resolver.release();
+      await context.cleanup();
+    }
+  },
+  20_000,
+);

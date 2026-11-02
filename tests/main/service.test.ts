@@ -1,8 +1,18 @@
 import { describe, expect, test } from "bun:test";
+import { readFile } from "node:fs/promises";
 import { QuitCoordinator } from "../../src/main/lifecycle";
 import { MacLoginManager } from "../../src/main/login";
 import { AppService } from "../../src/main/service";
-import { configFor, eventually, setup, TOKEN } from "../core/helpers";
+import {
+  configFor,
+  controlledResolver,
+  eventually,
+  failListener,
+  setup,
+  stdio,
+  TOKEN,
+  within,
+} from "../core/helpers";
 
 const desktop = {
   platform: "macos",
@@ -97,6 +107,60 @@ describe("native application boundary", () => {
       expect(context.controller.snapshot().running).toBe(true);
       expect((await app.handlers.stop()).ok).toBe(true);
       expect(context.controller.snapshot().running).toBe(false);
+    } finally {
+      await context.cleanup();
+    }
+  });
+
+  test("both clipboard actions use current routes and token after a listener self-close", async () => {
+    const context = await setup(await configFor({ kept: stdio(), removed: stdio() }));
+    const copied: string[] = [];
+    const app = new AppService(
+      context.controller,
+      fakeLogin().manager,
+      (text) => copied.push(text),
+      desktop,
+    );
+    try {
+      const started = await context.controller.start();
+      failListener(context.controller);
+      const next = await configFor({ kept: stdio(), added: stdio() });
+      next.gateway.token = "changed-synthetic-token-0123456789abcdef";
+      expect(
+        await app.handlers.saveConfig({
+          text: JSON.stringify(next),
+          expectedRevision: started.revision,
+        }),
+      ).toMatchObject({ ok: true });
+      for (const name of ["kept", "added"]) {
+        expect(await app.handlers.copyEndpoint({ name })).toEqual({ ok: true, value: null });
+        expect(await app.handlers.copyClientConfig({ name })).toEqual({ ok: true, value: null });
+        const endpoint = `http://127.0.0.1:${next.gateway.port}/mcp/${name}`;
+        expect(copied.splice(0)).toEqual([
+          endpoint,
+          JSON.stringify(
+            {
+              mcpServers: {
+                [name]: {
+                  url: endpoint,
+                  headers: { Authorization: `Bearer ${next.gateway.token}` },
+                },
+              },
+            },
+            null,
+            2,
+          ),
+        ]);
+      }
+      expect(await app.handlers.copyEndpoint({ name: "removed" })).toMatchObject({
+        ok: false,
+        error: { code: "InvalidRequest" },
+      });
+      expect(await app.handlers.copyClientConfig({ name: "removed" })).toMatchObject({
+        ok: false,
+        error: { code: "InvalidRequest" },
+      });
+      expect(copied).toEqual([]);
     } finally {
       await context.cleanup();
     }
@@ -479,6 +543,8 @@ test("local Quit feedback survives delayed partial cleanup failure and permits a
     quitStatus: () => quit.status(),
   });
   try {
+    const before = context.controller.snapshot();
+    const attemptedSave = { text: `${before.configText}\n`, expectedRevision: before.revision };
     expect(await app.handlers.quitStatus({ secret: "fixture-only" })).toMatchObject({
       ok: false,
       error: { code: "InvalidRequest" },
@@ -492,6 +558,11 @@ test("local Quit feedback survives delayed partial cleanup failure and permits a
       value: { requested: true, status: { attempt: 1, phase: "pending", error: null } },
     });
     await eventually(() => attempts === 1);
+    expect(await app.handlers.saveConfig(attemptedSave)).toMatchObject({
+      ok: false,
+      error: { code: "InvalidRequest" },
+    });
+    expect(context.controller.snapshot().configText).toBe(before.configText);
     rejectCleanup(new Error("synthetic-private-partial-cleanup"));
     await eventually(() => quit.status().phase === "failed");
     const failed = await app.handlers.quitStatus();
@@ -508,10 +579,11 @@ test("local Quit feedback survives delayed partial cleanup failure and permits a
       ok: true,
       value: { gateway: { running: false }, login: { supported: true } },
     });
-    const before = context.controller.snapshot();
-    expect(
-      await app.handlers.saveConfig({ text: before.configText, expectedRevision: before.revision }),
-    ).toMatchObject({ ok: false, error: { code: "InvalidRequest" } });
+    expect(await app.handlers.saveConfig(attemptedSave)).toMatchObject({
+      ok: false,
+      error: { code: "InvalidRequest" },
+    });
+    expect(context.controller.snapshot().configText).toBe(before.configText);
     expect(exits).toBe(0);
     expect(await app.handlers.quit()).toEqual({
       ok: true,
@@ -527,8 +599,184 @@ test("local Quit feedback survives delayed partial cleanup failure and permits a
       ok: true,
       value: { attempt: 2, phase: "ready", error: null },
     });
+    expect(await app.handlers.saveConfig(attemptedSave)).toMatchObject({
+      ok: false,
+      error: { code: "InvalidRequest" },
+    });
+    expect(context.controller.snapshot().configText).toBe(before.configText);
   } finally {
     finishCleanup();
     await context.cleanup();
   }
 });
+
+test("service Stop cancels a stalled save instead of waiting behind its service serialization", async () => {
+  const resolver = controlledResolver();
+  const context = await setup(await configFor(), "json", undefined, { resolve: resolver.resolve });
+  const app = new AppService(context.controller, fakeLogin().manager, () => {}, desktop);
+  try {
+    await context.controller.start();
+    const before = context.controller.snapshot();
+    const next = JSON.parse(before.configText);
+    next.mcpServers.stalled = { url: `http://stall.synthetic:${context.config.gateway.port}/mcp` };
+    const save = app.handlers.saveConfig({
+      text: JSON.stringify(next),
+      expectedRevision: before.revision,
+    });
+    save.catch(() => {});
+    await eventually(() => resolver.pending === 1);
+    const stopped = await within(app.handlers.stop());
+    expect(stopped).toMatchObject({ ok: true, value: { gateway: { running: false } } });
+    expect(await save).toMatchObject({ ok: false, error: { code: "Cancelled" } });
+    expect(await readFile(context.path, "utf8")).toBe(before.configText);
+    expect(context.controller.snapshot().revision).toBe(before.revision);
+  } finally {
+    resolver.release();
+    await context.cleanup();
+  }
+}, 15_000);
+
+test("service Quit is not blocked behind a stalled save and cancels it before native cleanup", async () => {
+  const resolver = controlledResolver();
+  const context = await setup(await configFor(), "json", undefined, { resolve: resolver.resolve });
+  let exits = 0;
+  const quit = new QuitCoordinator(
+    () => context.controller.close(),
+    () => {
+      exits++;
+    },
+    () => {},
+  );
+  const app = new AppService(context.controller, fakeLogin().manager, () => {}, {
+    platform: "macos",
+    requestQuit: () => {
+      quit.handle(() => {});
+      return quit.status();
+    },
+    quitStatus: () => quit.status(),
+  });
+  try {
+    await context.controller.start();
+    const before = context.controller.snapshot();
+    const next = JSON.parse(before.configText);
+    next.mcpServers.stalled = { url: `http://stall.synthetic:${context.config.gateway.port}/mcp` };
+    const save = app.handlers.saveConfig({
+      text: JSON.stringify(next),
+      expectedRevision: before.revision,
+    });
+    save.catch(() => {});
+    await eventually(() => resolver.pending === 1);
+    const requested = await within(app.handlers.quit());
+    expect(requested).toMatchObject({
+      ok: true,
+      value: { requested: true, status: { phase: "pending" } },
+    });
+    await eventually(() => quit.status().phase === "ready", 6_000);
+    expect(exits).toBe(1);
+    expect(await save).toMatchObject({ ok: false, error: { code: "Cancelled" } });
+    expect(context.controller.snapshot().running).toBe(false);
+    expect(await readFile(context.path, "utf8")).toBe(before.configText);
+    expect(context.controller.snapshot().revision).toBe(before.revision);
+  } finally {
+    resolver.release();
+    await context.cleanup();
+  }
+}, 20_000);
+
+test("invalid lifecycle parameters never cancel validation or request native Quit", async () => {
+  const resolver = controlledResolver();
+  const context = await setup(await configFor(), "json", undefined, { resolve: resolver.resolve });
+  let requested = 0;
+  const app = new AppService(context.controller, fakeLogin().manager, () => {}, {
+    platform: "linux",
+    requestQuit: () => {
+      requested++;
+      return desktop.requestQuit();
+    },
+    quitStatus: desktop.quitStatus,
+  });
+  try {
+    await context.controller.start();
+    const before = context.controller.snapshot();
+    const next = JSON.parse(before.configText);
+    next.mcpServers.stalled = { url: `http://stall.synthetic:${context.config.gateway.port}/mcp` };
+    const save = app.handlers.saveConfig({
+      text: JSON.stringify(next),
+      expectedRevision: before.revision,
+    });
+    save.catch(() => {});
+    await eventually(() => resolver.pending === 1);
+    const invalid: Array<() => Promise<unknown>> = [
+      () => app.handlers.stop(["SECRET"]),
+      () => app.handlers.quit({ secret: "SECRET" }),
+      () => app.handlers.quitStatus("SECRET"),
+    ];
+    for (const request of invalid) {
+      const response = await within(request());
+      expect(response).toMatchObject({ ok: false, error: { code: "InvalidRequest" } });
+      expect(JSON.stringify(response)).not.toContain("SECRET");
+    }
+    expect(requested).toBe(0);
+    expect(resolver.pending).toBe(1);
+    expect(context.controller.snapshot().running).toBe(true);
+    resolver.release();
+    expect(await save).toMatchObject({ ok: true });
+    expect(await readFile(context.path, "utf8")).not.toBe(before.configText);
+  } finally {
+    resolver.release();
+    await context.cleanup();
+  }
+}, 15_000);
+
+test("service work queued before Stop cannot persist or reopen through a fresh controller lifetime", async () => {
+  const resolver = controlledResolver();
+  const context = await setup(await configFor(), "json", undefined, { resolve: resolver.resolve });
+  const app = new AppService(context.controller, fakeLogin().manager, () => {}, desktop);
+  try {
+    await context.controller.start();
+    const before = context.controller.snapshot();
+    const gateway = JSON.parse(before.configText).gateway;
+    const stalled = JSON.stringify({
+      gateway,
+      mcpServers: {
+        echo: stdio(),
+        stalled: { url: `http://stall.synthetic:${context.config.gateway.port}/mcp` },
+      },
+    });
+    const queuedText = `${JSON.stringify(
+      { gateway, mcpServers: { echo: stdio({ SYNTHETIC_ENV: "queued" }) } },
+      null,
+      2,
+    )}\n`;
+    const first = app.handlers.saveConfig({ text: stalled, expectedRevision: before.revision });
+    first.catch(() => {});
+    await eventually(() => resolver.pending === 1);
+    const second = app.handlers.saveConfig({ text: queuedText, expectedRevision: before.revision });
+    second.catch(() => {});
+    const queuedStart = app.handlers.start();
+    queuedStart.catch(() => {});
+    const stopped = await within(app.handlers.stop());
+    expect(stopped).toMatchObject({ ok: true, value: { gateway: { running: false } } });
+    expect(await first).toMatchObject({ ok: false, error: { code: "Cancelled" } });
+    // These were requested before Stop and must not capture a fresh lifetime
+    // when their service queue turn arrives.
+    expect(await second).toMatchObject({ ok: false, error: { code: "Cancelled" } });
+    expect(await queuedStart).toMatchObject({ ok: false, error: { code: "Cancelled" } });
+    expect(context.controller.snapshot().running).toBe(false);
+    expect(await readFile(context.path, "utf8")).toBe(before.configText);
+    expect(context.controller.snapshot().revision).toBe(before.revision);
+    resolver.release();
+    // New requests admitted after Stop do use a fresh lifetime.
+    const started = await app.handlers.start();
+    expect(started).toMatchObject({ ok: true, value: { gateway: { running: true } } });
+    const saved = await app.handlers.saveConfig({
+      text: queuedText,
+      expectedRevision: context.controller.snapshot().revision,
+    });
+    expect(saved).toMatchObject({ ok: true });
+    expect(await readFile(context.path, "utf8")).toBe(queuedText);
+  } finally {
+    resolver.release();
+    await context.cleanup();
+  }
+}, 20_000);

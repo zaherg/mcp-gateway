@@ -2,12 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { access, readFile, rm, writeFile } from "node:fs/promises";
 import { request } from "node:http";
 import { join } from "node:path";
-import {
-  GatewayIngress,
-  MAX_BODY_BYTES,
-  MAX_CONCURRENT_REQUESTS,
-  MAX_SESSIONS,
-} from "../../src/core/ingress";
+import { MAX_BACKEND_CALLS } from "../../src/core/backend-work";
+import { GatewayIngress, MAX_BODY_BYTES, MAX_SESSIONS } from "../../src/core/ingress";
 import { httpFixture } from "../fixtures/http-mcp";
 import {
   alive,
@@ -570,14 +566,20 @@ describe("shared MCP ingress", () => {
     }
   }, 15_000);
 
-  test("concurrent in-flight protocol requests are bounded before backend dispatch", async () => {
+  test("32 open HTTP requests are bounded independently of the backend-work cap", async () => {
     const context = await setup();
     const pending: ReturnType<typeof request>[] = [];
-    let client: Awaited<ReturnType<typeof connect>> | undefined;
+    const streams: ReturnType<typeof request>[] = [];
+    const clients: Array<Awaited<ReturnType<typeof connect>>> = [];
+    let listening = 0;
     try {
       const { address } = await context.controller.start();
-      client = await connect(address as string);
-      for (let id = 100; id < 100 + MAX_CONCURRENT_REQUESTS; id++) {
+      // Sixteen sessions each keep one call and one listening stream open:
+      // the backend-work cap limits calls, not the independent HTTP limit.
+      for (let index = 0; index < MAX_BACKEND_CALLS; index++)
+        clients.push(await connect(address as string));
+      for (const [index, client] of clients.entries()) {
+        const session = client.transport.sessionId as string;
         const req = request(
           `${address}/mcp/echo`,
           {
@@ -586,7 +588,7 @@ describe("shared MCP ingress", () => {
               Authorization: `Bearer ${TOKEN}`,
               "Content-Type": "application/json",
               Accept: "application/json, text/event-stream",
-              "Mcp-Session-Id": client.transport.sessionId as string,
+              "Mcp-Session-Id": session,
             },
           },
           (response) => response.resume(),
@@ -595,26 +597,45 @@ describe("shared MCP ingress", () => {
         req.end(
           JSON.stringify({
             jsonrpc: "2.0",
-            id,
+            id: 100 + index,
             method: "tools/call",
             params: { name: "delay", arguments: { delay: 10_000 } },
           }),
         );
         pending.push(req);
+        const stream = request(`${address}/mcp/echo`, {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${TOKEN}`,
+            Accept: "text/event-stream",
+            "Mcp-Session-Id": session,
+          },
+        });
+        stream.on("error", () => {});
+        stream.on("response", (response) => {
+          listening++;
+          response.resume();
+        });
+        stream.end();
+        streams.push(stream);
       }
-      await Bun.sleep(200);
+      await eventually(
+        () => listening === MAX_BACKEND_CALLS && pending.length === MAX_BACKEND_CALLS,
+      );
+      await Bun.sleep(300);
       expect(
         await raw(address as string, "/mcp/echo", {
-          headers: { "Mcp-Session-Id": client.transport.sessionId as string },
+          headers: { "Mcp-Session-Id": clients[0].transport.sessionId as string },
           body: '{"jsonrpc":"2.0","id":999,"method":"tools/list"}',
         }),
       ).toBe(429);
     } finally {
       for (const req of pending) req.destroy();
+      for (const stream of streams) stream.destroy();
+      for (const client of clients) await client.client.close();
       await context.cleanup();
-      await client?.client.close();
     }
-  }, 15_000);
+  }, 20_000);
 
   test("global live session admission holds DELETE's slot until actual process cleanup", async () => {
     const context = await setup(await configFor({}));

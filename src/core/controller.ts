@@ -7,6 +7,7 @@ import type {
   GatewayConfig,
   GatewayController,
   GatewayEvent,
+  GatewayOperation,
   GatewaySnapshot,
   VisibleError,
 } from "../shared/types";
@@ -15,7 +16,21 @@ import { type ConfigDocument, ConfigStore } from "./config-store";
 import { failure, operational, visible } from "./errors";
 import { GatewayIngress } from "./ingress";
 import { LogBuffer } from "./logs";
-import { interfaceChoices, rejectSelfProxy, selectInterface } from "./network";
+import {
+  interfaceChoices,
+  isSelfProxyCancelled,
+  rejectSelfProxy,
+  SELF_PROXY_DEADLINE_MS,
+  type SelfProxyOptions,
+  type SelfProxyResolver,
+  selectInterface,
+} from "./network";
+
+/** Internal seams for tests; production callers pass no options. */
+export interface ControllerOptions {
+  /** Resolver used by every self-proxy check instead of node:dns. */
+  resolve?: SelfProxyResolver;
+}
 
 /** Local native/UI API. Snapshots contain explicit config credentials; do not log them. */
 export class McpGatewayController implements GatewayController {
@@ -48,16 +63,24 @@ export class McpGatewayController implements GatewayController {
   private watchTimer: ReturnType<typeof setTimeout> | undefined;
   private closed = false;
   private closing = false;
+  private validation = new AbortController();
   private closePromise: Promise<void> | undefined;
   private lifetimeClosed: Promise<void> | undefined;
 
-  private constructor(configPath: string) {
+  private constructor(
+    configPath: string,
+    private readonly resolve?: SelfProxyResolver,
+  ) {
     this.store = new ConfigStore(configPath);
   }
 
-  static async open(configPath: string): Promise<McpGatewayController> {
-    const controller = new McpGatewayController(configPath);
+  static async open(
+    configPath: string,
+    options: ControllerOptions = {},
+  ): Promise<McpGatewayController> {
+    const controller = new McpGatewayController(configPath, options.resolve);
     await controller.serial(async () => {
+      const control = controller.control(controller.validationLifetime());
       try {
         controller.document = await controller.store.initialize();
         controller.config = parseConfig(
@@ -66,7 +89,7 @@ export class McpGatewayController implements GatewayController {
           controller.store.format,
         );
         selectInterface(controller.config.gateway.host);
-        await rejectSelfProxy(controller.config);
+        await rejectSelfProxy(controller.config, control);
         controller.event("info", "Configuration loaded.");
       } catch (error) {
         controller.logs.append({ server: null, level: "error", source: "controller" }, [error]);
@@ -76,7 +99,7 @@ export class McpGatewayController implements GatewayController {
       controller.observe();
       if (controller.config?.gateway.autoStart && !controller.configError) {
         try {
-          await controller.startOwned();
+          await controller.startOwned(control);
         } catch (error) {
           controller.operationalError = visible(error);
         }
@@ -97,7 +120,7 @@ export class McpGatewayController implements GatewayController {
       address: running ? (this.ingress?.address ?? null) : null,
       interfaces: interfaceChoices(),
       servers:
-        this.ingress?.snapshots() ??
+        (running ? this.ingress?.snapshots() : undefined) ??
         Object.entries(config?.mcpServers ?? {}).map(([name, server]) => ({
           name,
           type: isHttpServer(server) ? ("http" as const) : ("stdio" as const),
@@ -139,6 +162,36 @@ export class McpGatewayController implements GatewayController {
     });
   }
 
+  // Operations capture their lifetime when they are requested, so a Stop that
+  // arrives while they wait for the queue still cancels them. An operation
+  // requested after a Stop starts a fresh lifetime; close stays terminal.
+  private validationLifetime(): AbortSignal {
+    if (this.validation.signal.aborted) this.validation = new AbortController();
+    return this.validation.signal;
+  }
+
+  operation(): GatewayOperation {
+    return { signal: this.validationLifetime() };
+  }
+
+  // An explicitly captured operation keeps the lifetime it was requested with;
+  // only calls without one capture a fresh lifetime now.
+  private operationSignal(operation?: GatewayOperation): AbortSignal {
+    return operation?.signal ?? this.validationLifetime();
+  }
+
+  private control(signal: AbortSignal): SelfProxyOptions {
+    return {
+      resolve: this.resolve,
+      signal,
+      deadline: Date.now() + SELF_PROXY_DEADLINE_MS,
+    };
+  }
+
+  private cancelValidation(): void {
+    this.validation.abort();
+  }
+
   private ensureOpen(): void {
     if (this.closed || this.closing) throw failure("Closed", "The controller is closed.");
   }
@@ -149,7 +202,7 @@ export class McpGatewayController implements GatewayController {
     this.event("error", error.message);
   };
 
-  private async startOwned(): Promise<void> {
+  private async startOwned(control: SelfProxyOptions): Promise<void> {
     this.ensureOpen();
     if (!this.watchHealthy)
       throw failure(
@@ -158,7 +211,7 @@ export class McpGatewayController implements GatewayController {
       );
     if (this.ingress?.running) return;
     // Read the authoritative bytes again, even if a watch notification is delayed.
-    await this.refresh();
+    await this.refresh(control);
     if (!this.config || this.configError)
       throw failure("InvalidConfig", "Correct the on-disk configuration before starting.");
     await this.stopOwned();
@@ -166,7 +219,7 @@ export class McpGatewayController implements GatewayController {
     try {
       const ingress = await Effect.runPromise(
         operational(
-          () => GatewayIngress.open(config, this.report, this.logs),
+          () => GatewayIngress.open(config, this.report, this.logs, control),
           "ListenerFailure",
           "The listener could not start.",
         ),
@@ -206,19 +259,23 @@ export class McpGatewayController implements GatewayController {
     }
   }
 
-  start(): Promise<GatewaySnapshot> {
+  start(operation?: GatewayOperation): Promise<GatewaySnapshot> {
+    const signal = this.operationSignal(operation);
     return this.serial(async () => {
+      // The deadline bounds validation, not time spent waiting for the queue.
+      const control = this.control(signal);
       try {
-        await this.startOwned();
+        await this.startOwned(control);
         return this.snapshot();
       } catch (error) {
-        this.report(visible(error));
+        if (!isSelfProxyCancelled(error)) this.report(visible(error));
         throw error;
       }
     });
   }
 
   stop(): Promise<GatewaySnapshot> {
+    this.cancelValidation();
     return this.serial(async () => {
       this.ensureOpen();
       await this.stopOwned();
@@ -226,38 +283,50 @@ export class McpGatewayController implements GatewayController {
     });
   }
 
-  restartServer(name: string): Promise<GatewaySnapshot> {
+  restartServer(name: string, operation?: GatewayOperation): Promise<GatewaySnapshot> {
+    const signal = this.operationSignal(operation);
     return this.serial(async () => {
+      const control = this.control(signal);
       this.ensureOpen();
       if (!this.ingress?.running)
         throw failure("BackendFailure", "Start the gateway before restarting a server.");
       try {
-        await this.ingress.restart(name);
+        await this.ingress.restart(name, control);
         this.event("info", "A backend endpoint was restarted.");
       } catch (error) {
-        this.report(visible(error));
+        if (!isSelfProxyCancelled(error)) this.report(visible(error));
         throw error;
       }
       return this.snapshot();
     });
   }
 
-  saveConfig(text: string, expectedRevision: string): Promise<GatewaySnapshot> {
+  saveConfig(
+    text: string,
+    expectedRevision: string,
+    operation?: GatewayOperation,
+  ): Promise<GatewaySnapshot> {
+    const signal = this.operationSignal(operation);
     return this.serial(async () => {
+      const control = this.control(signal);
       this.ensureOpen();
       const next = parseConfig(text, process.env, this.store.format);
       selectInterface(next.gateway.host);
-      await rejectSelfProxy(next);
+      await rejectSelfProxy(next, control);
       const document = await this.store.save(text, expectedRevision).catch(async (error) => {
-        await this.refresh();
+        await this.refresh(control);
         throw error;
       });
-      await this.apply(document, next);
+      await this.apply(document, next, control);
       return this.snapshot();
     });
   }
 
-  private async apply(document: ConfigDocument, next: GatewayConfig): Promise<void> {
+  private async apply(
+    document: ConfigDocument,
+    next: GatewayConfig,
+    control: SelfProxyOptions,
+  ): Promise<void> {
     const previous = this.config;
     const running = this.ingress?.running ?? false;
     this.document = document;
@@ -278,8 +347,8 @@ export class McpGatewayController implements GatewayController {
         previous?.gateway.token !== next.gateway.token
       ) {
         await this.stopOwned();
-        await this.startOwned();
-      } else await this.ingress?.reconcile(next);
+        await this.startOwned(control);
+      } else await this.ingress?.reconcile(next, control);
     } catch (error) {
       this.report(visible(error));
       await this.stopOwned();
@@ -287,16 +356,23 @@ export class McpGatewayController implements GatewayController {
     }
   }
 
-  private async refresh(): Promise<void> {
+  private async refresh(control: SelfProxyOptions): Promise<void> {
+    let document: ConfigDocument | undefined;
     try {
-      const document = await this.store.read();
+      document = await this.store.read();
       if (document.revision === this.document.revision && !this.configError) return;
-      this.document = document;
+      // Validate the candidate before publishing its text/revision. A cancelled
+      // refresh must leave document/config consistent so the next Start retries it.
       const next = parseConfig(document.text, process.env, this.store.format);
       selectInterface(next.gateway.host);
-      await rejectSelfProxy(next);
-      await this.apply(document, next);
+      await rejectSelfProxy(next, control);
+      await this.apply(document, next, control);
     } catch (error) {
+      // A superseded operation leaves the authoritative config and configError alone.
+      if (control.signal?.aborted || isSelfProxyCancelled(error)) throw error;
+      // Invalid external source stays visible for repair, while the validated
+      // config retains the last accepted state.
+      if (document) this.document = document;
       this.logs.append({ server: null, level: "error", source: "controller" }, [error]);
       this.configError = visible(error);
       this.event("error", "Invalid external configuration; listener stopped.");
@@ -325,6 +401,10 @@ export class McpGatewayController implements GatewayController {
         throw failure("UnsafeFile", "The configuration directory is unsafe.");
       this.watcher = watch(dirname(this.store.path), () => {
         if (this.closed || this.closing || !this.watchHealthy) return;
+        // Capture cancellation ownership when the event is admitted, before the
+        // debounce and controller queue. A Stop that arrives while this event
+        // waits must cancel it instead of letting it start a fresh lifetime.
+        const signal = this.validationLifetime();
         if (this.watchTimer) clearTimeout(this.watchTimer);
         this.watchTimer = setTimeout(() => {
           this.watchTimer = undefined;
@@ -345,8 +425,10 @@ export class McpGatewayController implements GatewayController {
               this.failWatcher();
               return;
             }
-            await this.refresh();
-          }).catch((error) => this.report(visible(error)));
+            await this.refresh(this.control(signal));
+          }).catch((error) => {
+            if (!isSelfProxyCancelled(error)) this.report(visible(error));
+          });
         }, 20);
       });
       this.watchHealthy = true;
@@ -374,6 +456,7 @@ export class McpGatewayController implements GatewayController {
   close(): Promise<void> {
     if (this.closePromise) return this.closePromise;
     this.closing = true;
+    this.cancelValidation();
     this.closePromise = this.serial(async () => {
       try {
         this.lifetimeClosed ??= Effect.runPromise(Scope.close(this.lifetime, Exit.void));
@@ -389,5 +472,7 @@ export class McpGatewayController implements GatewayController {
   }
 }
 
-export const open = (configPath: string): Promise<McpGatewayController> =>
-  McpGatewayController.open(configPath);
+export const open = (
+  configPath: string,
+  options: ControllerOptions = {},
+): Promise<McpGatewayController> => McpGatewayController.open(configPath, options);

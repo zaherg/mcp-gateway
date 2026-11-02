@@ -61,9 +61,12 @@ const login = new MacLoginManager({
   },
 });
 let failQuitOnce = false;
+let quitGate: Promise<void> | undefined;
+let releaseQuit: (() => void) | undefined;
 const quit = new QuitCoordinator(
   async () => {
     await closeController();
+    await quitGate;
     if (failQuitOnce) {
       failQuitOnce = false;
       await Bun.sleep(250);
@@ -144,6 +147,14 @@ try {
             nativeState = 1;
           } else if (params === "login-allow") {
             refuseLoginChanges = false;
+          } else if (params === "quit-hold") {
+            quitGate = new Promise((resolve) => {
+              releaseQuit = resolve;
+            });
+          } else if (params === "quit-release") {
+            releaseQuit?.();
+          } else if (params === "native-quit") {
+            quit.handle(() => {});
           } else if (params === "quit-fail-once") {
             failQuitOnce = true;
           } else if (params === "logs-benign") {
@@ -228,6 +239,9 @@ try {
               "login-approved",
               "login-allow",
               "quit-fail-once",
+              "quit-hold",
+              "quit-release",
+              "native-quit",
             ].includes(params)
           )
             return new Response(null, { status: 400 });
@@ -257,6 +271,7 @@ try {
   });
   await server.stop(true);
 } finally {
+  releaseQuit?.();
   await closeController();
   await upstream.close();
   await context.cleanup();

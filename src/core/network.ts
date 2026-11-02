@@ -3,7 +3,7 @@ import { isIP } from "node:net";
 import { networkInterfaces } from "node:os";
 import type { GatewayConfig, InterfaceChoice } from "../shared/types";
 import { isHttpServer } from "./config";
-import { failure } from "./errors";
+import { failure, GatewayError } from "./errors";
 
 export function ipv4(value: string): string | null {
   if (isIP(value) === 4) return value;
@@ -60,30 +60,111 @@ export function peerAllowed(peer: string, selected: InterfaceChoice): boolean {
   return (numeric(ip) & mask) === (numeric(selected.address) & mask);
 }
 
+/** A hostname resolver; production uses the system resolver from node:dns. */
+export type SelfProxyResolver = (
+  hostname: string,
+  options: { all: true },
+) => Promise<readonly { address: string }[]>;
+
+/** One budget for every self-proxy hostname lookup an operation performs. */
+export const SELF_PROXY_DEADLINE_MS = 5_000;
+
+export interface SelfProxyOptions {
+  resolve?: SelfProxyResolver;
+  /** Stops the application's wait; a lookup already in flight is left unobserved. */
+  signal?: AbortSignal;
+  /** Absolute epoch-millisecond deadline shared by an operation's validation passes. */
+  deadline?: number;
+}
+
+export const isSelfProxyCancelled = (error: unknown): boolean =>
+  error instanceof GatewayError && error.code === "Cancelled";
+
+const cancelled = () =>
+  failure("Cancelled", "The self-proxy check was cancelled because the gateway is stopping.");
+const timedOut = () =>
+  failure("NetworkPolicy", "An upstream address could not be checked before the deadline.");
+const unchecked = () =>
+  failure("NetworkPolicy", "An upstream hostname could not be checked for self-proxy recursion.");
+
+type LookupOutcome =
+  | { kind: "resolved"; addresses: readonly { address: string }[] }
+  | { kind: "failed" }
+  | { kind: "timeout" }
+  | { kind: "cancelled" };
+
+// DNS lookup itself cannot be cancelled. This bounds the wait, removes its
+// timer and listener when it ends either way, and observes later settlement so
+// a late answer cannot resolve or reject an invocation that already refused.
+function boundedLookup(
+  work: Promise<readonly { address: string }[]>,
+  signal: AbortSignal | undefined,
+  timeoutMs: number,
+): Promise<LookupOutcome> {
+  return new Promise((settle) => {
+    let finished = false;
+    const finish = (outcome: LookupOutcome) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+      settle(outcome);
+    };
+    const abort = () => finish({ kind: "cancelled" });
+    const timer = setTimeout(() => finish({ kind: "timeout" }), timeoutMs);
+    // Observe settlement even when the wait is already cancelled, so a rejected
+    // resolver cannot become an unhandled rejection.
+    work.then(
+      (addresses) => finish({ kind: "resolved", addresses }),
+      () => finish({ kind: "failed" }),
+    );
+    if (signal?.aborted) {
+      finish({ kind: "cancelled" });
+      return;
+    }
+    signal?.addEventListener("abort", abort, { once: true });
+  });
+}
+
 export async function rejectSelfProxy(
   config: GatewayConfig,
-  resolve: (
-    hostname: string,
-    options: { all: true },
-  ) => Promise<readonly { address: string }[]> = lookup,
+  options: SelfProxyOptions = {},
 ): Promise<void> {
+  const resolve: SelfProxyResolver =
+    options.resolve ?? ((hostname, lookupOptions) => lookup(hostname, lookupOptions));
+  const deadline = options.deadline ?? Date.now() + SELF_PROXY_DEADLINE_MS;
+  // A superseded or already-expired operation refuses even when a stdio-only,
+  // disabled or different-port configuration needs no hostname lookup.
+  if (options.signal?.aborted) throw cancelled();
+  if (Date.now() >= deadline) throw timedOut();
+  const hostnames: string[] = [];
   for (const server of Object.values(config.mcpServers)) {
     if (server.disabled || !isHttpServer(server)) continue;
     const url = new URL(server.url);
     if (Number(url.port || (url.protocol === "https:" ? 443 : 80)) !== config.gateway.port)
       continue;
-    let addresses: string[];
+    hostnames.push(url.hostname.replace(/^\[|\]$/g, ""));
+  }
+  for (const hostname of hostnames) {
+    const remaining = deadline - Date.now();
+    if (options.signal?.aborted) throw cancelled();
+    if (remaining <= 0) throw timedOut();
+    let work: Promise<readonly { address: string }[]>;
     try {
-      addresses = (await resolve(url.hostname.replace(/^\[|\]$/g, ""), { all: true })).map(
-        (entry) => entry.address,
-      );
-      if (addresses.length === 0) throw new Error("No upstream addresses resolved");
+      work = resolve(hostname, { all: true });
     } catch {
-      throw failure(
-        "NetworkPolicy",
-        "An upstream hostname could not be checked for self-proxy recursion.",
-      );
+      throw unchecked();
     }
+    const outcome = await boundedLookup(work, options.signal, remaining);
+    // Recheck after the wait: the signal may have been cancelled or the shared
+    // deadline may have passed while the lookup was settling.
+    if (options.signal?.aborted) throw cancelled();
+    if (Date.now() >= deadline) throw timedOut();
+    if (outcome.kind === "cancelled") throw cancelled();
+    if (outcome.kind === "timeout") throw timedOut();
+    if (outcome.kind === "failed") throw unchecked();
+    const addresses = outcome.addresses.map((entry) => entry.address);
+    if (addresses.length === 0) throw unchecked();
     if (
       addresses.some(
         (address) =>

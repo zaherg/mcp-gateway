@@ -6,7 +6,7 @@ import { open } from "../../src/core/controller";
 import { GatewayIngress } from "../../src/core/ingress";
 import type { ResourceLease } from "../../src/core/resource-admission";
 import { QuitCoordinator } from "../../src/main/lifecycle";
-import { alive, configFor, connect, eventually, pids, stdio } from "./helpers";
+import { alive, configFor, connect, eventually, failListener, pids, stdio } from "./helpers";
 
 const base = resolve(".cache/linux-runtime/shutdown-fixes");
 
@@ -189,48 +189,60 @@ test("ingress close retries keep raw mount ownership after the deadline", async 
   }
 }, 20_000);
 
-test("stop and stopped reconfiguration cannot replace ingress until outstanding cleanup finishes", async () => {
-  const path = await directory();
-  const config = await configFor({ echo: stdio() });
-  await writeFile(join(path, "mcp.json"), JSON.stringify(config), { mode: 0o600 });
-  const mounts = controlledMounts();
-  const controller = await open(join(path, "mcp.json"));
-  try {
-    const initial = await controller.start();
-    await expect(controller.stop()).rejects.toMatchObject({ code: "ShutdownFailure" });
-    expect(controller.snapshot().running).toBe(false);
-    expect(mounts.outstanding).toBe(1);
-    const next = { ...config, mcpServers: { replacement: stdio() } };
-    const saved = await controller.saveConfig(JSON.stringify(next), initial.revision);
-    expect(saved.servers.map(({ name, status }) => ({ name, status }))).toEqual([
-      { name: "replacement", status: "stopped" },
-    ]);
-    expect(mounts.created).toBe(1);
-    let settled = false;
-    const restart = controller.start().then((value) => {
-      settled = true;
-      return value;
-    });
-    await Bun.sleep(100);
-    expect(settled).toBe(false);
-    expect(mounts.created).toBe(1);
-    mounts.release();
-    const started = await restart;
-    expect(started.running).toBe(true);
-    expect(started.servers.map(({ name, status }) => ({ name, status }))).toEqual([
-      { name: "replacement", status: "mounted" },
-    ]);
-    expect(mounts.completed).toBe(1);
-    expect(mounts.created).toBe(2);
-    await controller.close();
-    expect(mounts.outstanding).toBe(0);
-    expect(mounts.completed).toBe(2);
-  } finally {
-    await mounts.dispose();
-    await expectedFailureDuringTeardown(() => controller.close());
-    await rm(path, { recursive: true, force: true });
-  }
-}, 20_000);
+test.each(["stop", "listener error"])(
+  "%s and stopped reconfiguration cannot replace ingress until outstanding cleanup finishes",
+  async (cause) => {
+    const path = await directory();
+    const config = await configFor({ echo: stdio() });
+    await writeFile(join(path, "mcp.json"), JSON.stringify(config), { mode: 0o600 });
+    const mounts = controlledMounts();
+    const controller = await open(join(path, "mcp.json"));
+    try {
+      const initial = await controller.start();
+      if (cause === "stop") {
+        await expect(controller.stop()).rejects.toMatchObject({ code: "ShutdownFailure" });
+      } else {
+        failListener(controller);
+        await eventually(
+          () => controller.snapshot().operationalError?.code === "ShutdownFailure",
+          12_000,
+        );
+      }
+      expect(controller.snapshot().running).toBe(false);
+      expect(mounts.outstanding).toBe(1);
+      const next = { ...config, mcpServers: { replacement: stdio() } };
+      const saved = await controller.saveConfig(JSON.stringify(next), initial.revision);
+      expect(saved.servers.map(({ name, status }) => ({ name, status }))).toEqual([
+        { name: "replacement", status: "stopped" },
+      ]);
+      expect(mounts.created).toBe(1);
+      let settled = false;
+      const restart = controller.start().then((value) => {
+        settled = true;
+        return value;
+      });
+      await Bun.sleep(100);
+      expect(settled).toBe(false);
+      expect(mounts.created).toBe(1);
+      mounts.release();
+      const started = await restart;
+      expect(started.running).toBe(true);
+      expect(started.servers.map(({ name, status }) => ({ name, status }))).toEqual([
+        { name: "replacement", status: "mounted" },
+      ]);
+      expect(mounts.completed).toBe(1);
+      expect(mounts.created).toBe(2);
+      await controller.close();
+      expect(mounts.outstanding).toBe(0);
+      expect(mounts.completed).toBe(2);
+    } finally {
+      await mounts.dispose();
+      await expectedFailureDuringTeardown(() => controller.close());
+      await rm(path, { recursive: true, force: true });
+    }
+  },
+  20_000,
+);
 
 test("endpoint reconciliation re-awaits a removed mount instead of creating replacements after timeout", async () => {
   const mounts = controlledMounts();

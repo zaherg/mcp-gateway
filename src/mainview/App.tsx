@@ -231,12 +231,15 @@ export function App({ client }: { client: AppClient }) {
     phase: "idle",
     error: null,
   });
+  const [quitStatusKnown, setQuitStatusKnown] = useState(false);
   const [requestingQuit, setRequestingQuit] = useState(false);
   const [quitReadError, setQuitReadError] = useState(false);
   const quitAttempt = useRef(0);
   const quitGeneration = useRef(0);
   const quitRequestPending = useRef(false);
   const quitting = requestingQuit || quitStatus.phase === "pending" || quitStatus.phase === "ready";
+  const shutdownStarted = requestingQuit || quitStatus.phase !== "idle";
+  const configurationLocked = !quitStatusKnown || shutdownStarted;
   const [confirmQuit, setConfirmQuit] = useState(false);
   const [editor, setEditor] = useState<Editor | null>(null);
   const [editorError, setEditorError] = useState<string | null>(null);
@@ -322,7 +325,9 @@ export function App({ client }: { client: AppClient }) {
   const acceptQuitStatus = useCallback((status: QuitStatus) => {
     if (status.attempt < quitAttempt.current) return;
     quitAttempt.current = status.attempt;
+    setQuitStatusKnown(true);
     setQuitStatus(status);
+    if (status.phase !== "idle") setConfirmQuit(false);
     if (status.phase === "failed") setNotice("");
   }, []);
   useEffect(() => {
@@ -351,6 +356,7 @@ export function App({ client }: { client: AppClient }) {
   const format = snapshot?.gateway.configFormat ?? "json";
   const filename = snapshot?.gateway.configPath.split("/").at(-1) ?? "mcp.json";
   function update(config: GatewayConfig, rename?: { from: string; to: string }) {
+    if (configurationLocked) return;
     setDoc((previous) => {
       if (!previous) return previous;
       const text = editConfigDocument(
@@ -406,6 +412,7 @@ export function App({ client }: { client: AppClient }) {
   async function requestQuit() {
     setConfirmQuit(false);
     setRequestingQuit(true);
+    setQuitStatusKnown(false);
     quitRequestPending.current = true;
     quitGeneration.current++;
     setError(null);
@@ -439,14 +446,19 @@ export function App({ client }: { client: AppClient }) {
     needsLoginRetry(snapshot.login, config.gateway.launchAtLogin ?? false)
   );
   async function save(text = doc?.text) {
-    if (!doc || text === undefined) return false;
+    if (configurationLocked || !doc || text === undefined) return false;
     return run(
       () => client.saveConfig({ text, expectedRevision: doc.revision }),
       "Configuration saved.",
       true,
     );
   }
+  function changeEditor(patch: Partial<Editor>) {
+    if (configurationLocked) return;
+    setEditor((previous) => (previous ? { ...previous, ...patch } : null));
+  }
   function openEditor(name?: string) {
+    if (configurationLocked) return;
     const next = emptyEditor();
     if (name && config) {
       const server = config.mcpServers[name];
@@ -470,7 +482,7 @@ export function App({ client }: { client: AppClient }) {
   }
   function applyServer(event: FormEvent) {
     event.preventDefault();
-    if (!editor || !parsed) return;
+    if (configurationLocked || !editor || !parsed) return;
     // Polling retains this document while the dialog is open, even if disk becomes invalid.
     const config = parsed;
     try {
@@ -535,7 +547,7 @@ export function App({ client }: { client: AppClient }) {
     }
   }
   async function toggleEndpoint(name: string, disabled: boolean) {
-    if (!config || !doc || dirty) return;
+    if (configurationLocked || !config || !doc || dirty) return;
     const server = config.mcpServers[name];
     if (!server) return;
     const text = editConfigDocument(
@@ -626,7 +638,9 @@ export function App({ client }: { client: AppClient }) {
                 !!deleting ||
                 (!snapshot && quitStatus.phase !== "failed")
               }
-              onClick={() => (dirty ? setConfirmQuit(true) : void requestQuit())}
+              onClick={() =>
+                dirty && !shutdownStarted ? setConfirmQuit(true) : void requestQuit()
+              }
             >
               {quitting
                 ? "Quitting…"
@@ -645,6 +659,15 @@ export function App({ client }: { client: AppClient }) {
                 {quitStatus.error}
               </Alert>
             )}
+          {shutdownStarted && (
+            <p role="status">
+              Configuration is read-only because Quit cleanup has started. Drafts can still be
+              selected and copied, and Logs remain available.
+            </p>
+          )}
+          {!quitStatusKnown && !requestingQuit && (
+            <p role="status">Configuration is read-only until Quit status is confirmed.</p>
+          )}
           {quitReadError && (
             <p role="status">Could not read Quit status. Cleanup completion is unknown.</p>
           )}
@@ -659,7 +682,7 @@ export function App({ client }: { client: AppClient }) {
               <Alert onDismiss={() => dismiss(`config-${gateway.configError?.occurrenceId}`)}>
                 Configuration unavailable: {gateway.configError.message} Open the configuration
                 editor to repair the authoritative file.{" "}
-                {config
+                {config && !configurationLocked
                   ? "The retained draft remains editable. Review external changes before saving."
                   : "Structured editing is paused."}
               </Alert>
@@ -695,7 +718,9 @@ export function App({ client }: { client: AppClient }) {
             </Alert>
           )}
         </div>
-        {!snapshot || !doc ? (
+        {(!snapshot || !doc) && tab === "logs" ? (
+          <Logs client={client} servers={[]} />
+        ) : !snapshot || !doc ? (
           <section className="panel loading" aria-busy="true">
             <Activity size={22} />
             <h2>Connecting to the application</h2>
@@ -725,7 +750,10 @@ export function App({ client }: { client: AppClient }) {
                   <button
                     type="button"
                     className={gateway?.running ? "button" : "button primary"}
-                    disabled={!gateway?.running && (dirty || !!gateway?.configError)}
+                    disabled={
+                      configurationLocked ||
+                      (!gateway?.running && (dirty || !!gateway?.configError))
+                    }
                     onClick={() =>
                       void run(
                         () => (gateway?.running ? client.stop() : client.start()),
@@ -753,8 +781,10 @@ export function App({ client }: { client: AppClient }) {
                       <button
                         type="button"
                         className="button"
+                        disabled={configurationLocked}
                         onClick={() => {
                           if (
+                            !configurationLocked &&
                             window.confirm(
                               "Discard all unsaved changes and load the latest configuration?",
                             )
@@ -771,7 +801,12 @@ export function App({ client }: { client: AppClient }) {
                         Discard
                       </button>
                     )}
-                    <button type="button" className="button primary" onClick={() => void save()}>
+                    <button
+                      type="button"
+                      className="button primary"
+                      disabled={configurationLocked}
+                      onClick={() => void save()}
+                    >
                       {dirty ? "Save changes" : "Retry login registration"}
                     </button>
                   </div>
@@ -798,7 +833,7 @@ export function App({ client }: { client: AppClient }) {
                       <button
                         type="button"
                         className="button primary"
-                        disabled={!config}
+                        disabled={configurationLocked || !config}
                         onClick={() => openEditor()}
                       >
                         <Plus size={16} /> Add server
@@ -860,6 +895,7 @@ export function App({ client }: { client: AppClient }) {
                                 <button
                                   type="button"
                                   className="text-button"
+                                  disabled={configurationLocked}
                                   onClick={() => openEditor(name)}
                                 >
                                   Edit server
@@ -867,7 +903,7 @@ export function App({ client }: { client: AppClient }) {
                                 <button
                                   type="button"
                                   className="text-button"
-                                  disabled={dirty || !!gateway?.configError}
+                                  disabled={configurationLocked || dirty || !!gateway?.configError}
                                   onClick={() => void toggleEndpoint(name, !server.disabled)}
                                 >
                                   {server.disabled ? "Start" : "Stop"}
@@ -877,6 +913,7 @@ export function App({ client }: { client: AppClient }) {
                                   className="icon-button"
                                   aria-label={`Restart ${name}`}
                                   disabled={
+                                    configurationLocked ||
                                     dirty ||
                                     !gateway?.running ||
                                     server.disabled ||
@@ -895,7 +932,10 @@ export function App({ client }: { client: AppClient }) {
                                   type="button"
                                   className="icon-button"
                                   aria-label={`Delete ${name}`}
-                                  onClick={() => setDeleting(name)}
+                                  disabled={configurationLocked}
+                                  onClick={() => {
+                                    if (!configurationLocked) setDeleting(name);
+                                  }}
                                 >
                                   <Trash2 size={15} />
                                 </button>
@@ -932,7 +972,9 @@ export function App({ client }: { client: AppClient }) {
                         <button
                           type="button"
                           className="button"
+                          disabled={configurationLocked}
                           onClick={() => {
+                            if (configurationLocked) return;
                             const preset = emptyEditor();
                             preset.name = "bear";
                             preset.command = "/Applications/Bear.app/Contents/MacOS/bearcli";
@@ -994,6 +1036,7 @@ export function App({ client }: { client: AppClient }) {
                         >
                           <input
                             aria-label="Interface / address"
+                            readOnly={configurationLocked}
                             list="interfaces"
                             value={config.gateway.host}
                             onChange={(event) =>
@@ -1015,6 +1058,7 @@ export function App({ client }: { client: AppClient }) {
                         <Field label="Port">
                           <input
                             type="number"
+                            readOnly={configurationLocked}
                             min="1"
                             max="65535"
                             value={config.gateway.port === 0 ? "" : config.gateway.port}
@@ -1038,6 +1082,7 @@ export function App({ client }: { client: AppClient }) {
                         <div className="token-input">
                           <input
                             autoComplete="off"
+                            readOnly={configurationLocked}
                             spellCheck={false}
                             type={showToken ? "text" : "password"}
                             value={config.gateway.token}
@@ -1061,6 +1106,7 @@ export function App({ client }: { client: AppClient }) {
                       <button
                         type="button"
                         className="button small"
+                        disabled={configurationLocked}
                         onClick={() => {
                           const bytes = crypto.getRandomValues(new Uint8Array(32));
                           update({
@@ -1084,7 +1130,7 @@ export function App({ client }: { client: AppClient }) {
                               ? "Automatic login registration is unavailable on Linux."
                               : "Open MCP Gateway in the background when you sign in to macOS."
                           }
-                          disabled={snapshot.platform === "linux"}
+                          disabled={configurationLocked || snapshot.platform === "linux"}
                           checked={config.gateway.launchAtLogin ?? false}
                           onChange={(value) =>
                             update({
@@ -1113,6 +1159,7 @@ export function App({ client }: { client: AppClient }) {
                         </div>
                         <Toggle
                           label="Start gateway when the app opens"
+                          disabled={configurationLocked}
                           description="Begin listening automatically, independently of login startup."
                           checked={config.gateway.autoStart ?? false}
                           onChange={(value) =>
@@ -1157,9 +1204,11 @@ export function App({ client }: { client: AppClient }) {
                       <Field label={filename}>
                         <textarea
                           className="code-editor"
+                          readOnly={configurationLocked}
                           spellCheck={false}
                           value={doc.text}
                           onChange={(event) => {
+                            if (configurationLocked) return;
                             setDoc({ ...doc, text: event.target.value, dirty: true });
                             setNotice("");
                           }}
@@ -1168,7 +1217,7 @@ export function App({ client }: { client: AppClient }) {
                       <button
                         type="button"
                         className="button primary"
-                        disabled={!dirty && !retryLogin}
+                        disabled={configurationLocked || (!dirty && !retryLogin)}
                         onClick={() => void save()}
                       >
                         <ArrowDownToLine size={15} /> Save {filename}
@@ -1216,7 +1265,11 @@ export function App({ client }: { client: AppClient }) {
           fallbackFocus={recoveryButton}
         >
           <form onSubmit={applyServer}>
-            <p className="dialog-intro">Connect a local tool or an existing MCP endpoint.</p>
+            <p className="dialog-intro">
+              {configurationLocked
+                ? "Quit cleanup has started. This draft is read-only; select and copy fields before closing."
+                : "Connect a local tool or an existing MCP endpoint."}
+            </p>
             {editorError && <Alert onDismiss={() => setEditorError(null)}>{editorError}</Alert>}
             <Field
               label="Server name"
@@ -1225,14 +1278,16 @@ export function App({ client }: { client: AppClient }) {
               <input
                 required
                 value={editor.name}
-                onChange={(event) => setEditor({ ...editor, name: event.target.value })}
+                readOnly={configurationLocked}
+                onChange={(event) => changeEditor({ name: event.target.value })}
               />
             </Field>
             <Field label="Transport">
               <select
                 value={editor.type}
+                disabled={configurationLocked}
                 onChange={(event) =>
-                  setEditor({ ...editor, type: event.target.value === "http" ? "http" : "stdio" })
+                  changeEditor({ type: event.target.value === "http" ? "http" : "stdio" })
                 }
               >
                 <option value="stdio">Local command (stdio)</option>
@@ -1248,15 +1303,17 @@ export function App({ client }: { client: AppClient }) {
                   <input
                     required
                     value={editor.command}
+                    readOnly={configurationLocked}
                     placeholder="/path/to/mcp-server"
-                    onChange={(event) => setEditor({ ...editor, command: event.target.value })}
+                    onChange={(event) => changeEditor({ command: event.target.value })}
                   />
                 </Field>
                 <Field label="Arguments (JSON array)">
                   <textarea
                     spellCheck={false}
                     value={editor.args}
-                    onChange={(event) => setEditor({ ...editor, args: event.target.value })}
+                    readOnly={configurationLocked}
+                    onChange={(event) => changeEditor({ args: event.target.value })}
                   />
                 </Field>
                 <div className="form-grid">
@@ -1264,23 +1321,25 @@ export function App({ client }: { client: AppClient }) {
                     <textarea
                       spellCheck={false}
                       value={editor.env}
-                      onChange={(event) => setEditor({ ...editor, env: event.target.value })}
+                      readOnly={configurationLocked}
+                      onChange={(event) => changeEditor({ env: event.target.value })}
                     />
                   </Field>
                   <Field label="Working directory" help="Optional absolute path.">
                     <input
                       value={editor.cwd}
+                      readOnly={configurationLocked}
                       placeholder="/Users/you"
-                      onChange={(event) => setEditor({ ...editor, cwd: event.target.value })}
+                      onChange={(event) => changeEditor({ cwd: event.target.value })}
                     />
                   </Field>
                 </div>
                 <button
                   type="button"
                   className="text-button"
+                  disabled={configurationLocked}
                   onClick={() =>
-                    setEditor({
-                      ...editor,
+                    changeEditor({
                       name: editor.name || "bear",
                       command: "/Applications/Bear.app/Contents/MacOS/bearcli",
                       args: '["mcp-server"]',
@@ -1299,8 +1358,9 @@ export function App({ client }: { client: AppClient }) {
                   <input
                     required
                     value={editor.url}
+                    readOnly={configurationLocked}
                     placeholder="https://your-server.example/mcp"
-                    onChange={(event) => setEditor({ ...editor, url: event.target.value })}
+                    onChange={(event) => changeEditor({ url: event.target.value })}
                   />
                 </Field>
                 <Field
@@ -1310,7 +1370,8 @@ export function App({ client }: { client: AppClient }) {
                   <textarea
                     spellCheck={false}
                     value={editor.headers}
-                    onChange={(event) => setEditor({ ...editor, headers: event.target.value })}
+                    readOnly={configurationLocked}
+                    onChange={(event) => changeEditor({ headers: event.target.value })}
                   />
                 </Field>
               </>
@@ -1319,7 +1380,8 @@ export function App({ client }: { client: AppClient }) {
               <input
                 type="checkbox"
                 checked={editor.disabled}
-                onChange={(event) => setEditor({ ...editor, disabled: event.target.checked })}
+                disabled={configurationLocked}
+                onChange={(event) => changeEditor({ disabled: event.target.checked })}
               />{" "}
               Disabled (do not mount this endpoint)
             </label>
@@ -1327,7 +1389,7 @@ export function App({ client }: { client: AppClient }) {
               <button type="button" className="button" onClick={() => setEditor(null)}>
                 Cancel
               </button>
-              <button type="submit" className="button primary">
+              <button type="submit" className="button primary" disabled={configurationLocked}>
                 Apply to draft
               </button>
             </div>
@@ -1354,8 +1416,9 @@ export function App({ client }: { client: AppClient }) {
             <button
               type="button"
               className="button danger"
+              disabled={configurationLocked}
               onClick={() => {
-                if (!parsed) return;
+                if (configurationLocked || !parsed) return;
                 const servers = { ...parsed.mcpServers };
                 delete servers[deleting];
                 update({ ...parsed, mcpServers: servers });

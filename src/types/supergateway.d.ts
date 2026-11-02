@@ -67,19 +67,21 @@ declare module "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js" {
     own(child: ChildProcess): () => Promise<void>;
     track(stop: () => Promise<void>): () => Promise<void>;
   }
-  export type PeerFactory = (owner: {
+  export interface PeerOwner {
     failure(kind: string, error: Error): void;
     exit(code: number | null, signal: string | null): void;
     message(message: JSONRPCMessage, line: string): void;
     nonJson(line: string): void;
     stderr(text: string): void;
     output(): Promise<void> | undefined;
-  }) => {
+  }
+  export interface Peer {
     write(message: JSONRPCMessage): void;
     end(): void;
     stop(): Promise<void>;
     readonly gone: boolean;
-  };
+  }
+  export type PeerFactory = (owner: PeerOwner) => Peer;
 }
 declare module "express" {
   // Passed unchanged to streamableHttpApp; all Express use stays inside Supergateway.
@@ -155,6 +157,8 @@ declare module "supergateway/dist/gateways/statefulSessions.js" {
       sessionTimeout: number,
     );
     readonly openResponses: WeakMap<StreamableHTTPServerTransport, Set<GatewayResponse>>;
+    /** Session id to its established transport; used only for pre-dispatch refusal. */
+    readonly transports: Map<string, StreamableHTTPServerTransport>;
     open(res: GatewayResponse): Promise<StreamableHTTPServerTransport>;
     post(req: GatewayRequest, res: GatewayResponse): Promise<void>;
     request(req: GatewayRequest, res: GatewayResponse): Promise<void>;
@@ -256,7 +260,11 @@ declare module "supergateway/dist/lib/upstreamModernChild.js" {
     upstream: Upstream,
     declared: { version: string | undefined; params: Record<string, string> },
     logger: GatewayLogger,
-  ) => ModernChild & { readonly reading: Set<Promise<void>> };
+  ) => ModernChild & {
+    readonly reading: Set<Promise<void>>;
+    readonly held?: Promise<void>;
+    events(response: Response, deliver: (value: unknown) => void): Promise<void>;
+  };
   export const MODERN_VERSION: string;
   export const SPEAKS_FOR_MS: number;
 }

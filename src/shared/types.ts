@@ -44,6 +44,7 @@ export type GatewayErrorCode =
   | "BackendFailure"
   | "ListenerFailure"
   | "ShutdownFailure"
+  | "Cancelled"
   | "Closed";
 
 export interface VisibleError {
@@ -83,14 +84,25 @@ export interface GatewaySnapshot {
   operationalError: VisibleError | null;
 }
 
+/** Cancellation ownership captured when an operation was requested. */
+export interface GatewayOperation {
+  readonly signal: AbortSignal;
+}
+
 export interface GatewayController {
   readLogs(query: LogQuery): LogPage;
   clearLogs(): LogPage;
   recordLocalError(error: unknown): void;
   snapshot(): GatewaySnapshot;
-  start(): Promise<GatewaySnapshot>;
+  /** Capture cancellation ownership before the caller waits on its own queue. */
+  operation(): GatewayOperation;
+  start(operation?: GatewayOperation): Promise<GatewaySnapshot>;
   stop(): Promise<GatewaySnapshot>;
-  restartServer(name: string): Promise<GatewaySnapshot>;
-  saveConfig(text: string, expectedRevision: string): Promise<GatewaySnapshot>;
+  restartServer(name: string, operation?: GatewayOperation): Promise<GatewaySnapshot>;
+  saveConfig(
+    text: string,
+    expectedRevision: string,
+    operation?: GatewayOperation,
+  ): Promise<GatewaySnapshot>;
   close(): Promise<void>;
 }

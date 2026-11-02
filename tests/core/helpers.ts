@@ -3,7 +3,8 @@ import { createServer } from "node:http";
 import { join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { type McpGatewayController, open } from "../../src/core/controller";
+import { type ControllerOptions, type McpGatewayController, open } from "../../src/core/controller";
+import type { SelfProxyResolver } from "../../src/core/network";
 import type { ConfigFormat } from "../../src/shared/config-document";
 import type { GatewayConfig, StdioServerConfig } from "../../src/shared/types";
 
@@ -36,6 +37,7 @@ export async function setup(
   config?: GatewayConfig,
   format: ConfigFormat = "json",
   text?: string,
+  options: ControllerOptions = {},
 ): Promise<{
   directory: string;
   path: string;
@@ -47,7 +49,7 @@ export async function setup(
   const path = join(directory, format === "jsonc" ? "mcp.jsonc" : "mcp.json");
   const selected = config ?? (await configFor());
   await writeFile(path, text ?? `${JSON.stringify(selected, null, 2)}\n`, { mode: 0o600 });
-  const controller = await open(join(directory, "mcp.json"));
+  const controller = await open(join(directory, "mcp.json"), options);
   return {
     directory,
     path,
@@ -59,6 +61,74 @@ export async function setup(
     },
   };
 }
+// Exercise the real listener error handler without an OS-dependent socket failure.
+export function failListener(controller: McpGatewayController): void {
+  // biome-ignore lint/complexity/useLiteralKeys: Typed test access to the privately owned listener.
+  const ingress = controller["ingress"];
+  if (!ingress?.running) throw new Error("Expected a running fixture listener");
+  // biome-ignore lint/complexity/useLiteralKeys: Trigger the actual private server's error handler.
+  ingress["server"].emit("error", new Error("Synthetic listener failure"));
+}
+
+// A resolver whose answers stay pending until the test releases them, so a
+// self-proxy check can be observed while it is still waiting.
+export function controlledResolver() {
+  let held = true;
+  let outcome: Error | string[] = ["192.0.2.10"];
+  const waiters = new Set<{
+    resolve(addresses: readonly { address: string }[]): void;
+    reject(error: Error): void;
+  }>();
+  const calls: string[] = [];
+  const answer = (addresses: string[]) => addresses.map((address) => ({ address }));
+  const resolve: SelfProxyResolver = (hostname) => {
+    calls.push(hostname);
+    if (!held) {
+      if (outcome instanceof Error) return Promise.reject(outcome);
+      return Promise.resolve(answer(outcome));
+    }
+    return new Promise((done, fail) => waiters.add({ resolve: done, reject: fail }));
+  };
+  const release = (addresses: string[] = ["192.0.2.10"]) => {
+    held = false;
+    outcome = addresses;
+    for (const waiter of waiters) waiter.resolve(answer(addresses));
+    waiters.clear();
+  };
+  return {
+    resolve,
+    calls,
+    release,
+    fail(error: Error) {
+      held = false;
+      outcome = error;
+      for (const waiter of waiters) waiter.reject(error);
+      waiters.clear();
+    },
+    get pending() {
+      return waiters.size;
+    },
+  };
+}
+
+/** Bound how long a test waits for one operation, without leaving it unobserved. */
+export async function within<A>(promise: Promise<A>, timeout = 2_000): Promise<A> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("The operation did not settle before its test bound.")),
+          timeout,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export async function connect(
   address: string,
   name = "echo",
