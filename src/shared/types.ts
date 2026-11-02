@@ -1,0 +1,96 @@
+import type { ConfigFormat } from "./config-document";
+import type { LogPage, LogQuery } from "./logs";
+
+export interface GatewayConfig {
+  gateway: {
+    host: string;
+    port: number;
+    token: string;
+    autoStart?: boolean;
+    launchAtLogin?: boolean;
+  };
+  mcpServers: Record<string, StdioServerConfig | HttpServerConfig>;
+}
+
+export interface StdioServerConfig {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+  disabled?: boolean;
+}
+
+export interface HttpServerConfig {
+  url: string;
+  headers?: Record<string, string>;
+  disabled?: boolean;
+}
+
+export interface InterfaceChoice {
+  name: string;
+  address: string;
+  netmask: string;
+  loopback: boolean;
+}
+
+export type GatewayErrorCode =
+  | "InvalidConfig"
+  | "AmbiguousConfig"
+  | "UnsafeFile"
+  | "ConfigIO"
+  | "StaleRevision"
+  | "ConfigLocked"
+  | "NetworkPolicy"
+  | "BackendFailure"
+  | "ListenerFailure"
+  | "ShutdownFailure"
+  | "Closed";
+
+export interface VisibleError {
+  occurrenceId: string;
+  code: GatewayErrorCode;
+  message: string;
+}
+
+export interface ServerSnapshot {
+  name: string;
+  type: "stdio" | "http";
+  endpoint: string;
+  enabled: boolean;
+  /** Mounted means ingress is available; no backend handshake is implied. */
+  status: "stopped" | "mounted" | "error" | "disabled";
+  error: VisibleError | null;
+}
+
+export interface GatewayEvent {
+  time: string;
+  level: "info" | "error";
+  message: string;
+}
+
+export interface GatewaySnapshot {
+  configPath: string;
+  configFormat: ConfigFormat;
+  /** Explicit local configuration surface. Contains credentials; never log it. */
+  configText: string;
+  revision: string;
+  running: boolean;
+  address: string | null;
+  interfaces: InterfaceChoice[];
+  servers: ServerSnapshot[];
+  events: GatewayEvent[];
+  configError: VisibleError | null;
+  operationalError: VisibleError | null;
+}
+
+export interface GatewayController {
+  readLogs(query: LogQuery): LogPage;
+  clearLogs(): LogPage;
+  recordLocalError(error: unknown): void;
+  snapshot(): GatewaySnapshot;
+  start(): Promise<GatewaySnapshot>;
+  stop(): Promise<GatewaySnapshot>;
+  restartServer(name: string): Promise<GatewaySnapshot>;
+  saveConfig(text: string, expectedRevision: string): Promise<GatewaySnapshot>;
+  close(): Promise<void>;
+}

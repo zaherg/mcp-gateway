@@ -1,0 +1,10 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.6.4/schema.json",
+  "files": {
+    "includes": ["src/**", "tests/**", "scripts/**", "*.ts", "!tests/e2e/artifacts/**"]
+  },
+  "css": { "parser": { "tailwindDirectives": true } },
+  "formatter": { "enabled": true, "indentStyle": "space", "indentWidth": 2, "lineWidth": 100 },
+  "linter": { "enabled": true, "rules": { "preset": "recommended" } },
+  "assist": { "actions": { "source": { "organizeImports": "on" } } }
+}

@@ -1,0 +1,534 @@
+import { describe, expect, test } from "bun:test";
+import { QuitCoordinator } from "../../src/main/lifecycle";
+import { MacLoginManager } from "../../src/main/login";
+import { AppService } from "../../src/main/service";
+import { configFor, eventually, setup, TOKEN } from "../core/helpers";
+
+const desktop = {
+  platform: "macos",
+  requestQuit: () => ({ attempt: 1, phase: "pending", error: null }) as const,
+  quitStatus: () => ({ attempt: 0, phase: "idle", error: null }) as const,
+} as const;
+
+function fakeLogin() {
+  let state = 0;
+  let calls = 0;
+  const manager = new MacLoginManager({
+    status: () => state,
+    set: (enabled) => {
+      calls++;
+      state = enabled ? 1 : 0;
+      return 0;
+    },
+  });
+  return {
+    manager,
+    get calls() {
+      return calls;
+    },
+  };
+}
+
+describe("native application boundary", () => {
+  test("validates every RPC shape and never reports private request values", async () => {
+    const context = await setup();
+    try {
+      const login = fakeLogin();
+      const app = new AppService(context.controller, login.manager, () => {}, desktop);
+      for (const response of await Promise.all([
+        app.handlers.snapshot({ password: "SECRET" }),
+        app.handlers.start("SECRET"),
+        app.handlers.stop(["SECRET"]),
+        app.handlers.restartServer({ name: "echo", command: "SECRET" }),
+        app.handlers.restartServer({ name: "../SECRET" }),
+        app.handlers.copyEndpoint({ name: 3 }),
+        app.handlers.copyClientConfig({ name: "missing" }),
+        app.handlers.saveConfig({ text: "SECRET", expectedRevision: "bad" }),
+      ])) {
+        expect(response).toMatchObject({ ok: false, error: { code: "InvalidRequest" } });
+        expect(JSON.stringify(response)).not.toContain("SECRET");
+      }
+      expect(login.calls).toBe(0);
+      expect(context.controller.snapshot().running).toBe(false);
+    } finally {
+      await context.cleanup();
+    }
+  });
+
+  test("saves separately from exposure, registers login, rejects stale saves before native mutation, and copies exact route", async () => {
+    const context = await setup();
+    try {
+      const login = fakeLogin();
+      const copied: string[] = [];
+      const app = new AppService(
+        context.controller,
+        login.manager,
+        (text) => copied.push(text),
+        desktop,
+      );
+      const before = context.controller.snapshot();
+      const next = JSON.parse(before.configText);
+      next.gateway.launchAtLogin = true;
+      const response = await app.handlers.saveConfig({
+        text: JSON.stringify(next),
+        expectedRevision: before.revision,
+      });
+      expect(response.ok).toBe(true);
+      if (!response.ok) throw new Error("Save failed");
+      expect(response.value.login.enabled).toBe(true);
+      expect(response.value.gateway.running).toBe(false);
+      next.gateway.launchAtLogin = false;
+      expect(
+        (
+          await app.handlers.saveConfig({
+            text: JSON.stringify(next),
+            expectedRevision: before.revision,
+          })
+        ).ok,
+      ).toBe(false);
+      expect(login.calls).toBe(1);
+      await app.handlers.copyEndpoint({ name: "echo" });
+      await app.handlers.copyClientConfig({ name: "echo" });
+      expect(copied[0]).toBe(`http://127.0.0.1:${context.config.gateway.port}/mcp/echo`);
+      expect(JSON.parse(copied[1])).toEqual({
+        mcpServers: { echo: { url: copied[0], headers: { Authorization: `Bearer ${TOKEN}` } } },
+      });
+      expect((await app.handlers.start()).ok).toBe(true);
+      expect(context.controller.snapshot().running).toBe(true);
+      expect((await app.handlers.stop()).ok).toBe(true);
+      expect(context.controller.snapshot().running).toBe(false);
+    } finally {
+      await context.cleanup();
+    }
+  });
+
+  test("a native refusal remains visible after config persistence, not a false enabled state", async () => {
+    const context = await setup();
+    try {
+      const login = new MacLoginManager({ status: () => 0, set: () => 1 });
+      const app = new AppService(context.controller, login, () => {}, desktop);
+      const before = context.controller.snapshot();
+      const next = JSON.parse(before.configText);
+      next.gateway.launchAtLogin = true;
+      const response = await app.handlers.saveConfig({
+        text: JSON.stringify(next),
+        expectedRevision: before.revision,
+      });
+      expect(response.ok).toBe(true);
+      if (!response.ok) throw new Error("Save failed");
+      expect(response.value.login.enabled).toBe(false);
+      expect(response.value.login.error).toContain("macOS refused");
+      expect(JSON.parse(response.value.gateway.configText).gateway.launchAtLogin).toBe(true);
+    } finally {
+      await context.cleanup();
+    }
+  });
+
+  test.each([1, 2])(
+    "failed login disable retries a clean save while native status stays %i",
+    async (initialState) => {
+      const initial = await configFor();
+      initial.gateway.launchAtLogin = true;
+      const context = await setup(initial);
+      let actual: number = initialState;
+      let refuse = true;
+      const calls: boolean[] = [];
+      const login = new MacLoginManager({
+        status: () => actual,
+        set: (enabled) => {
+          calls.push(enabled);
+          if (refuse) return 1;
+          actual = enabled ? 1 : 0;
+          return 0;
+        },
+      });
+      const app = new AppService(context.controller, login, () => {}, desktop);
+      try {
+        const before = context.controller.snapshot();
+        const config = JSON.parse(before.configText);
+        config.gateway.launchAtLogin = false;
+        config.gateway.autoStart = true;
+        const first = await app.handlers.saveConfig({
+          text: JSON.stringify(config),
+          expectedRevision: before.revision,
+        });
+        expect(first.ok).toBe(true);
+        if (!first.ok) throw new Error("Expected persisted config");
+        expect(first.value.login.enabled).toBe(initialState === 1);
+        expect(first.value.login.error).toContain("refused");
+        expect(first.value.gateway.running).toBe(false);
+        expect(JSON.parse(first.value.gateway.configText).gateway.launchAtLogin).toBe(false);
+        for (let poll = 0; poll < 3; poll++)
+          expect(await app.handlers.snapshot()).toMatchObject({
+            ok: true,
+            value: { login: first.value.login },
+          });
+        expect(calls).toEqual([false]);
+        expect(
+          await app.handlers.saveConfig({
+            text: '{"broken":true}',
+            expectedRevision: first.value.gateway.revision,
+          }),
+        ).toMatchObject({ ok: false, error: { code: "InvalidConfig" } });
+        expect(
+          await app.handlers.saveConfig({
+            text: first.value.gateway.configText,
+            expectedRevision: before.revision,
+          }),
+        ).toMatchObject({ ok: false, error: { code: "StaleRevision" } });
+        expect(calls).toEqual([false]);
+        refuse = false;
+        const retry = await app.handlers.saveConfig({
+          text: first.value.gateway.configText,
+          expectedRevision: first.value.gateway.revision,
+        });
+        expect(retry.ok).toBe(true);
+        if (!retry.ok) throw new Error("Expected successful retry");
+        expect(retry.value.login).toEqual({ enabled: false, supported: true, error: null });
+        expect(calls).toEqual([false, false]);
+        expect(retry.value.gateway.configText).toBe(first.value.gateway.configText);
+        expect(retry.value.gateway.revision).toBe(first.value.gateway.revision);
+        expect(retry.value.gateway.running).toBe(false);
+        await app.handlers.saveConfig({
+          text: retry.value.gateway.configText,
+          expectedRevision: retry.value.gateway.revision,
+        });
+        expect(calls).toEqual([false, false]);
+      } finally {
+        await context.cleanup();
+      }
+    },
+  );
+
+  test("clipboard exceptions and closed-controller requests return sanitized failures", async () => {
+    const context = await setup();
+    try {
+      const app = new AppService(
+        context.controller,
+        fakeLogin().manager,
+        () => {
+          throw new Error("SECRET clipboard payload");
+        },
+        desktop,
+      );
+      expect(await app.handlers.copyClientConfig({ name: "echo" })).toEqual({
+        ok: false,
+        error: {
+          code: "OperationFailed",
+          message: "The application operation failed. Open Logs for details.",
+          occurrenceId: expect.any(String),
+        },
+      });
+      expect(
+        context.controller
+          .readLogs({ after: 0 })
+          .entries.some((entry) => entry.text.includes("SECRET clipboard payload")),
+      ).toBe(true);
+      expect(context.controller.snapshot().operationalError).toBeNull();
+      expect(JSON.stringify(context.controller.snapshot().events)).not.toContain(
+        "SECRET clipboard payload",
+      );
+      await context.controller.close();
+      const response = await app.handlers.start();
+      expect(response.ok).toBe(false);
+      if (response.ok) throw new Error("Closed controller must refuse start");
+      expect(response.error.code).toBe("Closed");
+    } finally {
+      await context.cleanup();
+    }
+  });
+
+  test("isolated native verification cannot change login registration", () => {
+    let calls = 0;
+    const login = new MacLoginManager(
+      {
+        status: () => 0,
+        set: () => {
+          calls++;
+          return 0;
+        },
+      },
+      false,
+    );
+    expect(login.setEnabled(true).supported).toBe(false);
+    expect(calls).toBe(0);
+    expect(new MacLoginManager({ status: () => 2, set: () => 0 }).status().error).toContain(
+      "Approve",
+    );
+  });
+
+  test("native quit vetoes synchronously, waits once, then permits the second quit event", async () => {
+    let finish = () => {};
+    let cleaned = 0;
+    let quits = 0;
+    let vetoes = 0;
+    const coordinator = new QuitCoordinator(
+      async () => {
+        cleaned++;
+        await new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+      },
+      () => {
+        quits++;
+      },
+      () => {
+        throw new Error("Unexpected cleanup failure");
+      },
+    );
+    coordinator.handle(() => {
+      vetoes++;
+    });
+    coordinator.handle(() => {
+      vetoes++;
+    });
+    expect(vetoes).toBe(2);
+    await Bun.sleep(0);
+    expect(cleaned).toBe(1);
+    expect(quits).toBe(0);
+    finish();
+    await Bun.sleep(0);
+    expect(quits).toBe(1);
+    coordinator.handle(() => {
+      vetoes++;
+    });
+    expect(vetoes).toBe(2);
+  });
+
+  test("cleanup failures are reported without approving native quit", async () => {
+    let failed = 0;
+    let quits = 0;
+    const coordinator = new QuitCoordinator(
+      async () => {
+        throw new Error("failure");
+      },
+      () => {
+        quits++;
+      },
+      () => {
+        failed++;
+      },
+    );
+    coordinator.handle(() => {});
+    await Bun.sleep(0);
+    expect(failed).toBe(1);
+    expect(quits).toBe(0);
+  });
+});
+
+test("JSONC service saves/copies with explicit mode and retains source environment references", async () => {
+  const config = {
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: Preserve a source environment reference, not an expanded secret.
+    gateway: { host: "127.0.0.1", port: 8765, token: "${JSONC_SERVICE_TOKEN}" },
+    mcpServers: { remote: { url: "https://synthetic.example/mcp" } },
+  };
+  const text = `// retained service comment\n${JSON.stringify(config)}`;
+  const previous = process.env.JSONC_SERVICE_TOKEN;
+  process.env.JSONC_SERVICE_TOKEN = TOKEN;
+  const context = await setup(config, "jsonc", text);
+  try {
+    const copied: string[] = [];
+    const login = fakeLogin();
+    const app = new AppService(
+      context.controller,
+      login.manager,
+      (value) => copied.push(value),
+      desktop,
+    );
+    const before = context.controller.snapshot();
+    expect(
+      await app.handlers.saveConfig({ text, expectedRevision: before.revision }),
+    ).toMatchObject({ ok: true, value: { gateway: { configText: text, configFormat: "jsonc" } } });
+    expect(await app.handlers.copyClientConfig({ name: "remote" })).toEqual({
+      ok: true,
+      value: null,
+    });
+    expect(JSON.parse(copied[0]).mcpServers.remote.headers.Authorization).toBe(`Bearer ${TOKEN}`);
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: Preserve a source environment reference, not an expanded secret.
+    expect(context.controller.snapshot().configText).toContain("${JSONC_SERVICE_TOKEN}");
+    expect(context.controller.snapshot().configText).not.toContain(TOKEN);
+    expect(login.calls).toBe(0);
+  } finally {
+    if (previous === undefined) delete process.env.JSONC_SERVICE_TOKEN;
+    else process.env.JSONC_SERVICE_TOKEN = previous;
+    await context.cleanup();
+  }
+});
+
+test("local log RPC validates strict queries, serves incremental pages and clear independently from real failures", async () => {
+  const context = await setup();
+  const app = new AppService(context.controller, fakeLogin().manager, () => {}, desktop);
+  try {
+    const invalidShapes = [undefined, null, {}, { after: 0, extra: "fake-private" }];
+    const invalidValues = [
+      { after: -1 },
+      { after: 0.5 },
+      { after: Number.MAX_SAFE_INTEGER + 1 },
+      { after: 0, level: "fatal-private" },
+      { after: 0, server: "../fake-private" },
+      { after: 0, text: "x".repeat(513) },
+    ];
+    for (const [inputs, message] of [
+      [invalidShapes, "The application request is invalid."],
+      [invalidValues, "The log query is invalid."],
+    ] as const) {
+      for (const input of inputs) {
+        const response = await app.handlers.readLogs(input);
+        expect(response).toMatchObject({ ok: false, error: { code: "InvalidRequest", message } });
+        if (!response.ok) expect(JSON.stringify(response.error)).not.toContain("fake-private");
+      }
+    }
+    expect(await app.handlers.clearLogs({ private: "fake-private" })).toMatchObject({
+      ok: false,
+      error: { code: "InvalidRequest" },
+    });
+    const page = await app.handlers.readLogs({ after: 0, level: "info", text: "configuration" });
+    if (!page.ok) throw new Error("Expected local log page");
+    expect(page.value.entries[0].text).toBe("Configuration loaded.");
+    const poll = await app.handlers.readLogs({ after: page.value.cursor });
+    expect(poll).toMatchObject({ ok: true, value: { entries: [], hasMore: false } });
+    const cleared = await app.handlers.clearLogs();
+    expect(cleared).toMatchObject({ ok: true, value: { entries: [], generation: 1 } });
+  } finally {
+    await context.cleanup();
+  }
+});
+
+test("Quit validates parameters before invoking the local callback and acknowledges only the request", async () => {
+  const context = await setup();
+  let requested = 0;
+  const app = new AppService(context.controller, fakeLogin().manager, () => {}, {
+    platform: "linux",
+    requestQuit: () => {
+      requested++;
+      return desktop.requestQuit();
+    },
+    quitStatus: desktop.quitStatus,
+  });
+  try {
+    for (const input of [{ secret: "fixture-only" }, "fixture-only", [], false])
+      expect(await app.handlers.quit(input)).toMatchObject({
+        ok: false,
+        error: { code: "InvalidRequest" },
+      });
+    expect(requested).toBe(0);
+    expect(await app.handlers.snapshot()).toMatchObject({ ok: true, value: { platform: "linux" } });
+    expect(await app.handlers.quit()).toEqual({
+      ok: true,
+      value: { requested: true, status: { attempt: 1, phase: "pending", error: null } },
+    });
+    expect(requested).toBe(1);
+    // Cleanup belongs to QuitCoordinator; RPC must not claim it has completed.
+    expect((await app.handlers.start()).ok).toBe(true);
+    const failing = new AppService(context.controller, fakeLogin().manager, () => {}, {
+      platform: "linux",
+      requestQuit: () => {
+        throw new Error("synthetic-private-quit");
+      },
+      quitStatus: desktop.quitStatus,
+    });
+    expect(await failing.handlers.quit()).toMatchObject({
+      ok: false,
+      error: { code: "OperationFailed" },
+    });
+  } finally {
+    await context.cleanup();
+  }
+});
+
+test("local Quit feedback survives delayed partial cleanup failure and permits a fresh retry", async () => {
+  const context = await setup();
+  let nativeClosed = false;
+  let attempts = 0;
+  let rejectCleanup = (_error: Error) => {};
+  let finishCleanup = () => {};
+  let exits = 0;
+  let vetoes = 0;
+  const login = {
+    status: () => {
+      if (nativeClosed) throw new Error("synthetic-private-released-library");
+      return { enabled: false, supported: true, error: null };
+    },
+    setEnabled: (_enabled: boolean) => {
+      throw new Error("released login must not be mutated");
+    },
+  };
+  const quit = new QuitCoordinator(
+    async () => {
+      await context.controller.close();
+      nativeClosed = true;
+      attempts++;
+      await new Promise<void>((resolve, reject) => {
+        rejectCleanup = reject;
+        finishCleanup = resolve;
+      });
+    },
+    () => {
+      exits++;
+    },
+    (error) => context.controller.recordLocalError(error),
+  );
+  const app = new AppService(context.controller, login, () => {}, {
+    platform: "linux",
+    requestQuit: () => {
+      quit.handle(() => {
+        vetoes++;
+      });
+      return quit.status();
+    },
+    quitStatus: () => quit.status(),
+  });
+  try {
+    expect(await app.handlers.quitStatus({ secret: "fixture-only" })).toMatchObject({
+      ok: false,
+      error: { code: "InvalidRequest" },
+    });
+    expect(await app.handlers.quitStatus()).toEqual({
+      ok: true,
+      value: { attempt: 0, phase: "idle", error: null },
+    });
+    expect(await app.handlers.quit()).toEqual({
+      ok: true,
+      value: { requested: true, status: { attempt: 1, phase: "pending", error: null } },
+    });
+    await eventually(() => attempts === 1);
+    rejectCleanup(new Error("synthetic-private-partial-cleanup"));
+    await eventually(() => quit.status().phase === "failed");
+    const failed = await app.handlers.quitStatus();
+    expect(failed).toEqual({
+      ok: true,
+      value: {
+        attempt: 1,
+        phase: "failed",
+        error: "Quit cleanup failed. The app has not exited. Retry Quit.",
+      },
+    });
+    expect(JSON.stringify(failed)).not.toContain("synthetic-private");
+    expect(await app.handlers.snapshot()).toMatchObject({
+      ok: true,
+      value: { gateway: { running: false }, login: { supported: true } },
+    });
+    const before = context.controller.snapshot();
+    expect(
+      await app.handlers.saveConfig({ text: before.configText, expectedRevision: before.revision }),
+    ).toMatchObject({ ok: false, error: { code: "InvalidRequest" } });
+    expect(exits).toBe(0);
+    expect(await app.handlers.quit()).toEqual({
+      ok: true,
+      value: { requested: true, status: { attempt: 2, phase: "pending", error: null } },
+    });
+    await eventually(() => attempts === 2);
+    expect(failed).toMatchObject({ value: { attempt: 1, phase: "failed" } });
+    finishCleanup();
+    await eventually(() => exits === 1);
+    expect(exits).toBe(1);
+    expect(vetoes).toBe(2);
+    expect(await app.handlers.quitStatus()).toEqual({
+      ok: true,
+      value: { attempt: 2, phase: "ready", error: null },
+    });
+  } finally {
+    finishCleanup();
+    await context.cleanup();
+  }
+});
