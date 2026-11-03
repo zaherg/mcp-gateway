@@ -47,6 +47,24 @@ test("configuration directories retain macOS and select checked Linux XDG paths"
   expect(() => configurationDirectory("linux", "relative", {})).toThrow("Home directory");
 });
 
+test("SDK config bases preserve the existing suffix and explicit isolated data location", () => {
+  expect(
+    configurationDirectory("macos", "/unused", {}, "/home/synthetic/Library/Application Support"),
+  ).toBe("/home/synthetic/Library/Application Support/MCP Gateway");
+  expect(configurationDirectory("linux", "/unused", {}, "/xdg/config")).toBe(
+    "/xdg/config/MCP Gateway",
+  );
+  expect(
+    configurationDirectory(
+      "macos",
+      "/unused",
+      { MCP_GATEWAY_ISOLATED: "1", MCP_GATEWAY_DATA_DIR: "/isolated/data" },
+      "/framework/config",
+    ),
+  ).toBe("/isolated/data");
+  expect(() => configurationDirectory("macos", "/unused", {}, "relative")).toThrow("absolute path");
+});
+
 test("Linux login and Cocoa probes are explicitly unavailable without dlopen", () => {
   const login = openLoginManager("linux", "/nonexistent/login.dylib", true);
   expect(login.manager.status()).toEqual({

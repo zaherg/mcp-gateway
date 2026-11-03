@@ -1,10 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants, type Stats } from "node:fs";
 import * as fs from "node:fs/promises";
-import { basename, dirname, join, parse, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { type ConfigFormat, configFormat } from "../shared/config-document";
 import { MAX_CONFIG_BYTES, newConfigText, parseConfig } from "./config";
 import { failure, GatewayError } from "./errors";
+import { ensureParent, safeParent } from "./private-parent";
 
 export interface ConfigDocument {
   text: string;
@@ -21,47 +22,6 @@ async function guarded<A>(work: () => Promise<A>): Promise<A> {
     if (error instanceof GatewayError) throw error;
     throw failure("ConfigIO", "Configuration file access failed.");
   }
-}
-
-async function safeParent(path: string): Promise<void> {
-  const parent = dirname(path);
-  let current = parse(parent).root;
-  for (const part of parent.slice(current.length).split("/").filter(Boolean)) {
-    current = join(current, part);
-    const stat = await fs.lstat(current);
-    if (!stat.isDirectory() || stat.isSymbolicLink())
-      throw failure("UnsafeFile", "Configuration paths must not contain symlinks.");
-  }
-  const stat = await fs.lstat(parent);
-  if ((stat.mode & 0o022) !== 0 || (process.getuid && stat.uid !== process.getuid()))
-    throw failure(
-      "UnsafeFile",
-      "The configuration directory must be owned by this user and not writable by others.",
-    );
-}
-
-async function ensureParent(path: string): Promise<void> {
-  const parent = dirname(path);
-  let current = parse(parent).root;
-  for (const part of parent.slice(current.length).split("/").filter(Boolean)) {
-    current = join(current, part);
-    let stat: Stats;
-    try {
-      stat = await fs.lstat(current);
-    } catch (error) {
-      if (!missing(error)) throw error;
-      await safeParent(current);
-      try {
-        await fs.mkdir(current, { mode: 0o700 });
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      }
-      stat = await fs.lstat(current);
-    }
-    if (!stat.isDirectory() || stat.isSymbolicLink())
-      throw failure("UnsafeFile", "Configuration paths must not contain symlinks.");
-  }
-  await safeParent(path);
 }
 
 function safeFile(stat: Stats): void {

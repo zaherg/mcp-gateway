@@ -1,7 +1,13 @@
 import { createRoot } from "react-dom/client";
 import { App } from "../../src/mainview/App";
 import "../../src/mainview/styles.css";
-import type { AppClient, AppResult, AppSnapshot, QuitStatus } from "../../src/shared/rpc";
+import type {
+  AppClient,
+  AppResult,
+  AppSnapshot,
+  QuitStatus,
+  UpdateStatus,
+} from "../../src/shared/rpc";
 import type { GatewayConfig } from "../../src/shared/types";
 
 let config: GatewayConfig = {
@@ -18,6 +24,21 @@ let revision = 1;
 let running = false;
 let broken = false;
 let quitStatus: QuitStatus = { attempt: 0, phase: "idle", error: null };
+let update: UpdateStatus = {
+  supported: true,
+  installationEnabled: true,
+  automaticUpdates: true,
+  installedVersion: "0.3.1",
+  availableVersion: null,
+  availableHash: null,
+  readyVersion: null,
+  phase: "idle",
+  error: null,
+  preferenceError: null,
+  recoveryRequired: false,
+  recoveryPath: null,
+  checkedAt: null,
+};
 const calls: Array<{ action: string; expectedRevision?: string; name?: string }> = [];
 function snapshot(): AppSnapshot {
   return {
@@ -52,6 +73,7 @@ function snapshot(): AppSnapshot {
       operationalError: null,
     },
     login: { enabled: config.gateway.launchAtLogin ?? false, supported: true, error: null },
+    update,
   };
 }
 const ok = <T,>(value: T): AppResult<T> => ({ ok: true, value });
@@ -113,12 +135,26 @@ const client: AppClient = {
     calls.push({ action: "copyClientConfig", name });
     return ok(null);
   },
+  updatesStatus: async () => ok(update),
+  updatesCheck: async () => ok(update),
+  updatesDownload: async () => ok(update),
+  updatesSetAutomatic: async ({ automatic }) => {
+    update = { ...update, automaticUpdates: automatic };
+    return ok(update);
+  },
+  updatesRestart: async ({ version, hash }) => {
+    calls.push({ action: "updatesRestart", name: `${version}:${hash}` });
+    update = { ...update, phase: "restarting" };
+    quitStatus = { attempt: quitStatus.attempt + 1, phase: "ready", error: null };
+    return ok({ requested: true, status: quitStatus });
+  },
 };
 declare global {
   interface Window {
     uiFixture: {
       externalChange(): void;
       breakConfig(): void;
+      setUpdate(next: UpdateStatus): void;
       state(): { config: GatewayConfig; revision: number; calls: typeof calls };
     };
   }
@@ -131,6 +167,9 @@ window.uiFixture = {
     broken = true;
     revision++;
     running = false;
+  },
+  setUpdate(next) {
+    update = next;
   },
   state: () => ({ config, revision, calls }),
 };

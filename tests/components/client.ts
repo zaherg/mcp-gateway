@@ -36,6 +36,23 @@ export function snapshot(): AppSnapshot {
       operationalError: null,
     },
     login: { enabled: false, supported: true, error: null },
+    update: {
+      supported: true,
+      installationEnabled: true,
+      automaticUpdates: true,
+      installedVersion: "0.3.1",
+      availableVersion: null,
+      availableHash: null,
+      readyVersion: null,
+      phase: "idle",
+      error: null,
+      preferenceError: null,
+      recoveryRequired: false,
+      recoveryPath: null,
+      checkedAt: null,
+      attemptId: null,
+      transaction: null,
+    },
   };
 }
 export const ok = <T>(value: T): AppResult<T> => ({ ok: true, value });
@@ -73,6 +90,14 @@ export function fixture(initial = snapshot()) {
     ),
     copyEndpoint: vi.fn(async (): Promise<AppResult<null>> => failure("OperationFailed")),
     copyClientConfig: vi.fn(async (): Promise<AppResult<null>> => failure("OperationFailed")),
+    updatesStatus: vi.fn(async () => ok(current.update)),
+    updatesCheck: vi.fn(async () => ok(current.update)),
+    updatesDownload: vi.fn(async () => ok(current.update)),
+    updatesSetAutomatic: vi.fn(async () => ok(current.update)),
+    updatesRestart: vi.fn(
+      async (): Promise<AppResult<QuitRequest>> =>
+        ok({ requested: true, status: { attempt: 1, phase: "pending", error: null } }),
+    ),
   } satisfies AppClient;
   return {
     client,

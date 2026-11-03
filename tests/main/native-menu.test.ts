@@ -6,12 +6,32 @@ import { readFile } from "node:fs/promises";
 test("native Cmd+Q uses the same asynchronous QuitCoordinator path as menu Quit", async () => {
   const source = await readFile(new URL("../../src/main/index.ts", import.meta.url), "utf8");
   expect(source).toContain('{ label: "Quit MCP Gateway", action: "quit", accelerator: "Cmd+Q" }');
-  expect(source).toMatch(/case "quit":\s*Utils\.quit\(\);/);
+  expect(source).toContain('{ label: "Check for Updates…", action: "updates" }');
+  expect(source).toMatch(/case "updates":\s*showUpdatesSection\(\);/);
+  expect(source).toContain('window.dispatchEvent(new Event("mcp-gateway:show-updates"))');
+  expect(source).toMatch(/const updateLabel =[\s\S]*?action: "updates"/);
+  expect(source).toMatch(/pendingShowUpdates/);
+  expect(source).toMatch(/case "quit":\s*quit\?\.armQuit\(\);\s*Utils\.quit\(\);/);
   expect(source).toMatch(/Electrobun\.events\.on\("before-quit",[\s\S]*?quit\.handle/);
   expect(source).toMatch(/new QuitCoordinator\([\s\S]*?await controller\.close\(\)/);
   expect(source).toMatch(
-    /controller\.recordLocalError\(error\);\s*console\.error\([^\n]+\);\s*updateMenu\(\);\s*\/\/[^\n]+\s*openWindow\(\);/,
+    /\(error, kind, settlement\) => \{[\s\S]*?controller\.recordLocalError\(error\);[\s\S]*?updateMenu\(\);[\s\S]*?openWindow\(\);/,
   );
+  expect(source).toMatch(/reserveUpdate: \(candidate\) => quit\?\.reserveUpdate\(candidate\)/);
+  expect(source).toMatch(/acceptUpdateRestart\(attempt\)/);
+  expect(source).toMatch(/quit\?\.armQuit\(\)/);
+});
+
+test("late or recreated renderer readiness completes updater startup once without a fixed startup wait", async () => {
+  const source = await readFile(new URL("../../src/main/index.ts", import.meta.url), "utf8");
+  expect(source).toMatch(
+    /function completeUpdateStartup\(\)[\s\S]*?updateStartup \?\?= \(async \(\) => \{\s*await updates\.completeInitialization\(\);/,
+  );
+  expect(source).toMatch(
+    /snapshot: async[\s\S]*?if \(!ready\) \{[\s\S]*?void completeUpdateStartup\(\);/,
+  );
+  expect(source).toContain("if (!window) await completeUpdateStartup();");
+  expect(source).not.toContain("if (window) await waitForNativeWindow(() => windowReady);");
 });
 
 test("Cmd+W closes only the current window and its isolated Cocoa probe queues app-local input", async () => {

@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test, vi } from "vitest";
 import { App } from "../../src/mainview/App";
+import type { AppResult } from "../../src/shared/rpc";
 import { config, failure, fixture, ok, snapshot } from "./client";
 
 async function mount() {
@@ -755,3 +756,319 @@ test.each(["refused", "disconnected"])(
     expect(screen.queryByText("Quit cleanup failed.", { exact: false })).not.toBeInTheDocument();
   },
 );
+test("update restart locks configuration edits while preserving drafts", async () => {
+  const initial = snapshot();
+  initial.update.phase = "restarting";
+  initial.update.readyVersion = "0.3.2";
+  const context = fixture(initial);
+  render(<App client={context.client} />);
+  await screen.findByRole("heading", { name: "No servers configured" });
+  expect(screen.getByRole("button", { name: "Add server" })).toBeDisabled();
+  expect(screen.getByText(/update restart has started/)).toBeVisible();
+});
+
+describe("Updates settings", () => {
+  test("shows installed version, automation switch and unsupported-platform explanation", async () => {
+    const initial = snapshot();
+    const context = fixture(initial);
+    const first = render(<App client={context.client} />);
+    await screen.findByRole("heading", { name: "No servers configured" });
+    await userEvent.setup().click(screen.getByRole("button", { name: "Settings" }));
+    expect(screen.getByRole("heading", { name: "Updates" })).toBeVisible();
+    expect(screen.getByText("0.3.1")).toBeVisible();
+    expect(
+      screen.getByRole("switch", { name: /Automatically check and download updates/ }),
+    ).toBeChecked();
+    expect(screen.getByRole("button", { name: "Check for Updates" })).toBeEnabled();
+
+    first.unmount();
+    const unsupported = snapshot();
+    unsupported.update = { ...unsupported.update, supported: false, phase: "unsupported" };
+    const unsupportedContext = fixture(unsupported);
+    render(<App client={unsupportedContext.client} />);
+    await screen.findByRole("heading", { name: "No servers configured" });
+    await userEvent.setup().click(screen.getByRole("button", { name: "Settings" }));
+    expect(
+      screen.getByText(/Automatic updates are unavailable on this platform or build/),
+    ).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Check for Updates" })).not.toBeInTheDocument();
+  });
+
+  test("shows a nonmodal available banner and downloads through validated RPC", async () => {
+    const initial = snapshot();
+    initial.update = {
+      ...initial.update,
+      phase: "available",
+      availableVersion: "0.3.2",
+      availableHash: "next123456",
+    };
+    const context = fixture(initial);
+    const download = vi.fn(async () => ok(initial.update));
+    context.client.updatesDownload = download;
+    render(<App client={context.client} />);
+    await screen.findByRole("heading", { name: "No servers configured" });
+    expect(screen.getByText(/Version 0.3.2 is available/)).toBeVisible();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.setup().click(screen.getByRole("button", { name: "Download Update" }));
+    expect(download).toHaveBeenCalledTimes(1);
+  });
+
+  test("announces indeterminate progress and disables duplicate actions while downloading", async () => {
+    const initial = snapshot();
+    initial.update = {
+      ...initial.update,
+      phase: "downloading",
+      availableVersion: "0.3.2",
+      availableHash: "next123456",
+    };
+    const context = fixture(initial);
+    render(<App client={context.client} />);
+    await screen.findByRole("heading", { name: "No servers configured" });
+    await userEvent.setup().click(screen.getByRole("button", { name: "Settings" }));
+    expect(screen.getByRole("progressbar", { name: "Update progress" })).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Check for Updates" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Downloading…" })).toBeDisabled();
+  });
+
+  test("renders a retry action for a sanitized update error", async () => {
+    const initial = snapshot();
+    initial.update = {
+      ...initial.update,
+      phase: "error",
+      error: "The update operation failed.",
+    };
+    const context = fixture(initial);
+    const check = vi.fn(async () => ok(initial.update));
+    context.client.updatesCheck = check;
+    render(<App client={context.client} />);
+    await screen.findByRole("heading", { name: "No servers configured" });
+    await userEvent.setup().click(screen.getByRole("button", { name: "Settings" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("The update operation failed.");
+    await userEvent.setup().click(screen.getByRole("button", { name: "Retry Check" }));
+    expect(check).toHaveBeenCalledTimes(1);
+  });
+
+  test("requires explicit draft-discard confirmation before restarting and preserves cancel", async () => {
+    const initial = snapshot();
+    initial.update = {
+      ...initial.update,
+      installationEnabled: true,
+      phase: "ready",
+      availableVersion: "0.3.2",
+      availableHash: "next123456",
+      readyVersion: "0.3.2",
+    };
+    const context = fixture(initial);
+    const restart = vi.fn(async () =>
+      ok({
+        requested: true as const,
+        status: { attempt: 1, phase: "pending" as const, error: null },
+      }),
+    );
+    context.client.updatesRestart = restart;
+    render(<App client={context.client} />);
+    await screen.findByRole("heading", { name: "No servers configured" });
+    await userEvent.setup().click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: /Authoritative configuration/ }));
+    fireEvent.change(screen.getByLabelText("mcp.json"), {
+      target: { value: `${JSON.stringify(config, null, 2)}\n// draft` },
+    });
+    await userEvent.setup().click(screen.getByRole("button", { name: "Restart to Update" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "Active MCP connections will be interrupted",
+    );
+    await userEvent.setup().click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(restart).not.toHaveBeenCalled();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Restart to Update" }));
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Discard draft and restart" }));
+    expect(restart).toHaveBeenCalledWith({ version: "0.3.2", hash: "next123456" });
+  });
+
+  test("locks restart while installation is disabled and exposes ready state after recreation", async () => {
+    const initial = snapshot();
+    initial.update = {
+      ...initial.update,
+      installationEnabled: false,
+      phase: "ready",
+      availableVersion: "0.3.2",
+      availableHash: "next123456",
+      readyVersion: "0.3.2",
+    };
+    const context = fixture(initial);
+    const first = render(<App client={context.client} />);
+    await screen.findByRole("heading", { name: "No servers configured" });
+    await userEvent.setup().click(screen.getByRole("button", { name: "Settings" }));
+    expect(screen.getByRole("button", { name: "Restart to Update" })).toBeDisabled();
+    expect(screen.getByText(/Installation is disabled/)).toBeVisible();
+    first.unmount();
+    render(<App client={context.client} />);
+    await screen.findByRole("heading", { name: "No servers configured" });
+    await userEvent.setup().click(screen.getByRole("button", { name: "Settings" }));
+    expect(screen.getByRole("button", { name: "Restart to Update" })).toBeVisible();
+  });
+
+  test("window/menu update signal switches to Settings without opening a new surface", async () => {
+    const context = fixture();
+    render(<App client={context.client} />);
+    await screen.findByRole("heading", { name: "No servers configured" });
+    act(() => {
+      window.dispatchEvent(new Event("mcp-gateway:show-updates"));
+    });
+    expect(await screen.findByRole("heading", { name: "Gateway settings" })).toBeVisible();
+    const updatesHeading = screen.getByRole("heading", { name: "Updates" });
+    expect(updatesHeading).toBeVisible();
+    await waitFor(() => expect(document.activeElement).toBe(updatesHeading));
+  });
+});
+
+test("an unresolved manual update action does not disable Stop, Quit, Logs or drafts", async () => {
+  const context = fixture();
+  let release: (result: AppResult<import("../../src/shared/rpc").UpdateStatus>) => void = () => {};
+  const pending = new Promise<AppResult<import("../../src/shared/rpc").UpdateStatus>>((resolve) => {
+    release = resolve;
+  });
+  context.client.updatesCheck = vi.fn(async () => pending);
+  render(<App client={context.client} />);
+  await screen.findByRole("heading", { name: "No servers configured" });
+  await userEvent.setup().click(screen.getByRole("button", { name: "Settings" }));
+  await userEvent.setup().click(screen.getByRole("button", { name: "Check for Updates" }));
+  expect(screen.getByRole("button", { name: "Start gateway" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Quit MCP Gateway" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Logs" })).toBeEnabled();
+  await act(async () => {
+    release(
+      ok({
+        ...snapshot().update,
+        phase: "available",
+        availableVersion: "0.3.2",
+        availableHash: "next123456",
+      }),
+    );
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Download Update" })).toBeEnabled(),
+  );
+});
+
+test("recovery-required state disables new update actions and exposes the retained copy", async () => {
+  const initial = snapshot();
+  initial.update = {
+    ...initial.update,
+    phase: "error",
+    error: "An update transaction has no trustworthy completion record.",
+    recoveryRequired: true,
+    recoveryPath: "/synthetic/recovery/previous.app",
+  };
+  const context = fixture(initial);
+  render(<App client={context.client} />);
+  await screen.findByRole("heading", { name: "No servers configured" });
+  await userEvent.setup().click(screen.getByRole("button", { name: "Settings" }));
+  expect(screen.getByRole("button", { name: "Retry Check" })).toBeDisabled();
+  expect(screen.getByText(/previous update needs recovery/)).toBeVisible();
+  expect(screen.getByText(/\/synthetic\/recovery\/previous\.app/)).toBeVisible();
+});
+
+test("old update action cannot overwrite fresh restart evidence; authoritative retirement unlocks", async () => {
+  const initial = snapshot();
+  initial.update = {
+    ...initial.update,
+    phase: "ready",
+    availableVersion: "0.3.2",
+    availableHash: "next123456",
+    readyVersion: "0.3.2",
+  };
+  const context = fixture(initial);
+  let release!: (value: AppResult<import("../../src/shared/rpc").UpdateStatus>) => void;
+  context.client.updatesSetAutomatic = vi.fn(
+    async () =>
+      new Promise((done) => {
+        release = done;
+      }),
+  );
+  context.client.updatesRestart = vi.fn(async () => {
+    throw new Error("lost acknowledgement");
+  });
+  render(<App client={context.client} />);
+  await screen.findByRole("heading", { name: "No servers configured" });
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Settings" }));
+  await user.click(
+    screen.getByRole("switch", { name: /Automatically check and download updates/ }),
+  );
+  await user.click(screen.getByRole("button", { name: "Restart to Update" }));
+  await user.click(screen.getByRole("button", { name: "Restart to update" }));
+  await screen.findByText(/Could not request the update restart/);
+  context.set({ ...initial, update: { ...initial.update, phase: "restarting", attemptId: 1 } });
+  context.client.quitStatus = vi.fn(async () => ok({ attempt: 1, phase: "idle", error: null }));
+  await screen.findByText(/an update restart has started/, {}, { timeout: 4000 });
+  await waitFor(() => expect(context.client.quitStatus).toHaveBeenCalled(), { timeout: 4000 });
+  await act(async () => release(ok({ ...initial.update, automaticUpdates: false })));
+  expect(screen.getByText("Restarting to apply the verified update.")).toBeVisible();
+  expect(
+    screen.getByRole("switch", { name: /Automatically check and download updates/ }),
+  ).toBeChecked();
+  expect(screen.getByLabelText("Port")).toHaveAttribute("readonly");
+  expect(screen.getByRole("button", { name: "Logs" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Quit MCP Gateway" })).toBeEnabled();
+  context.set({ ...initial, update: { ...initial.update, attemptId: null } });
+  await waitFor(() => expect(screen.getByLabelText("Port")).not.toHaveAttribute("readonly"), {
+    timeout: 4000,
+  });
+}, 12000);
+
+for (const mode of ["delayed", "failed"] as const) {
+  test(`lost restart acknowledgement keeps drafts locked with ${mode} updater polling and fresh idle Quit`, async () => {
+    const initial = snapshot();
+    initial.update = {
+      ...initial.update,
+      phase: "ready",
+      availableVersion: "0.3.2",
+      availableHash: "next123456",
+      readyVersion: "0.3.2",
+    };
+    const context = fixture(initial);
+    let reads = 0;
+    let release:
+      | ((value: AppResult<import("../../src/shared/rpc").AppSnapshot>) => void)
+      | undefined;
+    context.client.snapshot = vi.fn(async () => {
+      if (++reads === 1) return ok(initial);
+      if (mode === "failed") return failure("Unavailable");
+      return new Promise<AppResult<import("../../src/shared/rpc").AppSnapshot>>((done) => {
+        release = done;
+      });
+    });
+    context.client.updatesRestart = vi.fn(async () => {
+      throw new Error("Acknowledgement lost");
+    });
+    render(<App client={context.client} />);
+    await screen.findByRole("heading", { name: "No servers configured" });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    await user.click(screen.getByRole("button", { name: "Restart to Update" }));
+    await user.click(screen.getByRole("button", { name: "Restart to update" }));
+    await screen.findByText(/Could not request the update restart/);
+    await waitFor(() => expect(context.client.quitStatus.mock.calls.length).toBeGreaterThan(1), {
+      timeout: 4000,
+    });
+    expect(screen.getByLabelText("Port")).toHaveAttribute("readonly");
+    expect(screen.getByRole("button", { name: "Logs" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Quit MCP Gateway" })).toBeEnabled();
+    if (release) {
+      await act(async () =>
+        release?.(
+          ok({ ...initial, update: { ...initial.update, phase: "restarting", attemptId: 1 } }),
+        ),
+      );
+      expect(screen.getByLabelText("Port")).toHaveAttribute("readonly");
+    }
+  });
+}

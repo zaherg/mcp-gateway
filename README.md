@@ -45,6 +45,41 @@ Retention is limited to 500 entries / 4 MiB, with 32 KiB per entry.
 Logs are not saved automatically or exposed over the LAN.
 Dismissing a banner does not resolve the underlying failure; a new occurrence can appear again.
 
+### Automatic updates
+
+The local `0.3.1` build passed independent source and acceptance reviews, signing, notarization, stapling, and isolated signed two-version update and failure/recovery tests.
+Verification is recorded in [the final acceptance run](IMPLEMENTATION-PLAN.md#final-acceptance-run).
+This work did not publish or install `0.3.1`; live GitHub delivery remains untested.
+The published `0.3.0` release has no updater.
+
+Automatic updates are limited to the signed macOS arm64 stable distribution.
+Linux, Windows, Intel macOS, prerelease channels, and alternate update servers are unsupported and do not contact the update feed.
+The fixed source is `https://github.com/zaherg/mcp-gateway/releases/latest/download`; updater-capable releases must publish `macos-arm64-MCPGateway.dmg`, `stable-macos-arm64-update.json`, and `stable-macos-arm64-MCPGateway.app.tar.zst` with matching versions.
+
+Automatic checks and downloads are enabled by default.
+MCP Gateway checks after startup has settled, then daily while it runs; the **Settings → Updates** switch disables new automatic checks and download admissions.
+The preference is stored separately in owner-only `updates.json` in the application data directory, not in `mcp.json` or `mcp.jsonc`.
+Invalid or unsafe preference files disable background work and remain visible for repair; a failed write preserves the previous setting.
+A missing file means enabled.
+
+Use **Settings → Updates**, the macOS application menu **Check for Updates…**, or the tray menu for a manual check.
+Manual checking never installs an update.
+A discovered higher stable version can be downloaded without stopping the gateway or discarding a draft.
+Automatic updates off requires an explicit **Download Update** action after a manual check.
+The download and preparation status is shown in Settings; a background discovery also appears as a nonmodal notice when the window is open.
+
+**Restart to Update** requires confirmation, interrupts active MCP connections, and stops the gateway before handoff.
+If the configuration has unsaved changes, the confirmation explicitly discards the draft; it is never silently saved.
+Cleanup and handoff failures keep configuration editing locked.
+Retry Update is available only when the installer is confirmed unarmed and the verified preparation remains usable.
+If preparation cannot be restored or installation commitment is uncertain, Retry Update is unavailable; normal Quit and retained recovery remain available.
+A downloaded update is not confirmed installed until the restarted app completes initialization and reconciles the expected version and transaction.
+A verified owner-only copy of the previous application is retained for manual recovery; it is not an automatic downgrade and does not promise rollback after an arbitrary crash in the new version.
+
+Installations of `0.3.0` and older have no updater code or update feed metadata.
+Install the first updater-capable release manually once, then future stable releases can use the in-app flow.
+Development and isolated builds have no update network activity or actionable update controls.
+
 ## Security
 
 - Use a trusted LAN: HTTP does not encrypt tokens, tool arguments, or note contents.
@@ -105,8 +140,9 @@ Install Bun 1.4.4 and Node, then install dependencies:
 bun install --ignore-scripts --cache-dir .cache/bun
 ```
 
-Use `MCP_GATEWAY_BUILD_ROOT` to select a project-relative output folder.
-`dist/` holds generated UI, `build/` holds app bundles, and `artifacts/` holds distributions and verification files.
+Use `MCP_GATEWAY_BUILD_ROOT` to select a project-relative build folder and `MCP_GATEWAY_ARTIFACTS_DIR` to select the distribution/artifact folder.
+`dist/` holds generated UI, `build/` holds app bundles by default, and `artifacts/` holds distributions and verification files by default.
+Use distinct project-local values for a candidate release so retained published artifacts are not overwritten.
 
 ### macOS builds
 
@@ -126,6 +162,38 @@ Export them or use a local `.env` based on `.env.example`; exported values take 
 Never commit credentials.
 
 </details>
+
+### Release assets and verification
+
+Every updater-capable stable release must publish these exact matching assets:
+
+- `macos-arm64-MCPGateway.dmg`
+- `stable-macos-arm64-update.json`
+- `stable-macos-arm64-MCPGateway.app.tar.zst`
+
+The manifest, package version, wrapper `CFBundleVersion`, and extracted payload `version.json` must agree, and the payload must retain the fixed stable feed URL.
+`scripts/verify-release.ts` also checks the wrapper and payload signatures, notarization tickets, Gatekeeper acceptance, archive digest, a complete no-follow inventory equality between the DMG-contained wrapper and the verified wrapper (including executable and signature files), and checked detachment of its owned mount.
+It also scans for configured signing-account/password bytes.
+The credential-scan record states whether secret values were supplied; an empty secret set is not a successful secret scan.
+Cancellation waits for attach settlement and cleanup, including a mount created after the signal.
+If attach settlement or detachment cannot be confirmed, verification fails and retains the mount directory for inspection.
+
+Build, stage, and verify assets in distinct project-local directories so published files are not overwritten:
+
+```sh
+MCP_GATEWAY_BUILD_ROOT=.cache/release-0.3.1/build \
+MCP_GATEWAY_ARTIFACTS_DIR=.cache/release-0.3.1/assets \
+bun run release
+
+MCP_GATEWAY_ARTIFACTS_DIR=.cache/release-0.3.1/assets \
+MCP_GATEWAY_VERIFICATION_OUTPUT=.cache/release-0.3.1/release-verification.json \
+bun scripts/verify-release.ts .cache/release-0.3.1/build/stable-macos-arm64/MCP\ Gateway.app
+```
+
+The verifier refuses mismatched versions, manifest hashes, archive names, fixed feed metadata, or unsafe/missing assets.
+Publish the complete asset set together; drafts and prereleases must not become stable update candidates.
+Do not replace assets under an already published version.
+The published `0.3.0` DMG and payload remain retained; automatic downgrade is not supported.
 
 ### Linux source builds (experimental, native)
 

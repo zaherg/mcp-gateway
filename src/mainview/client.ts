@@ -35,4 +35,9 @@ export const client: AppClient = {
   saveConfig: (params) => rpc.request.saveConfig(params),
   copyEndpoint: (params) => rpc.request.copyEndpoint(params),
   copyClientConfig: (params) => rpc.request.copyClientConfig(params),
+  updatesStatus: () => rpc.request.updatesStatus(),
+  updatesCheck: () => rpc.request.updatesCheck(),
+  updatesDownload: () => rpc.request.updatesDownload(),
+  updatesSetAutomatic: (params) => rpc.request.updatesSetAutomatic(params),
+  updatesRestart: (params) => rpc.request.updatesRestart(params),
 };

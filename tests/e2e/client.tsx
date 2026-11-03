@@ -25,6 +25,11 @@ const client: AppClient = {
   saveConfig: (params) => request("saveConfig", params),
   copyEndpoint: (params) => request("copyEndpoint", params),
   copyClientConfig: (params) => request("copyClientConfig", params),
+  updatesStatus: () => request("updatesStatus"),
+  updatesCheck: () => request("updatesCheck"),
+  updatesDownload: () => request("updatesDownload"),
+  updatesSetAutomatic: (params) => request("updatesSetAutomatic", params),
+  updatesRestart: (params) => request("updatesRestart", params),
 };
 const root = document.getElementById("root");
 if (!root) throw new Error("Missing fixture root");

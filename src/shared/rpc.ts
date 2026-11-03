@@ -23,10 +23,45 @@ export interface QuitRequest {
   status: QuitStatus;
 }
 
+export type UpdatePhase =
+  | "unsupported"
+  | "preference-error"
+  | "idle"
+  | "checking"
+  | "available"
+  | "downloading"
+  | "ready"
+  | "restarting"
+  | "error";
+
+export interface UpdateStatus {
+  supported: boolean;
+  installationEnabled: boolean;
+  automaticUpdates: boolean;
+  installedVersion: string | null;
+  availableVersion: string | null;
+  availableHash: string | null;
+  readyVersion: string | null;
+  phase: UpdatePhase;
+  error: string | null;
+  preferenceError: string | null;
+  recoveryRequired: boolean;
+  recoveryPath: string | null;
+  checkedAt: string | null;
+  attemptId?: number | null;
+  transaction?: {
+    status: "none" | "confirmed" | "failed" | "unconfirmed" | "recovery-required";
+    version: string | null;
+    hash: string | null;
+    message: string | null;
+  } | null;
+}
+
 export interface AppSnapshot {
   platform: DesktopPlatform;
   gateway: GatewaySnapshot;
   login: LoginStatus;
+  update: UpdateStatus;
 }
 
 export interface ViewportPolicy {
@@ -57,6 +92,17 @@ export type AppRPC = {
       };
       copyEndpoint: { params: { name: string }; response: AppResult<null> };
       copyClientConfig: { params: { name: string }; response: AppResult<null> };
+      updatesStatus: { params: undefined; response: AppResult<UpdateStatus> };
+      updatesCheck: { params: undefined; response: AppResult<UpdateStatus> };
+      updatesDownload: { params: undefined; response: AppResult<UpdateStatus> };
+      updatesSetAutomatic: {
+        params: { automatic: boolean };
+        response: AppResult<UpdateStatus>;
+      };
+      updatesRestart: {
+        params: { version: string; hash: string };
+        response: AppResult<QuitRequest>;
+      };
     };
     messages: Record<string, never>;
   };
@@ -81,4 +127,9 @@ export interface AppClient {
   saveConfig(params: { text: string; expectedRevision: string }): Promise<AppResult<AppSnapshot>>;
   copyEndpoint(params: { name: string }): Promise<AppResult<null>>;
   copyClientConfig(params: { name: string }): Promise<AppResult<null>>;
+  updatesStatus(): Promise<AppResult<UpdateStatus>>;
+  updatesCheck(): Promise<AppResult<UpdateStatus>>;
+  updatesDownload(): Promise<AppResult<UpdateStatus>>;
+  updatesSetAutomatic(params: { automatic: boolean }): Promise<AppResult<UpdateStatus>>;
+  updatesRestart(params: { version: string; hash: string }): Promise<AppResult<QuitRequest>>;
 }

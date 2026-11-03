@@ -642,8 +642,86 @@ main {
   display: flex;
   gap: 8px;
 }
-.settings-panel {
+.settings-panel,
+.updates-panel {
   padding: 25px;
+}
+.updates-panel h2:focus-visible {
+  outline: 2px solid #177e73;
+  outline-offset: 4px;
+}
+.update-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(170px, 100%), 1fr));
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid #e1e9ec;
+  border-radius: 10px;
+  background: #f7faf9;
+}
+.update-summary > div {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.update-label {
+  color: #5e7380;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.update-summary strong {
+  color: #3b5264;
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.update-unavailable {
+  color: #5e7380;
+  font-size: 12px;
+  line-height: 1.8;
+}
+.update-progress {
+  height: 8px;
+  margin: 18px 0 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e4edeb;
+}
+.update-progress span {
+  display: block;
+  width: 42%;
+  height: 100%;
+  border-radius: inherit;
+  background: #177e73;
+  animation: update-progress 1.4s ease-in-out infinite;
+}
+@keyframes update-progress {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(260%);
+  }
+}
+.update-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-top: 18px;
+}
+.update-actions .button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .update-progress span {
+    animation: none;
+    width: 100%;
+    opacity: 0.6;
+  }
 }
 .form-grid {
   display: grid;
@@ -976,8 +1054,13 @@ dialog .alert {
   .draft-bar > div {
     margin-left: auto;
   }
-  .settings-panel {
+  .settings-panel,
+  .updates-panel {
     padding: 20px;
+  }
+  .update-actions .button {
+    flex: 1 1 auto;
+    justify-content: center;
   }
 }
 @media (prefers-reduced-motion: reduce) {

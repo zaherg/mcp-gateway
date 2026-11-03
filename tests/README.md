@@ -7,6 +7,7 @@ Run in order:
 3. `bun run test:unit` (also `bun test` or `bun run test`): Bun exercises core libraries and injected native-service/login/lifecycle boundaries, including the blocking adapter regressions.
 
 `*.e2e.ts` and `*.component.tsx` are deliberately outside Bun's test filename patterns, and Playwright and Vitest use explicit include patterns.
+`bun scripts/check-ui.ts` builds the synthetic UI harness, captures desktop/narrow screenshots under `tests/ui/artifacts`, and checks keyboard focus and horizontal overflow; the current Updates screenshots are retained under `.cache/auto-update-0.3.1/acceptance-direct/ui/`.
 Neither unit nor component commands launch a browser or Electrobun.
 All fixtures are synthetic; no Bear, Apple account or actual login registration is used.
 The login double is injected below AppService through MacLoginManager's native interface.
@@ -50,6 +51,69 @@ Physical keyboard/trackpad gestures remain outside automated coverage.
 ## Regression coverage
 
 `bun run test:unit` runs the controller, service, adapter and backend-work regressions; `bun test tests/regressions` runs only the dedicated adapter and backend-work files.
+It also runs the updater boundary, strict `updates.json`, scheduler/coordinator, sanitized update RPC and normal-quit/restart-to-update lifecycle tests.
+These cover default-on checks/downloads, single-flight scheduling, invalid preference suppression, stable-version gating, failed cleanup/handoff retry, draft configuration locking and unsupported-platform behavior.
+Those tests use synthetic bundles and injected command boundaries.
+Final signed project-local evidence is under `.cache/auto-update-0.3.1/final-acceptance/`.
+Earlier sibling evidence directories contain intermediate builds and do not certify the final source.
+Local acceptance is not a hosted CI substitute.
+Component tests cover the Updates settings view, automation toggle, available/error/progress states, draft-discard confirmation, restart locking, menu-to-Settings signaling, focus, and window recreation.
+The synthetic UI visual check covers desktop/narrow update states and keyboard restart-confirmation cancellation; the 20 real-service browser tests protect existing gateway behavior, not native updater replacement.
+
+`release-inventory.test.ts` rejects changed launcher/signature bytes, modes, types, symlink targets, missing entries and extra files even when metadata and payload match.
+`release-dmg.test.ts` covers settled cleanup, late attach after cancellation, exact mount identity, forced-detach restrictions and unknown cleanup ownership.
+Read-only checks of the retained DMG exercise success, verification failure and cancellation without generating a new release.
+`update-acceptance.test.ts` requires exactly one completed initial and target startup, a functional renderer RPC response, expected isolated roots, an exact confirmed transaction, checked renderer confirmation, old-backend exit and unchanged configuration.
+Malformed, truncated, extra and duplicate startup records fail rather than being filtered out.
+Acceptance also requires one attempt-bound backend-absence observation immediately before apply; it neither waits for nor kills the backend.
+The live-backend negative control remains rejected even after that process exits before final collection.
+
+The private source hooks at `.cache/auto-update-0.3.1/tests/prepare-fixture-apps.ts` and `product-update-flow.ts` are checked separately with `acceptance-hooks.test.ts`; CI does not import ignored cache files.
+They patch copied source trees with exact-match anchors, fix isolated home/data/temp roots before SDK imports, write markers outside the signed bundle, and await a private renderer RPC confirmation receipt before forwarding the real restart request.
+Both generated source variants typecheck; the final signed/notarized/stapled private pair passed five product scenarios.
+These cover successful replacement, manifest HTTP 503, interruption after an on-disk partial download, injected cleanup failure with explicit retry, and six-second delayed renderer readiness.
+Failure assertions require the intended fault, unchanged complete app inventory and configuration, no handoff, no remaining transaction and checked shutdown.
+Eight private-hook tests cover exact source patches, process/helper cleanup, fault prerequisites, transaction absence, destination refusal and the pinned RPC deadline.
+A product-flow run retains its directory and refuses reuse until its resources and evidence have been inspected.
+The two-second duplicate-startup observation window does not prove that no later restart can occur.
+
+`tests/native/updater-sdk-limits.native.ts` adds opt-in native coverage beyond the SDK doubles and system-zstd unit tests.
+Run it on macOS arm64 with an existing signed payload inside this project; the following path is the retained payload used for local acceptance:
+
+```sh
+MCP_GATEWAY_SDK_LIMIT_APP="$PWD/.cache/signed-payload-2nUyUK/MCP Gateway.app" \
+  bun test ./tests/native/updater-sdk-limits.native.ts
+```
+
+The suite verifies the app signature and identifier, checks the pinned Electrobun 2.0.5 source digest, and copies its signed Bun, zig-zstd and native libraries into a private fixture directory.
+The production worker loads the unchanged SDK without an injected UpdaterSdk.
+Only fixed-feed manifest/artifact fetches are routed to loopback; SDK streaming writes and native decompression are unchanged.
+Seven cases cover Content-Length and chunked oversized downloads with same-payload success controls, exact-limit decompression, and one-block-over-limit rejection with a larger-limit control.
+Assertions check received HTTP headers, observed download bytes, exact output digests/prepared records, no ready state after refusal, process-group exit, staging cleanup and configuration preservation.
+Two unchanged-SDK root cases seed modern and legacy current-hash TARs plus an unobserved native result, then compare the entire rejected legacy directory after scheduled callbacks can run.
+The admitted worker leaves it byte-identical without feed requests; an intentionally unsafe getter control produces the observed-result marker and demonstrates the regression's sensitivity.
+Six main-adapter cases exercise observed/no-result completion, cancellation, metadata mismatch, same-version refusal and resolver errors under a real transaction lease.
+They use synthetic prepared records and copied signed runtime binaries without calling apply or launching an application.
+The pinned SDK's first reconciliation callback is drained under ownership only after proving that prepared and running versions differ; no general asynchronous SDK join is claimed.
+
+The explicit command fails rather than silently skipping missing prerequisites.
+Its `.native.ts` suffix keeps it outside the default Bun test discovery and CI unit command.
+It prints the retained evidence path and removes owned temporary resources only after confirmed process cleanup.
+This uses small 64 KiB limits and synthetic HTTP traffic, not physical disk exhaustion, live GitHub delivery or application replacement.
+Independent source closure and regenerated signed packaged acceptance passed for the final local `0.3.1` build.
+The separate native failure matrix exercises the final bundled helper with signed small applications, including literal ENOSPC on an isolated 8 MiB image and verified manual restoration.
+Those helper cases do not establish full-size physical-host exhaustion or every product recovery UI path.
+
+R1-R16 regressions additionally cover different-process transaction retirement, abandoned owner recovery before/after worker grant, surviving descendants, raw ustar path limits, implicit directory admission, preference ancestor symlinks, exactly-once restart dispatch, real candidate ownership through retry and moving-latest refusal, returned SDK settlement state and lost restart acknowledgements.
+Transaction/guard/boundary/handoff tests require macOS and are gated separately from portable coordinator/service policy tests.
+The portable-import regression compiles the connected graph with a throwing native-acquisition seam and retains the actual boundary so tree shaking cannot conceal eager loading; an eager-load negative control was checked locally.
+This is not native Linux execution.
+Verification-command cancellation requests termination promptly but waits for actual close; an unconfirmed started child retains operation ownership and keeps Quit pending.
+Its deterministic delayed-close fixture and actual spawned-child tests cover both preflight stages and join cleanup before removing owned test trees.
+Direct follow-up regressions cover exact payload/overhead totals, unreadable budget roots, queued duplicate failure without implicit retry, persistent unarmed-restoration failure, stale action responses after fresh polling, and gateway startup with inaccessible updater storage.
+The direct corrections initially received focused self-review after the user stopped delegation.
+The later authorized final review found and closed cleanup-parent admission, deferred-startup and worker-settlement defects, with regression tests for each.
+Current evidence is under `.cache/auto-update-0.3.1/final-acceptance/`; the earlier remediation directory remains historical evidence.
 
 - Lifecycle cancellation makes Stop and Quit cancel pending hostname validation; queued refresh, watcher and service work cannot persist or reopen after cancellation.
 - Malformed initialize returns 400 while the endpoint remains mounted and usable.
@@ -60,4 +124,5 @@ Physical keyboard/trackpad gestures remain outside automated coverage.
 - Malformed legacy replies retain their work, capacity refusals settle session state, and upstream continuation and credential isolation remain covered.
 
 All regressions remain included in the default unit command.
-Current results, native evidence and remaining limits are recorded in the [implementation-plan verification record](../IMPLEMENTATION-PLAN.md#verification-and-completion).
+Current results and remaining limits are recorded in the [final acceptance run](../IMPLEMENTATION-PLAN.md#final-acceptance-run).
+The historical F1-F5 verification record remains below it.

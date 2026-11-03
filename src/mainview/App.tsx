@@ -43,6 +43,7 @@ import {
   type AppSnapshot,
   needsLoginRetry,
   type QuitStatus,
+  type UpdateStatus,
 } from "../shared/rpc";
 import type { GatewayConfig, HttpServerConfig, StdioServerConfig } from "../shared/types";
 import { Alert } from "./Alert";
@@ -219,6 +220,42 @@ function Modal({
   );
 }
 
+function updateCheckedLabel(value: string | null): string {
+  if (!value) return "Not checked yet.";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Last check time is unavailable.";
+  return `Last checked ${date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`;
+}
+
+function updateStatusText(update: UpdateStatus): string {
+  switch (update.phase) {
+    case "unsupported":
+      return "Automatic updates are unavailable on this platform or build.";
+    case "preference-error":
+      return "Automatic updates are disabled until the preference file is repaired.";
+    case "checking":
+      return "Checking the fixed GitHub stable feed…";
+    case "downloading":
+      return update.availableVersion
+        ? `Downloading and verifying version ${update.availableVersion}…`
+        : "Downloading and verifying the selected update…";
+    case "available":
+      return update.availableVersion
+        ? `Version ${update.availableVersion} is available.`
+        : "An update is available.";
+    case "ready":
+      return update.readyVersion
+        ? `Version ${update.readyVersion} is verified and ready to install.`
+        : "The update is verified and ready to install.";
+    case "restarting":
+      return "Restarting to apply the verified update.";
+    case "error":
+      return update.error ?? "The update operation failed.";
+    case "idle":
+      return update.checkedAt ? "You are up to date." : "No update check has run yet.";
+  }
+}
+
 export function App({ client }: { client: AppClient }) {
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null);
   const [doc, setDoc] = useState<Document | null>(null);
@@ -226,6 +263,7 @@ export function App({ client }: { client: AppClient }) {
   const [errorOccurrence, setErrorOccurrence] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [updateBusy, setUpdateBusy] = useState(false);
   const [quitStatus, setQuitStatus] = useState<QuitStatus>({
     attempt: 0,
     phase: "idle",
@@ -233,20 +271,28 @@ export function App({ client }: { client: AppClient }) {
   });
   const [quitStatusKnown, setQuitStatusKnown] = useState(false);
   const [requestingQuit, setRequestingQuit] = useState(false);
+  const [restartUnconfirmed, setRestartUnconfirmed] = useState(false);
+  const restartEvidence = useRef<{
+    snapshot: UpdateStatus | null;
+    lifecycle: QuitStatus | null;
+  }>({ snapshot: null, lifecycle: null });
   const [quitReadError, setQuitReadError] = useState(false);
   const quitAttempt = useRef(0);
   const quitGeneration = useRef(0);
   const quitRequestPending = useRef(false);
   const quitting = requestingQuit || quitStatus.phase === "pending" || quitStatus.phase === "ready";
-  const shutdownStarted = requestingQuit || quitStatus.phase !== "idle";
-  const configurationLocked = !quitStatusKnown || shutdownStarted;
+  const updateRestarting = snapshot?.update.phase === "restarting";
+  const shutdownStarted = requestingQuit || quitStatus.phase !== "idle" || updateRestarting;
+  const configurationLocked = restartUnconfirmed || !quitStatusKnown || shutdownStarted;
   const [confirmQuit, setConfirmQuit] = useState(false);
+  const [confirmUpdate, setConfirmUpdate] = useState(false);
   const [editor, setEditor] = useState<Editor | null>(null);
   const [editorError, setEditorError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [showToken, setShowToken] = useState(false);
   const [rawOpen, setRawOpen] = useState(false);
   const recoveryButton = useRef<HTMLButtonElement>(null);
+  const updatesHeading = useRef<HTMLHeadingElement>(null);
   const [tab, setTab] = useState<"overview" | "settings" | "logs">("overview");
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const dismiss = (id: string) => setDismissed((previous) => new Set([...previous, id]));
@@ -263,6 +309,7 @@ export function App({ client }: { client: AppClient }) {
       `operation-${errorOccurrenceRef.current}`,
       `config-${errorOccurrenceRef.current}`,
       `quit-${quitStatus.attempt}`,
+      `update-${snapshot?.update.phase}-${snapshot?.update.availableVersion ?? ""}-${snapshot?.update.error ?? ""}`,
     ]);
     setDismissed((previous) => {
       const retained = Array.from(previous).filter((id) => active.has(id));
@@ -290,7 +337,7 @@ export function App({ client }: { client: AppClient }) {
       const current = generation.current;
       try {
         const result = await client.snapshot();
-        if (cancelled || current !== generation.current) return;
+        if (cancelled || current !== generation.current || quitRequestPending.current) return;
         if (!result.ok) {
           if (!pollFailed.current) {
             setErrorOccurrence(result.error.occurrenceId ?? null);
@@ -300,6 +347,7 @@ export function App({ client }: { client: AppClient }) {
           return;
         }
         pollFailed.current = false;
+        restartEvidence.current.snapshot = result.value.update;
         setSnapshot(result.value);
         if (!docRef.current?.dirty && !editingRef.current) {
           const gateway = result.value.gateway;
@@ -322,9 +370,18 @@ export function App({ client }: { client: AppClient }) {
     };
   }, [client]);
 
+  useEffect(() => {
+    const showUpdates = () => {
+      setTab("settings");
+      requestAnimationFrame(() => updatesHeading.current?.focus());
+    };
+    window.addEventListener("mcp-gateway:show-updates", showUpdates);
+    return () => window.removeEventListener("mcp-gateway:show-updates", showUpdates);
+  }, []);
   const acceptQuitStatus = useCallback((status: QuitStatus) => {
     if (status.attempt < quitAttempt.current) return;
     quitAttempt.current = status.attempt;
+    restartEvidence.current.lifecycle = status;
     setQuitStatusKnown(true);
     setQuitStatus(status);
     if (status.phase !== "idle") setConfirmQuit(false);
@@ -353,6 +410,22 @@ export function App({ client }: { client: AppClient }) {
     };
   }, [client, acceptQuitStatus]);
 
+  useEffect(() => {
+    const evidence = restartEvidence.current;
+    if (
+      restartUnconfirmed &&
+      evidence.snapshot &&
+      evidence.lifecycle &&
+      evidence.snapshot === snapshot?.update &&
+      evidence.lifecycle === quitStatus &&
+      evidence.snapshot.attemptId === null &&
+      evidence.snapshot.phase !== "restarting" &&
+      evidence.lifecycle.phase !== "pending" &&
+      evidence.lifecycle.phase !== "ready"
+    )
+      setRestartUnconfirmed(false);
+  }, [restartUnconfirmed, snapshot, quitStatus]);
+
   const format = snapshot?.gateway.configFormat ?? "json";
   const filename = snapshot?.gateway.configPath.split("/").at(-1) ?? "mcp.json";
   function update(config: GatewayConfig, rename?: { from: string; to: string }) {
@@ -374,6 +447,7 @@ export function App({ client }: { client: AppClient }) {
     message: string,
     saved = false,
   ) {
+    const terminalGeneration = quitGeneration.current;
     setBusy(true);
     setError(null);
     setErrorOccurrence(null);
@@ -381,6 +455,7 @@ export function App({ client }: { client: AppClient }) {
     generation.current++;
     try {
       const result = await operation();
+      if (terminalGeneration !== quitGeneration.current) return false;
       if (!result.ok) {
         setErrorOccurrence(result.error.occurrenceId ?? null);
         setError(
@@ -400,13 +475,46 @@ export function App({ client }: { client: AppClient }) {
       setNotice(message);
       return true;
     } catch {
-      setError(
-        "The native operation failed. Your draft is preserved. Check application status before retrying.",
-      );
+      if (terminalGeneration === quitGeneration.current)
+        setError(
+          "The native operation failed. Your draft is preserved. Check application status before retrying.",
+        );
       return false;
     } finally {
-      generation.current++;
+      if (terminalGeneration === quitGeneration.current) generation.current++;
       setBusy(false);
+    }
+  }
+  async function runUpdate(
+    operation: () => Promise<AppResult<UpdateStatus>>,
+    message: string,
+  ): Promise<boolean> {
+    if (updateBusy) return false;
+    const terminalGeneration = quitGeneration.current;
+    setUpdateBusy(true);
+    setError(null);
+    setNotice("");
+    try {
+      const result = await operation();
+      if (terminalGeneration !== quitGeneration.current) return false;
+      if (!result.ok) {
+        setErrorOccurrence(result.error.occurrenceId ?? null);
+        setError(`${result.error.code}: ${result.error.message}`);
+        return false;
+      }
+      setSnapshot((previous) => (previous ? { ...previous, update: result.value } : previous));
+      if (result.value.preferenceError && message.startsWith("Automatic")) {
+        setError(`UpdatePreference: ${result.value.preferenceError}`);
+        return false;
+      }
+      setNotice(message);
+      return true;
+    } catch {
+      if (terminalGeneration === quitGeneration.current)
+        setError("The update operation failed. Check application status before retrying.");
+      return false;
+    } finally {
+      setUpdateBusy(false);
     }
   }
   async function requestQuit() {
@@ -433,9 +541,42 @@ export function App({ client }: { client: AppClient }) {
       setRequestingQuit(false);
     }
   }
+  async function requestUpdateRestart() {
+    if (restartUnconfirmed || quitting || updateRestarting) return;
+    const readyVersion = snapshot?.update.readyVersion;
+    const readyHash = snapshot?.update.availableHash;
+    if (!readyVersion || !readyHash) return;
+    setConfirmUpdate(false);
+    setRestartUnconfirmed(true);
+    restartEvidence.current = { snapshot: null, lifecycle: null };
+    generation.current++;
+    setRequestingQuit(true);
+    setQuitStatusKnown(false);
+    quitRequestPending.current = true;
+    quitGeneration.current++;
+    setError(null);
+    setNotice("");
+    try {
+      const result = await client.updatesRestart({ version: readyVersion, hash: readyHash });
+      if (!result.ok) {
+        setError(`${result.error.code}: ${result.error.message}`);
+        return;
+      }
+      acceptQuitStatus(result.value.status);
+      if (result.value.status.phase !== "failed")
+        setNotice("Restart requested. Waiting for gateway cleanup.");
+    } catch {
+      setError("Could not request the update restart. Check application status before retrying.");
+    } finally {
+      quitRequestPending.current = false;
+      setRequestingQuit(false);
+    }
+  }
   const parsed = doc ? formConfig(doc.text, format) : null;
   const config = snapshot?.gateway.configError && !doc?.dirty ? null : parsed;
   const gateway = snapshot?.gateway;
+  const updateState = snapshot?.update;
+  const updateReady = updateState?.readyVersion ?? null;
   const dirty = doc?.dirty ?? false;
   const stale = !!doc && !!gateway && doc.revision !== gateway.revision;
   const retryLogin = !!(
@@ -652,6 +793,59 @@ export function App({ client }: { client: AppClient }) {
         </header>
         <div className="announcements" aria-live="polite">
           {error && <Alert onDismiss={dismissLocalError}>{error}</Alert>}
+          {updateState &&
+            (updateState.phase === "available" || updateState.phase === "ready") &&
+            tab !== "settings" &&
+            !dismissed.has(
+              `update-${updateState.phase}-${updateState.availableVersion ?? ""}-${updateState.error ?? ""}`,
+            ) && (
+              <Alert
+                kind="warning"
+                role="status"
+                label="Dismiss update notice"
+                onDismiss={() =>
+                  dismiss(
+                    `update-${updateState.phase}-${updateState.availableVersion ?? ""}-${updateState.error ?? ""}`,
+                  )
+                }
+              >
+                {updateState.phase === "ready"
+                  ? `Version ${updateState.readyVersion ?? updateState.availableVersion} is ready to install.`
+                  : `Version ${updateState.availableVersion} is available.`}{" "}
+                Open Settings → Updates to review and confirm.
+              </Alert>
+            )}
+          {updateState?.phase === "error" &&
+            !dismissed.has(
+              `update-${updateState.phase}-${updateState.availableVersion ?? ""}-${updateState.error ?? ""}`,
+            ) && (
+              <Alert
+                onDismiss={() =>
+                  dismiss(
+                    `update-${updateState.phase}-${updateState.availableVersion ?? ""}-${updateState.error ?? ""}`,
+                  )
+                }
+              >
+                Update: {updateState.error ?? "The update operation failed."}
+              </Alert>
+            )}
+          {updateState?.preferenceError &&
+            !dismissed.has(
+              `update-${updateState.phase}-${updateState.availableVersion ?? ""}-${updateState.error ?? ""}`,
+            ) && (
+              <Alert
+                kind="warning"
+                role="status"
+                label="Dismiss update preference notice"
+                onDismiss={() =>
+                  dismiss(
+                    `update-${updateState.phase}-${updateState.availableVersion ?? ""}-${updateState.error ?? ""}`,
+                  )
+                }
+              >
+                {updateState.preferenceError}
+              </Alert>
+            )}
           {!quitting &&
             quitStatus.phase === "failed" &&
             !dismissed.has(`quit-${quitStatus.attempt}`) && (
@@ -661,8 +855,15 @@ export function App({ client }: { client: AppClient }) {
             )}
           {shutdownStarted && (
             <p role="status">
-              Configuration is read-only because Quit cleanup has started. Drafts can still be
-              selected and copied, and Logs remain available.
+              Configuration is read-only because{" "}
+              {updateRestarting ? "an update restart has started" : "Quit cleanup has started"}.
+              Drafts can still be selected and copied, and Logs remain available.
+            </p>
+          )}
+          {!shutdownStarted && restartUnconfirmed && (
+            <p role="status">
+              Configuration is read-only until the update restart attempt is confirmed. Drafts can
+              still be selected and copied, and Logs remain available.
             </p>
           )}
           {!quitStatusKnown && !requestingQuit && (
@@ -1173,6 +1374,183 @@ export function App({ client }: { client: AppClient }) {
                   )}
                 </section>
               )}
+              {tab === "settings" && updateState && (
+                <section className="panel updates-panel" aria-labelledby="updates-heading">
+                  <div className="section-heading">
+                    <div>
+                      <h2 id="updates-heading" ref={updatesHeading} tabIndex={-1}>
+                        Updates
+                      </h2>
+                      <p>
+                        Signed macOS arm64 stable builds only. Downloads come from the fixed GitHub
+                        release source.
+                      </p>
+                    </div>
+                    <ArrowDownToLine size={20} />
+                  </div>
+                  {!updateState.supported ? (
+                    <p className="update-unavailable">
+                      Automatic updates are unavailable on this platform or build. This build does
+                      not contact the update feed.
+                    </p>
+                  ) : (
+                    <>
+                      <div className="update-summary">
+                        <div>
+                          <span className="update-label">Installed</span>
+                          <strong>{updateState.installedVersion ?? "Unknown"}</strong>
+                        </div>
+                        <div>
+                          <span className="update-label">Status</span>
+                          <strong role="status">{updateStatusText(updateState)}</strong>
+                        </div>
+                        {updateState.availableVersion && (
+                          <div>
+                            <span className="update-label">Available</span>
+                            <strong>{updateState.availableVersion}</strong>
+                          </div>
+                        )}
+                      </div>
+                      {(updateState.phase === "checking" ||
+                        updateState.phase === "downloading") && (
+                        <div
+                          className="update-progress"
+                          role="progressbar"
+                          aria-label="Update progress"
+                          aria-valuetext={updateStatusText(updateState)}
+                          aria-busy="true"
+                        >
+                          <span />
+                        </div>
+                      )}
+                      <p className="fine-print">{updateCheckedLabel(updateState.checkedAt)}</p>
+                      <Toggle
+                        label="Automatically check and download updates"
+                        description="Check after launch, then daily. A higher stable version downloads automatically; installation always requires explicit confirmation."
+                        disabled={
+                          updateBusy ||
+                          configurationLocked ||
+                          updateState.recoveryRequired ||
+                          updateState.phase === "restarting"
+                        }
+                        checked={updateState.automaticUpdates}
+                        onChange={(value) =>
+                          void runUpdate(
+                            () => client.updatesSetAutomatic({ automatic: value }),
+                            value
+                              ? "Automatic update checks enabled."
+                              : "Automatic update checks disabled.",
+                          )
+                        }
+                      />
+                      {updateState.preferenceError && (
+                        <p className="inline-error" role="alert">
+                          {updateState.preferenceError}
+                        </p>
+                      )}
+                      {updateState.recoveryRequired && (
+                        <p className="inline-error" role="alert">
+                          A previous update needs recovery before new update work can start.
+                        </p>
+                      )}
+                      {updateState.recoveryPath && (
+                        <p className="inline-error" role="status">
+                          Verified previous app copy: {updateState.recoveryPath}
+                        </p>
+                      )}
+                      <div className="update-actions">
+                        <button
+                          type="button"
+                          className="button"
+                          disabled={
+                            updateBusy ||
+                            configurationLocked ||
+                            updateState.recoveryRequired ||
+                            updateState.phase === "checking" ||
+                            updateState.phase === "downloading" ||
+                            updateState.phase === "restarting"
+                          }
+                          onClick={() =>
+                            void runUpdate(() => client.updatesCheck(), "Update check completed.")
+                          }
+                        >
+                          <RefreshCw size={15} />
+                          {updateState.phase === "checking"
+                            ? "Checking…"
+                            : updateState.phase === "error"
+                              ? "Retry Check"
+                              : "Check for Updates"}
+                        </button>
+                        {updateState.availableVersion && !updateReady && (
+                          <button
+                            type="button"
+                            className="button"
+                            disabled={
+                              updateBusy ||
+                              configurationLocked ||
+                              updateState.recoveryRequired ||
+                              updateState.phase === "checking" ||
+                              updateState.phase === "downloading" ||
+                              updateState.phase === "restarting"
+                            }
+                            onClick={() =>
+                              void runUpdate(
+                                () => client.updatesDownload(),
+                                "The update download has started.",
+                              )
+                            }
+                          >
+                            <ArrowDownToLine size={15} />
+                            {updateState.phase === "downloading"
+                              ? "Downloading…"
+                              : updateState.phase === "error"
+                                ? "Retry Download"
+                                : "Download Update"}
+                          </button>
+                        )}
+                        {updateReady && (
+                          <button
+                            type="button"
+                            className="button primary"
+                            disabled={
+                              busy ||
+                              !quitStatusKnown ||
+                              restartUnconfirmed ||
+                              updateState.phase === "restarting" ||
+                              !updateState.installationEnabled ||
+                              !!editor ||
+                              !!deleting ||
+                              quitStatus.phase === "pending" ||
+                              quitStatus.phase === "ready"
+                            }
+                            onClick={() => setConfirmUpdate(true)}
+                          >
+                            <ArrowUpRight size={15} />
+                            {updateState.phase === "error" ? "Retry Update" : "Restart to Update"}
+                          </button>
+                        )}
+                      </div>
+                      {!updateState.installationEnabled && (
+                        <p className="fine-print">
+                          <ShieldCheck size={14} /> Installation is disabled for this build. Only
+                          signed packaged macOS arm64 stable builds can arm the update installer.
+                        </p>
+                      )}
+                      {(editor || deleting) && updateReady && (
+                        <p className="fine-print" role="status">
+                          Close the open server dialog before restarting.
+                        </p>
+                      )}
+                      <p className="fine-print">
+                        <CircleHelp size={14} /> A downloaded update is not installed until the app
+                        restarts and the expected version starts. Active MCP connections are
+                        interrupted during restart. Logs and unsaved drafts remain available only in
+                        the current process; they are not retained after a successful restart.
+                      </p>
+                    </>
+                  )}
+                </section>
+              )}
               {tab !== "logs" && (
                 <section className="panel raw-panel">
                   <button
@@ -1254,6 +1632,36 @@ export function App({ client }: { client: AppClient }) {
             </button>
             <button type="button" className="button danger" onClick={() => void requestQuit()}>
               Discard changes and quit
+            </button>
+          </div>
+        </Modal>
+      )}
+      {confirmUpdate && updateReady && (
+        <Modal
+          title="Restart to update?"
+          onClose={() => setConfirmUpdate(false)}
+          fallbackFocus={recoveryButton}
+        >
+          <p>
+            Restart MCP Gateway to install version {updateReady}? Active MCP connections will be
+            interrupted while the gateway and backends stop before the installer is armed.
+          </p>
+          <p>
+            {dirty
+              ? "Your unsaved configuration changes will be discarded. The verified previous application copy remains available for manual recovery."
+              : "Your saved configuration remains unchanged. The verified previous application copy remains available for manual recovery."}
+          </p>
+          <div className="dialog-actions">
+            <button type="button" className="button" onClick={() => setConfirmUpdate(false)}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="button danger"
+              disabled={restartUnconfirmed || quitting || updateRestarting}
+              onClick={() => void requestUpdateRestart()}
+            >
+              {dirty ? "Discard draft and restart" : "Restart to update"}
             </button>
           </div>
         </Modal>

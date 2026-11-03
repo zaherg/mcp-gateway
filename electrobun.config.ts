@@ -1,5 +1,6 @@
 import type { ElectrobunConfig } from "electrobun";
 import packageInfo from "./package.json";
+import { UPDATER_FEED_URL } from "./src/main/updater/constants";
 
 export default {
   app: {
@@ -9,6 +10,7 @@ export default {
   },
   build: {
     buildFolder: process.env.MCP_GATEWAY_BUILD_ROOT ?? "build",
+    artifactFolder: process.env.MCP_GATEWAY_ARTIFACTS_DIR ?? "artifacts",
     mainProcess: "bun",
     bun: {
       entrypoint: "src/main/index.ts",
@@ -35,4 +37,5 @@ export default {
     linux: { bundleCEF: false, icon: "assets/App.iconset/icon_256x256.png" },
   },
   runtime: { exitOnLastWindowClosed: false },
+  release: { baseUrl: UPDATER_FEED_URL },
 } satisfies ElectrobunConfig;

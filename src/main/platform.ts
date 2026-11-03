@@ -17,11 +17,14 @@ export function configurationDirectory(
   platform: DesktopPlatform,
   home: string,
   environment: NodeJS.ProcessEnv,
+  configBase?: string,
 ): string {
   if (environment.MCP_GATEWAY_DATA_DIR !== undefined)
     return absolutePath(environment.MCP_GATEWAY_DATA_DIR, "MCP_GATEWAY_DATA_DIR");
   if (environment.MCP_GATEWAY_ISOLATED === "1")
     throw new Error("Isolated verification requires an explicit data directory.");
+  if (configBase !== undefined)
+    return join(absolutePath(configBase, "Configuration base"), "MCP Gateway");
   absolutePath(home, "Home directory");
   return platform === "macos"
     ? join(home, "Library/Application Support/MCP Gateway")

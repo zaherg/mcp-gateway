@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { QuitCoordinator } from "../../src/main/lifecycle";
 import { MacLoginManager } from "../../src/main/login";
-import { AppService } from "../../src/main/service";
+import { AppService, type UpdateManager } from "../../src/main/service";
+import type { UpdateAttempt } from "../../src/main/updater/transaction";
 import {
   configFor,
   controlledResolver,
@@ -780,3 +781,300 @@ test("service work queued before Stop cannot persist or reopen through a fresh c
     await context.cleanup();
   }
 }, 20_000);
+
+function updateManager(
+  options: {
+    status?: Partial<import("../../src/shared/rpc").UpdateStatus>;
+    check?: () => Promise<import("../../src/shared/rpc").UpdateStatus>;
+    restart?: Promise<import("../../src/shared/rpc").QuitStatus>;
+  } = {},
+) {
+  let status: import("../../src/shared/rpc").UpdateStatus = {
+    supported: true,
+    installationEnabled: true,
+    automaticUpdates: true,
+    installedVersion: "0.3.1",
+    availableVersion: null,
+    availableHash: null,
+    readyVersion: null,
+    phase: "idle",
+    error: null,
+    preferenceError: null,
+    recoveryRequired: false,
+    recoveryPath: null,
+    checkedAt: null,
+    ...options.status,
+  };
+  const calls: string[] = [];
+  let reserved: UpdateAttempt | undefined;
+  return {
+    calls,
+    manager: {
+      statusValue: () => status,
+      check: async () => {
+        calls.push("check");
+        if (options.check) return options.check();
+        status = {
+          ...status,
+          phase: "available",
+          availableVersion: "0.3.2",
+          availableHash: "next123456",
+        };
+        return status;
+      },
+      download: async () => {
+        calls.push("download");
+        status = { ...status, phase: "ready", readyVersion: "0.3.2" };
+        return status;
+      },
+      setAutomatic: async (automatic: boolean) => {
+        calls.push(`automatic:${automatic}`);
+        status = { ...status, automaticUpdates: automatic };
+        return status;
+      },
+      beginRestart: (version, hash) => {
+        reserved ??= {
+          id: 1,
+          signal: new AbortController().signal,
+          candidate: {
+            schema_version: 1,
+            identifier: "dev.srvr.mcpgateway",
+            channel: "stable",
+            version,
+            hash,
+            artifact_file: "stable-macos-arm64-MCPGateway.app.tar.zst",
+            prepared_path: "/synthetic/prepared.json",
+            prepared_sha256: "a".repeat(64),
+            retained_tar_path: "/synthetic/target.tar",
+            archive_sha256: "b".repeat(64),
+            archive_bytes: 1,
+            frozen_at: "2026-11-03T00:00:00.000Z",
+          },
+        };
+        status = { ...status, phase: "restarting", attemptId: reserved.id };
+        return reserved;
+      },
+      restartToUpdate: async (version, hash, admittedAttempt) => {
+        expect(admittedAttempt).toBe(reserved);
+        calls.push(`restart:${version}:${hash}`);
+        if (version !== "0.3.2" || hash !== "next123456") throw new Error("unexpected");
+        if (options.restart) return options.restart;
+        return { attempt: 1, phase: "pending", error: null } as const;
+      },
+    } satisfies UpdateManager,
+  };
+}
+
+test("update status is included in snapshots and every update RPC validates its own shape", async () => {
+  const context = await setup();
+  try {
+    const updates = updateManager();
+    const app = new AppService(
+      context.controller,
+      fakeLogin().manager,
+      () => {},
+      desktop,
+      updates.manager,
+    );
+    expect(await app.handlers.snapshot()).toMatchObject({
+      ok: true,
+      value: { update: { supported: true, phase: "idle", installedVersion: "0.3.1" } },
+    });
+    for (const response of await Promise.all([
+      app.handlers.updatesStatus({ secret: "SECRET" }),
+      app.handlers.updatesCheck("SECRET"),
+      app.handlers.updatesDownload(["SECRET"]),
+      app.handlers.updatesSetAutomatic({ automatic: "yes" }),
+      app.handlers.updatesSetAutomatic({ automatic: true, secret: "SECRET" }),
+      app.handlers.updatesRestart({ version: "0.3.2", hash: "../../SECRET" }),
+      app.handlers.updatesRestart({ version: 3, hash: "next123456" }),
+    ])) {
+      expect(response).toMatchObject({ ok: false, error: { code: "InvalidRequest" } });
+      expect(JSON.stringify(response)).not.toContain("SECRET");
+    }
+    expect(updates.calls).toEqual([]);
+    expect(await app.handlers.updatesCheck()).toMatchObject({
+      ok: true,
+      value: { phase: "available", availableVersion: "0.3.2" },
+    });
+    expect(await app.handlers.updatesDownload()).toMatchObject({
+      ok: true,
+      value: { phase: "ready", readyVersion: "0.3.2" },
+    });
+    expect(await app.handlers.updatesSetAutomatic({ automatic: false })).toMatchObject({
+      ok: true,
+      value: { automaticUpdates: false },
+    });
+    expect(
+      await app.handlers.updatesRestart({ version: "0.3.2", hash: "next123456" }),
+    ).toMatchObject({
+      ok: true,
+      value: { requested: true, status: { phase: "pending" } },
+    });
+    expect(updates.calls).toEqual([
+      "check",
+      "download",
+      "automatic:false",
+      "restart:0.3.2:next123456",
+    ]);
+  } finally {
+    await context.cleanup();
+  }
+});
+
+test("update check does not block Stop and update policy errors are sanitized", async () => {
+  const context = await setup();
+  try {
+    let release: (status: import("../../src/shared/rpc").UpdateStatus) => void = () => {};
+    const pending = new Promise<import("../../src/shared/rpc").UpdateStatus>((resolve) => {
+      release = resolve;
+    });
+    const updates = updateManager({ check: () => pending });
+    const app = new AppService(
+      context.controller,
+      fakeLogin().manager,
+      () => {},
+      desktop,
+      updates.manager,
+    );
+    const checking = app.handlers.updatesCheck();
+    expect(await app.handlers.stop()).toMatchObject({ ok: true });
+    release({
+      supported: true,
+      installationEnabled: true,
+      automaticUpdates: true,
+      installedVersion: "0.3.1",
+      availableVersion: null,
+      availableHash: null,
+      readyVersion: null,
+      phase: "error",
+      error: "The update operation failed.",
+      preferenceError: null,
+      recoveryRequired: false,
+      recoveryPath: null,
+      checkedAt: null,
+    });
+    expect(await checking).toMatchObject({
+      ok: true,
+      value: { phase: "error", error: "The update operation failed." },
+    });
+    const failing = updateManager({
+      check: async () => {
+        const { UpdatePolicyError } = await import("../../src/main/updater/coordinator");
+        throw new UpdatePolicyError("UpdateNotReady");
+      },
+    });
+    const failingApp = new AppService(
+      context.controller,
+      fakeLogin().manager,
+      () => {},
+      desktop,
+      failing.manager,
+    );
+    const response = await failingApp.handlers.updatesCheck();
+    expect(response).toMatchObject({ ok: false, error: { code: "UpdateNotReady" } });
+    expect(JSON.stringify(response)).not.toContain("SECRET");
+  } finally {
+    await context.cleanup();
+  }
+});
+
+test("configuration saves are refused once update restart handoff has started", async () => {
+  const context = await setup();
+  try {
+    const updates = updateManager({ status: { phase: "restarting", readyVersion: "0.3.2" } });
+    const app = new AppService(
+      context.controller,
+      fakeLogin().manager,
+      () => {},
+      desktop,
+      updates.manager,
+    );
+    const before = context.controller.snapshot();
+    const response = await app.handlers.saveConfig({
+      text: before.configText,
+      expectedRevision: before.revision,
+    });
+    expect(response).toMatchObject({ ok: false, error: { code: "InvalidRequest" } });
+    expect(context.controller.snapshot().revision).toBe(before.revision);
+  } finally {
+    await context.cleanup();
+  }
+});
+
+test("update restart refusal keeps a pending native quit visible", async () => {
+  const context = await setup();
+  try {
+    const updates = updateManager({ status: { phase: "ready", readyVersion: "0.3.2" } });
+    const app = new AppService(
+      context.controller,
+      fakeLogin().manager,
+      () => {},
+      {
+        ...desktop,
+        quitStatus: () => ({ attempt: 2, phase: "pending", error: null }) as const,
+      },
+      updates.manager,
+    );
+    expect(
+      await app.handlers.updatesRestart({ version: "0.3.2", hash: "next123456" }),
+    ).toMatchObject({ ok: false, error: { code: "InvalidRequest" } });
+    expect(updates.calls).toEqual([]);
+  } finally {
+    await context.cleanup();
+  }
+});
+
+test("a failed Quit state still permits an explicit Retry Update with the ready candidate", async () => {
+  const context = await setup();
+  try {
+    const updates = updateManager({ status: { phase: "ready", readyVersion: "0.3.2" } });
+    const app = new AppService(
+      context.controller,
+      fakeLogin().manager,
+      () => {},
+      {
+        ...desktop,
+        quitStatus: () =>
+          ({ attempt: 2, phase: "failed", error: "Update handoff failed." }) as const,
+      },
+      updates.manager,
+    );
+    expect(
+      await app.handlers.updatesRestart({ version: "0.3.2", hash: "next123456" }),
+    ).toMatchObject({ ok: true, value: { requested: true, status: { phase: "pending" } } });
+    expect(updates.calls).toEqual(["restart:0.3.2:next123456"]);
+  } finally {
+    await context.cleanup();
+  }
+});
+
+test("restart reservation remains visible while restart preflight acknowledgement is pending", async () => {
+  const context = await setup();
+  let release: (status: import("../../src/shared/rpc").QuitStatus) => void = () => {};
+  const pending = new Promise<import("../../src/shared/rpc").QuitStatus>((resolve) => {
+    release = resolve;
+  });
+  try {
+    const updates = updateManager({
+      status: { phase: "ready", readyVersion: "0.3.2", availableHash: "next123456" },
+      restart: pending,
+    });
+    const app = new AppService(
+      context.controller,
+      fakeLogin().manager,
+      () => {},
+      desktop,
+      updates.manager,
+    );
+    const request = app.handlers.updatesRestart({ version: "0.3.2", hash: "next123456" });
+    expect(await app.handlers.updatesStatus()).toMatchObject({
+      ok: true,
+      value: { phase: "restarting" },
+    });
+    release({ attempt: 1, phase: "pending", error: null });
+    await expect(request).resolves.toMatchObject({ ok: true });
+  } finally {
+    await context.cleanup();
+  }
+});

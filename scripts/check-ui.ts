@@ -59,7 +59,7 @@ try {
   await expect(page.getByRole("dialog")).not.toBeVisible();
   await expect(add).toBeFocused();
 
-  await page.getByRole("button", { name: "Use Bear preset" }).click();
+  await page.getByRole("button", { name: /Bear preset/ }).click();
   await expect(page.getByLabel("Command", { exact: false })).toHaveValue(
     "/Applications/Bear.app/Contents/MacOS/bearcli",
   );
