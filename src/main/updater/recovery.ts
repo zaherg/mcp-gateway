@@ -194,8 +194,9 @@ export async function retainPreviousApplication(
       .catch(() => undefined);
     if (options.signal?.aborted) throw new UpdaterStateError("recoveryCancelled");
     if (options.signal?.aborted) throw new UpdaterStateError("recoveryCancelled");
-    atomicWritePrivateJsonSync(recoveryRecordPath(options.dataDirectory), record);
-    recordPublished = true;
+    atomicWritePrivateJsonSync(recoveryRecordPath(options.dataDirectory), record, () => {
+      recordPublished = true;
+    });
     if (
       previous &&
       previous.retained_bundle_path !== retained &&

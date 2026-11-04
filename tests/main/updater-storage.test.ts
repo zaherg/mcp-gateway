@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
+import * as fs from "node:fs";
 import {
   chmod,
   mkdir,
@@ -78,6 +79,70 @@ test("synchronous commits are bounded, owner-only, and leave no partial files", 
     await rm(file.root, { recursive: true, force: true });
   }
 });
+
+for (const failurePoint of [
+  "success",
+  "file sync",
+  "rename",
+  "published validation",
+  "directory sync",
+] as const) {
+  test(`synchronous publication notification tracks rename: ${failurePoint}`, async () => {
+    const file = await fixture();
+    try {
+      const previous = '{"phase":"previous"}\n';
+      const next = { phase: "next" };
+      await writeFile(file.path, previous, { mode: 0o600 });
+      const failure = new Error(`Synthetic ${failurePoint} refusal`);
+      let notifications = 0;
+      let observed: unknown;
+      const rename = fs.renameSync;
+      const sync = fs.fsyncSync;
+      const renameMock = spyOn(fs, "renameSync").mockImplementation((from, to) => {
+        if (to === file.path && failurePoint === "rename") throw failure;
+        rename(from, to);
+        if (to === file.path && failurePoint === "published validation")
+          fs.truncateSync(file.path, 0);
+      });
+      const syncMock = spyOn(fs, "fsyncSync").mockImplementation((fd) => {
+        const directory = fs.fstatSync(fd).isDirectory();
+        expect(notifications).toBe(directory ? 1 : 0);
+        if (
+          (directory && failurePoint === "directory sync") ||
+          (!directory && failurePoint === "file sync")
+        )
+          throw failure;
+        sync(fd);
+      });
+      try {
+        atomicWritePrivateJsonSync(file.path, next, () => {
+          notifications++;
+        });
+      } catch (error) {
+        observed = error;
+      } finally {
+        renameMock.mockRestore();
+        syncMock.mockRestore();
+      }
+      if (failurePoint === "success") expect(observed).toBeUndefined();
+      else if (failurePoint === "published validation")
+        expect(observed).toMatchObject({ code: "stateWrite" });
+      else expect(observed).toBe(failure);
+      const published = failurePoint !== "file sync" && failurePoint !== "rename";
+      expect(notifications).toBe(published ? 1 : 0);
+      expect(await readdir(join(file.root, "state"))).toEqual(["preferences.json"]);
+      expect(await readFile(file.path, "utf8")).toBe(
+        failurePoint === "published validation"
+          ? ""
+          : published
+            ? `${JSON.stringify(next)}\n`
+            : previous,
+      );
+    } finally {
+      await rm(file.root, { recursive: true, force: true });
+    }
+  });
+}
 
 test("synchronous writer refuses a symlink destination", async () => {
   const file = await fixture();

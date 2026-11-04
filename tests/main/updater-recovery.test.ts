@@ -1,7 +1,7 @@
-import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { cp, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { expect, spyOn, test } from "bun:test";
+import * as fs from "node:fs";
+import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
 import {
   manualRecoveryDescription,
   retainPreviousApplication,
@@ -30,7 +30,7 @@ const runner: CommandRunner = async (command, args) => {
     if (args.includes("CFBundleVersion")) {
       const bundle = dirname(dirname(args.at(-1) ?? ""));
       const document = JSON.parse(
-        readFileSync(join(bundle, "Contents/Resources/version.json"), "utf8"),
+        fs.readFileSync(join(bundle, "Contents/Resources/version.json"), "utf8"),
       );
       return success(`${document.version}\n`);
     }
@@ -110,6 +110,122 @@ test("retains and independently verifies the previous signed application for man
     await rm(fixture.root, { recursive: true, force: true });
   }
 });
+
+test("a durable recovery publication replaces the record before pruning the older copy", async () => {
+  const fixture = await setup();
+  try {
+    const options = {
+      appBundlePath: fixture.app,
+      dataDirectory: fixture.data,
+      publisher: { identifier: "dev.srvr.mcpgateway", teamId: TEAM },
+      version: "0.3.0",
+      hash: "current1234",
+      verifier: new ApplicationVerifier(runner),
+    };
+    const previous = await retainPreviousApplication(options);
+    const next = await retainPreviousApplication(options);
+    expect(next.retained_bundle_path).not.toBe(previous.retained_bundle_path);
+    expect((await readdir(join(fixture.data, "updates/recovery"))).sort()).toEqual(
+      ["latest.json", basename(next.retained_bundle_path)].sort(),
+    );
+    expect(await readFile(join(fixture.data, "updates/recovery/latest.json"), "utf8")).toBe(
+      `${JSON.stringify(next)}\n`,
+    );
+    expect((await verifyRetainedRecovery(options)).record).toEqual(next);
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+for (const existing of [false, true]) {
+  for (const failurePoint of ["file sync", "record rename", "directory sync"] as const) {
+    test(`recovery ${failurePoint} failure preserves referenced bundles with prior record=${existing}`, async () => {
+      const fixture = await setup();
+      const options = {
+        appBundlePath: fixture.app,
+        dataDirectory: fixture.data,
+        publisher: { identifier: "dev.srvr.mcpgateway", teamId: TEAM },
+        version: "0.3.0",
+        hash: "current1234",
+        verifier: new ApplicationVerifier(runner),
+      };
+      try {
+        const previous = existing ? await retainPreviousApplication(options) : undefined;
+        const recovery = join(fixture.data, "updates/recovery");
+        const recordPath = join(recovery, "latest.json");
+        await mkdir(recovery, { recursive: true, mode: 0o700 });
+        const directory = fs.statSync(recovery);
+        const before = previous ? await readFile(recordPath) : undefined;
+        const sourceBytes = await readFile(join(fixture.app, "Contents/Resources/version.json"));
+        const failure = new Error(`Synthetic recovery ${failurePoint} refusal`);
+        let injected = 0;
+        const rename = fs.renameSync;
+        const sync = fs.fsyncSync;
+        const renameMock = spyOn(fs, "renameSync").mockImplementation((from, to) => {
+          if (failurePoint === "record rename" && to === recordPath) {
+            injected++;
+            throw failure;
+          }
+          rename(from, to);
+        });
+        const syncMock = spyOn(fs, "fsyncSync").mockImplementation((fd) => {
+          const entry = fs.fstatSync(fd);
+          const partial = fs
+            .readdirSync(recovery)
+            .find((name) => name.startsWith("latest.json.") && name.endsWith(".partial"));
+          const target =
+            failurePoint === "directory sync"
+              ? directory
+              : failurePoint === "file sync" && partial
+                ? fs.statSync(join(recovery, partial))
+                : undefined;
+          if (target && entry.dev === target.dev && entry.ino === target.ino) {
+            injected++;
+            throw failure;
+          }
+          sync(fd);
+        });
+        try {
+          await expect(retainPreviousApplication(options)).rejects.toBe(failure);
+          expect(injected).toBe(1);
+        } finally {
+          renameMock.mockRestore();
+          syncMock.mockRestore();
+        }
+        if (failurePoint === "directory sync") {
+          const verified = await verifyRetainedRecovery(options);
+          expect(verified.record.retained_bundle_path).not.toBe(previous?.retained_bundle_path);
+          expect(
+            await readFile(
+              join(verified.record.retained_bundle_path, "Contents/Resources/version.json"),
+            ),
+          ).toEqual(sourceBytes);
+          expect((await readdir(recovery)).sort()).toEqual(
+            [
+              "latest.json",
+              basename(verified.record.retained_bundle_path),
+              ...(previous ? [basename(previous.retained_bundle_path)] : []),
+            ].sort(),
+          );
+        } else {
+          expect((await readdir(recovery)).sort()).toEqual(
+            previous ? ["latest.json", basename(previous.retained_bundle_path)].sort() : [],
+          );
+          if (before) expect(await readFile(recordPath)).toEqual(before);
+        }
+        if (previous)
+          expect(
+            await readFile(join(previous.retained_bundle_path, "Contents/Resources/version.json")),
+          ).toEqual(sourceBytes);
+        expect(await readFile(join(fixture.app, "Contents/Resources/version.json"))).toEqual(
+          sourceBytes,
+        );
+      } finally {
+        await rm(fixture.root, { recursive: true, force: true });
+      }
+    });
+  }
+}
 
 test("does not publish a recovery record when the copied application fails verification", async () => {
   const fixture = await setup();

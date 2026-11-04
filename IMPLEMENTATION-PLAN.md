@@ -1,6 +1,6 @@
 # MCP Gateway audit issues
 
-Status: issue 1 is fixed and locally verified; issues 2-7 remain open.
+Status: issues 1-3 are fixed and locally verified; issues 4-7 remain open.
 This document replaces the previous implementation plan and historical records at the user's request.
 Recording these findings does not authorize work on the remaining issues, signing, installation, or publication.
 
@@ -44,6 +44,18 @@ Paths: `src/main/updater/recovery.ts:L197-210`, `src/main/updater/storage.ts:L12
 - **If we skip it:** A storage error can leave a broken recovery record.
   The older copy survived the reproduction, but its location was no longer recorded as latest.
 
+Resolution: the synchronous record writer notifies recovery immediately after rename, before validation and directory synchronization.
+Cleanup preserves the referenced new bundle if a later step fails; pruning the older copy still requires a successful write.
+Failures before publication still trigger cleanup of the unreferenced new bundle.
+Record-write errors still fail the operation; publication with uncertain durability is not reported as success.
+
+Regressions cover first and replacement records, file-sync and rename refusals, post-publication validation and directory-sync failures, successful pruning, and a later retry through updater preparation.
+Local checks passed: 615 unit/integration tests (4,868 assertions), type checking, lint, and scoped LSP diagnostics.
+Recovery and storage tests also passed three consecutive reruns.
+Focused self-review found no remaining issue in this change.
+UI suites, desktop builds, and native/signed replacement checks were not rerun for this filesystem-only change; power-loss durability remains untested.
+Evidence: `.cache/issue-2-recovery/`.
+
 ### 3. Malformed upstream text becomes a successful, altered result
 
 Path: `src/core/adapter.ts:L504-525`.
@@ -54,6 +66,18 @@ Path: `src/core/adapter.ts:L504-525`.
 - **Fix:** Use a fatal UTF-8 decoder, matching the existing request and discovery readers.
   Test invalid bytes and valid characters split across chunks.
 - **If we skip it:** Corrupted tool output can reach clients as an apparently successful result.
+
+Resolution: ordinary upstream SSE now uses fatal UTF-8 decoding, matching the existing discovery reader.
+Malformed bytes produce the existing sanitized JSON-RPC error instead of an altered success result.
+Regressions cover an invalid byte, a malformed continuation split across writes, truncated UTF-8 at EOF, and exact valid two-, three-, and four-byte characters, including a correctly encoded replacement character.
+The framing matrix retains LF, CRLF, CR, byte-at-a-time writes, and open-stream coverage; repeated failures verify resource release, authentication, and sanitized public diagnostics.
+The JSON response path and buffer-limit behavior are unchanged.
+
+Local checks passed: 618 unit/integration tests (4,925 assertions), 91 targeted protocol/lifecycle tests, type checking, lint, and scoped LSP diagnostics.
+The 15-test framing selection also passed two consecutive reruns.
+Focused self-review found no remaining issue in this change.
+UI suites, desktop builds, and native/signed replacement checks were not rerun for this protocol-only change.
+Evidence: `.cache/issue-3-utf8/`.
 
 ## Should fix
 
@@ -120,4 +144,4 @@ The audit changed no source files, and its temporary resources were cleaned up.
 Not checked: fresh browser/native UI runs, signed replacement, Linux/Windows execution, live GitHub delivery, prolonged load, physical disk exhaustion, or power loss.
 Not every build/test helper or third-party implementation was read.
 
-Recovery publication handling remains open.
+Issues 4-7 remain open.

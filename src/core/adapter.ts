@@ -508,7 +508,7 @@ export function createMount(
           if (data) deliver(JSON.parse(data));
         },
       });
-      const decoder = new TextDecoder();
+      const decoder = new TextDecoder("utf-8", { fatal: true });
       let afterCR = false;
       const feed = (text: string) => {
         if (!text) return;

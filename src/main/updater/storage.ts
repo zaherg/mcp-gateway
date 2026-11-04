@@ -104,8 +104,14 @@ export function ensurePrivateDirectorySync(path: string): void {
  * Commit a small approval/binding record before returning to the native caller.
  * Large update work must remain asynchronous; this writer is bounded and only
  * converts the final checked metadata transition into a synced atomic rename.
+ * onPublished runs after rename, before validation and directory sync can fail.
+ * Publication alone does not confirm validity or durability.
  */
-export function atomicWritePrivateJsonSync(path: string, value: unknown): void {
+export function atomicWritePrivateJsonSync(
+  path: string,
+  value: unknown,
+  onPublished?: () => void,
+): void {
   const directory = dirname(path);
   ensurePrivateDirectorySync(directory);
   const bytes = Buffer.from(`${JSON.stringify(value)}\n`);
@@ -127,6 +133,7 @@ export function atomicWritePrivateJsonSync(path: string, value: unknown): void {
     if (existing && (existing.isSymbolicLink() || !existing.isFile()))
       throw new UpdaterStateError("stateDestination");
     renameSync(partial, path);
+    onPublished?.();
     const published = lstatSync(path);
     assertOwned(published);
     if (!published.isFile() || published.size !== bytes.length)

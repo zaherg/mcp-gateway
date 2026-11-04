@@ -104,14 +104,16 @@ test.each([
         "remote",
         undefined,
         "echo",
-        "snowman ☃ café\nsecond line",
+        "snowman ☃ café 🐻 replacement \uFFFD\nsecond line",
       );
       expect(result).toEqual({
         status: 200,
         message: {
           jsonrpc: "2.0",
           id: 1,
-          result: { content: [{ type: "text", text: "snowman ☃ café\nsecond line" }] },
+          result: {
+            content: [{ type: "text", text: "snowman ☃ café 🐻 replacement \uFFFD\nsecond line" }],
+          },
         },
       });
       await eventually(() => upstream.activeReplyCount() === 0);
@@ -129,12 +131,23 @@ test.each([
   15_000,
 );
 
-test.each(["invalid-json", "invalid-message", "unterminated"] as const)(
+test.each([
+  "invalid-json",
+  "invalid-message",
+  "unterminated",
+  "invalid-utf8",
+  "invalid-utf8-continuation",
+  "truncated-utf8",
+] as const)(
   "regression: %s streamed replies fail safely and release upstream resources",
   async (fault) => {
     const upstream = await httpFixture({
       modernDiscovery: "json",
-      modernStream: { newline: "\r", fault },
+      modernStream: {
+        newline: "\r",
+        fault,
+        splitBytes: fault === "invalid-utf8-continuation" || fault === "truncated-utf8",
+      },
     });
     const context = await setup(
       await configFor({
@@ -144,7 +157,13 @@ test.each(["invalid-json", "invalid-message", "unterminated"] as const)(
     try {
       const { address } = await context.controller.start();
       for (let call = 0; call < MAX_SESSIONS + 1; call++) {
-        const result = await modern(address as string, "remote", undefined, "echo");
+        const result = await modern(
+          address as string,
+          "remote",
+          undefined,
+          "echo",
+          "synthetic-private-stream-value",
+        );
         expect(result).toEqual({
           status: 200,
           message: {

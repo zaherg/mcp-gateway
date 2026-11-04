@@ -1,4 +1,4 @@
-import { test as bunTest, expect } from "bun:test";
+import { test as bunTest, expect, spyOn } from "bun:test";
 
 // Transaction integration acquires the macOS kernel guard; policy tests remain portable.
 const test = bunTest.skipIf(process.platform !== "darwin");
@@ -120,6 +120,67 @@ async function setup(
   });
   return { root, data, home, channel, app, boundary };
 }
+
+test("recovery publication sync failure aborts preparation without deleting either recovery copy", async () => {
+  const fixture = await setup();
+  const fs = await import("node:fs");
+  const { verifyRetainedRecovery } = await import("../../src/main/updater/recovery");
+  try {
+    const first = await fixture.boundary.prepareUpdateAttempt();
+    await fixture.boundary.abandonPrepared();
+    const sourceBytes = await readFile(join(fixture.app, "Contents/Resources/version.json"));
+    const recovery = join(fixture.data, "updates/recovery");
+    const directory = fs.statSync(recovery);
+    const sync = fs.fsyncSync;
+    let injected = 0;
+    const mock = spyOn(fs, "fsyncSync").mockImplementation((fd) => {
+      const entry = fs.fstatSync(fd);
+      if (entry.dev === directory.dev && entry.ino === directory.ino) {
+        injected++;
+        throw new Error("Synthetic recovery directory sync refusal");
+      }
+      sync(fd);
+    });
+    try {
+      await expect(fixture.boundary.prepareUpdateAttempt()).rejects.toMatchObject({
+        code: "recovery",
+      });
+      expect(injected).toBe(1);
+    } finally {
+      mock.mockRestore();
+    }
+    const retained = await verifyRetainedRecovery({
+      dataDirectory: fixture.data,
+      publisher: { identifier: "dev.srvr.mcpgateway", teamId: _TEAM },
+      verifier: new ApplicationVerifier(fakeRunner()),
+    });
+    expect(retained.record.retained_bundle_path).not.toBe(first.recovery.retained_bundle_path);
+    for (const bundle of [
+      fixture.app,
+      first.recovery.retained_bundle_path,
+      retained.record.retained_bundle_path,
+    ])
+      expect(await readFile(join(bundle, "Contents/Resources/version.json"))).toEqual(sourceBytes);
+    expect(await readLease(fixture.channel)).toBeUndefined();
+    expect(await readdir(join(fixture.data, "updates/tmp"))).toEqual([]);
+    const retry = await fixture.boundary.prepareUpdateAttempt();
+    expect(retry.candidate.hash).toBe(HASH);
+    expect(await readFile(join(recovery, "latest.json"), "utf8")).toBe(
+      `${JSON.stringify(retry.recovery)}\n`,
+    );
+    expect(
+      await Bun.file(
+        join(retained.record.retained_bundle_path, "Contents/Resources/version.json"),
+      ).exists(),
+    ).toBe(false);
+    expect(
+      await readFile(join(first.recovery.retained_bundle_path, "Contents/Resources/version.json")),
+    ).toEqual(sourceBytes);
+  } finally {
+    await fixture.boundary.abandonPrepared();
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
 
 test("incompatible candidates never publish prepared ownership", async () => {
   const fixture = await setup(

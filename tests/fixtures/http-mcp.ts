@@ -11,7 +11,13 @@ export async function httpFixture(
     modernStream?: {
       newline: "\n" | "\r\n" | "\r";
       splitBytes?: boolean;
-      fault?: "invalid-json" | "invalid-message" | "unterminated";
+      fault?:
+        | "invalid-json"
+        | "invalid-message"
+        | "unterminated"
+        | "invalid-utf8"
+        | "invalid-utf8-continuation"
+        | "truncated-utf8";
       holdOpen?: boolean;
     };
   } = {},
@@ -100,9 +106,35 @@ export async function httpFixture(
         replies.add(res);
         res.once("close", () => replies.delete(res));
         res.writeHead(200, { "Content-Type": "text/event-stream" });
-        const bytes = Buffer.from(frame);
+        let bytes = Buffer.from(frame);
+        let splitFrom = 0;
+        if (
+          fault === "invalid-utf8" ||
+          fault === "invalid-utf8-continuation" ||
+          fault === "truncated-utf8"
+        ) {
+          const textField = Buffer.from('"text": "');
+          const fieldOffset = bytes.indexOf(textField);
+          if (fieldOffset < 0) throw new Error("UTF-8 fault fixture requires a text result");
+          const textOffset = fieldOffset + textField.length;
+          // Split the malformed code units without delaying the valid frame prefix.
+          splitFrom = textOffset;
+          const invalid = Buffer.from(
+            fault === "invalid-utf8"
+              ? [0xff]
+              : fault === "invalid-utf8-continuation"
+                ? [0xe2, 0x28, 0xa1]
+                : [0xe2, 0x82],
+          );
+          bytes = Buffer.concat([
+            bytes.subarray(0, textOffset),
+            invalid,
+            fault === "truncated-utf8" ? Buffer.alloc(0) : bytes.subarray(textOffset),
+          ]);
+        }
         if (splitBytes) {
-          for (const byte of bytes) {
+          if (splitFrom > 0) res.write(bytes.subarray(0, splitFrom));
+          for (const byte of bytes.subarray(splitFrom)) {
             if (res.destroyed) return;
             res.write(Buffer.from([byte]));
             await new Promise((resolve) => setTimeout(resolve, 1));
