@@ -199,8 +199,9 @@ export class UpdaterCoordinator {
   }
 
   private async finishInitialization(): Promise<UpdateStatus> {
+    const generation = this.generation;
     await this.reconcileNow();
-    if (this.stopped) return this.statusValue();
+    if (this.stopped || generation !== this.generation) return this.statusValue();
     this.initialized = true;
     if (
       this.status.automaticUpdates &&
@@ -212,8 +213,10 @@ export class UpdaterCoordinator {
   }
 
   private async reconcileNow(): Promise<void> {
+    const generation = this.generation;
     try {
       const reconciliation = await this.runtime?.reconcile?.();
+      if (this.stopped || generation !== this.generation) return;
       if (reconciliation && reconciliation.status !== "none") {
         this.status = {
           ...this.status,
@@ -236,6 +239,7 @@ export class UpdaterCoordinator {
         };
       }
     } catch {
+      if (this.stopped || generation !== this.generation) return;
       this.status = {
         ...this.status,
         phase: "error",
@@ -472,8 +476,10 @@ export class UpdaterCoordinator {
   }
 
   async abandonPrepared(): Promise<void> {
+    this.generation++;
     this.clearRestartReservation();
     await this.runtime?.abandonPrepared?.();
+    await this.initialization;
     this.candidate = undefined;
     if (this.status.recoveryRequired) return;
     this.status = {

@@ -2,6 +2,8 @@ import { createHash, randomBytes } from "node:crypto";
 import { lstat, mkdir, readdir, readFile, realpath, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+import { type BuildIdentity, parseBuildIdentity } from "../../shared/build-identity";
 import type { ApplySdk } from "./apply";
 import {
   extractAdmittedArchive,
@@ -123,6 +125,7 @@ export interface UpdaterBoundaryOptions {
   dataDirectory: string;
   channelRoot: string;
   appDataDirectory: string;
+  executingBuild?: BuildIdentity;
   home?: string;
   deadlineMs?: number;
   startupReconcileWaitMs?: number;
@@ -211,6 +214,8 @@ export class UpdaterSafetyBoundary {
   private controller: AbortController | undefined;
   private lease: TransactionLease | undefined;
   private activeOperation: Promise<unknown> | undefined;
+  private reconciliation: Promise<TransactionReconciliation> | undefined;
+  private readonly executingBuild: BuildIdentity | undefined;
   private abandonment: Promise<void> | undefined;
   private handoffAuthority: HandoffAuthority | undefined;
   private readonly startupReconcileWaitMs: number;
@@ -218,6 +223,9 @@ export class UpdaterSafetyBoundary {
 
   constructor(options: UpdaterBoundaryOptions) {
     this.appBundlePath = canonicalAbsolute(options.appBundlePath);
+    this.executingBuild = options.executingBuild
+      ? parseBuildIdentity(options.executingBuild)
+      : undefined;
     this.dataDirectory = canonicalAbsolute(options.dataDirectory);
     this.channelRoot = canonicalAbsolute(options.channelRoot);
     this.home = canonicalAbsolute(options.home ?? homedir());
@@ -266,22 +274,26 @@ export class UpdaterSafetyBoundary {
     if (controller.signal.aborted) throw new UpdateBoundaryError("cancelled");
   }
 
-  private workerGrant(lease: TransactionLease, resultPath: string) {
+  private workerGrant(lease: TransactionLease, resultPath: string, signal: AbortSignal) {
     return {
       requireGrant: true as const,
-      onRegistered: async (pid: number): Promise<void> => {
+      onRegistered: async (pid: number, registrationSignal?: AbortSignal): Promise<void> => {
         if (!this.preparation) throw new UpdateBoundaryError("unavailable");
         const record = await captureRegisteredGroup({
           leaderPid: pid,
           helperPath: this.preparation.command,
           planPath: resultPath,
+          signal: registrationSignal,
         });
+        if (signal.aborted) throw new UpdateBoundaryError("cancelled");
         lease.registerWorkerGroupSync(record);
       },
       onGranted: (): void => lease.markWorkerGrantedSync(),
       onSettled: async (): Promise<void> => {
         const group = lease.snapshot().registered_group;
         if (!group) return;
+        // Settlement uses its own bounded inspection lifetime, not the possibly
+        // aborted work signal, so required cleanup is never skipped.
         const state = await inspectRegisteredGroup(group);
         if (state.status === "absent") lease.clearWorkerGroupSync();
       },
@@ -419,7 +431,7 @@ export class UpdaterSafetyBoundary {
         resultPath,
         signal: controller.signal,
         fileSizeLimitBytes: MAX_WORKER_FILE_BYTES,
-        ...this.workerGrant(lease, resultPath),
+        ...this.workerGrant(lease, resultPath, controller.signal),
       });
       this.assertActive(controller);
       if (outcome.status === "cancelled") throw new UpdateBoundaryError("cancelled");
@@ -515,7 +527,7 @@ export class UpdaterSafetyBoundary {
         resultPath,
         signal: controller.signal,
         fileSizeLimitBytes: MAX_WORKER_FILE_BYTES,
-        ...this.workerGrant(lease, resultPath),
+        ...this.workerGrant(lease, resultPath, controller.signal),
       });
       this.assertActive(controller);
       if (outcome.status === "cancelled") throw new UpdateBoundaryError("cancelled");
@@ -798,30 +810,57 @@ export class UpdaterSafetyBoundary {
     if (this.lease === lease) this.lease = undefined;
   }
 
-  async reconcile(): Promise<TransactionReconciliation> {
-    const installed = await this.verifier.inspect(this.appBundlePath).catch(() => undefined);
-    const options = {
-      channelRoot: this.channelRoot,
-      dataDirectory: this.dataDirectory,
-      ...(installed
-        ? {
-            running: {
-              version: installed.version,
-              hash: installed.hash,
-              appBundlePath: this.appBundlePath,
-            },
-          }
-        : {}),
-    };
-    const deadline = Date.now() + this.startupReconcileWaitMs;
-    let outcome = await reconcileTransaction(options);
-    while (outcome.status === "recovery-required" && Date.now() < deadline) {
-      const journal = await readLease(this.channelRoot).catch(() => undefined);
-      if (journal?.phase !== "handed-off") break;
-      await Bun.sleep(this.startupReconcileDelayMs);
-      outcome = await reconcileTransaction(options);
+  reconcile(): Promise<TransactionReconciliation> {
+    if (this.reconciliation) return this.reconciliation;
+    const operation = this.runOperation((signal) => this.performReconciliation(signal)).finally(
+      () => {
+        if (this.reconciliation === operation) this.reconciliation = undefined;
+      },
+    );
+    this.reconciliation = operation;
+    return operation;
+  }
+
+  private async performReconciliation(signal: AbortSignal): Promise<TransactionReconciliation> {
+    try {
+      signal.throwIfAborted();
+      const options = {
+        channelRoot: this.channelRoot,
+        dataDirectory: this.dataDirectory,
+        signal,
+        inspectRunning: async () => {
+          const installed = await this.verifier
+            .inspectExecutingBuild(this.appBundlePath, this.executingBuild, signal)
+            .catch(() => undefined);
+          signal.throwIfAborted();
+          return installed
+            ? {
+                version: installed.version,
+                hash: installed.hash,
+                appBundlePath: this.appBundlePath,
+              }
+            : undefined;
+        },
+      };
+      const deadline = Date.now() + this.startupReconcileWaitMs;
+      let outcome = await reconcileTransaction(options);
+      while (outcome.status === "recovery-required" && Date.now() < deadline) {
+        signal.throwIfAborted();
+        const journal = await readLease(this.channelRoot).catch(() => undefined);
+        if (journal?.phase !== "handed-off") break;
+        await delay(
+          Math.min(this.startupReconcileDelayMs, Math.max(1, deadline - Date.now())),
+          undefined,
+          { signal },
+        );
+        outcome = await reconcileTransaction(options);
+      }
+      signal.throwIfAborted();
+      return outcome;
+    } catch (error) {
+      if (signal.aborted) throw new UpdateBoundaryError("cancelled");
+      throw error;
     }
-    return outcome;
   }
 
   private async readOwnedLease(): Promise<TransactionLease> {

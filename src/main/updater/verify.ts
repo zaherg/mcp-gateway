@@ -1,6 +1,19 @@
-import { spawn } from "node:child_process";
 import { lstat, readdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import {
+  type CommandChild,
+  type CommandResult,
+  type CommandRunner,
+  type CommandStart,
+  createCommandRunner as createOwnedCommandRunner,
+  runCommand,
+} from "../../core/command";
+import {
+  BUILD_IDENTITY_FILE,
+  type BuildIdentity,
+  parseBuildIdentity,
+  sameBuild,
+} from "../../shared/build-identity";
 import {
   isSafeRelativeComponent,
   UPDATER_ARCH,
@@ -14,24 +27,16 @@ import {
 const MAX_DOCUMENT_BYTES = 1024 * 1024;
 const MAX_BUNDLE_ENTRIES = 50_000;
 const MAX_BUNDLE_BYTES = 2 * 1024 * 1024 * 1024;
-const COMMAND_OUTPUT_BYTES = 64 * 1024;
-const COMMAND_TIMEOUT_MS = 60_000;
 const CODESIGN = "/usr/bin/codesign";
 const LIPO = "/usr/bin/lipo";
 const PLUTIL = "/usr/bin/plutil";
 
-export interface CommandResult {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-}
+export type { CommandChild as VerificationChild, CommandResult, CommandRunner };
+export { runCommand };
 
-export type CommandRunner = (
-  command: string,
-  args: readonly string[],
-  timeoutMs?: number,
-  signal?: AbortSignal,
-) => Promise<CommandResult>;
+export function createCommandRunner(start?: CommandStart): CommandRunner {
+  return createOwnedCommandRunner({ start });
+}
 
 export class ApplicationVerificationError extends Error {
   readonly code: string;
@@ -46,97 +51,6 @@ export class ApplicationVerificationError extends Error {
 function fail(code: string): never {
   throw new ApplicationVerificationError(code);
 }
-
-export interface VerificationChild {
-  readonly pid?: number;
-  readonly stdout: { on(event: "data", listener: (chunk: Buffer) => void): unknown } | null;
-  readonly stderr: { on(event: "data", listener: (chunk: Buffer) => void): unknown } | null;
-  kill(signal: "SIGKILL"): unknown;
-  on(event: "error", listener: (error: Error) => void): unknown;
-  on(event: "close", listener: (code: number | null) => void): unknown;
-}
-
-export function createCommandRunner(
-  start: (command: string, args: readonly string[]) => VerificationChild = (command, args) =>
-    spawn(command, [...args], {
-      shell: false,
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true,
-    }),
-): CommandRunner {
-  return (command, args, timeoutMs = COMMAND_TIMEOUT_MS, signal) =>
-    new Promise((resolvePromise, reject) => {
-      if (signal?.aborted) {
-        reject(new Error("Verification command cancelled"));
-        return;
-      }
-      const child = start(command, args);
-      const stdout: Buffer[] = [];
-      const stderr: Buffer[] = [];
-      let stdoutBytes = 0;
-      let stderrBytes = 0;
-      let settled = false;
-      let termination: Error | undefined;
-      let abortHandler: (() => void) | undefined;
-      const finish = (result: CommandResult | Error) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        if (abortHandler) signal?.removeEventListener("abort", abortHandler);
-        if (result instanceof Error) reject(result);
-        else resolvePromise(result);
-      };
-      const terminate = (error: Error) => {
-        if (settled || termination) return;
-        termination = error;
-        try {
-          child.kill("SIGKILL");
-        } catch (failure) {
-          termination =
-            failure instanceof Error
-              ? failure
-              : new Error("Verification command termination failed");
-        }
-        // Ownership stays unsettled until close, even if termination is unconfirmed.
-      };
-      const timer = setTimeout(
-        () => terminate(new Error("Verification command timed out")),
-        timeoutMs,
-      );
-      abortHandler = () => terminate(new Error("Verification command cancelled"));
-      signal?.addEventListener("abort", abortHandler, { once: true });
-      child.stdout?.on("data", (chunk: Buffer) => {
-        stdoutBytes += chunk.byteLength;
-        if (stdoutBytes <= COMMAND_OUTPUT_BYTES) stdout.push(chunk);
-      });
-      child.stderr?.on("data", (chunk: Buffer) => {
-        stderrBytes += chunk.byteLength;
-        if (stderrBytes <= COMMAND_OUTPUT_BYTES) stderr.push(chunk);
-      });
-      child.on("error", (error) => {
-        if (child.pid === undefined) finish(error);
-        else termination ??= error;
-      });
-      if (signal?.aborted) terminate(new Error("Verification command cancelled"));
-      child.on("close", (code) => {
-        if (termination) {
-          finish(termination);
-          return;
-        }
-        if (stdoutBytes > COMMAND_OUTPUT_BYTES || stderrBytes > COMMAND_OUTPUT_BYTES) {
-          finish(new Error("Verification command output exceeded the limit"));
-          return;
-        }
-        finish({
-          stdout: Buffer.concat(stdout).toString("utf8"),
-          stderr: Buffer.concat(stderr).toString("utf8"),
-          exitCode: code ?? -1,
-        });
-      });
-    });
-}
-
-export const runCommand = createCommandRunner();
 
 export interface BundleMetadata {
   identifier: string;
@@ -210,6 +124,14 @@ function parseVersionDocument(document: unknown): {
 
 export async function readVersionMetadata(path: string) {
   return parseVersionDocument(JSON.parse(await readBoundedText(path)));
+}
+
+export async function readBuildIdentityResource(bundlePath: string): Promise<BuildIdentity> {
+  return parseBuildIdentity(
+    JSON.parse(
+      await readBoundedText(join(bundlePath, "Contents/Resources/app", BUILD_IDENTITY_FILE)),
+    ),
+  );
 }
 
 export function parseCodesignDisplay(output: string): {
@@ -358,6 +280,29 @@ export class ApplicationVerifier {
 
   async inspect(appBundlePath: string, signal?: AbortSignal): Promise<BundleMetadata> {
     return readMetadata(this.run, appBundlePath, signal);
+  }
+
+  async inspectExecutingBuild(
+    appBundlePath: string,
+    executing: BuildIdentity | undefined,
+    signal?: AbortSignal,
+  ): Promise<BundleMetadata> {
+    const metadata = await this.inspect(appBundlePath, signal);
+    if (!executing) fail("executing_identity_unavailable");
+    const resource = await readBuildIdentityResource(appBundlePath);
+    if (
+      !sameBuild(resource, executing) ||
+      resource.identifier !== metadata.identifier ||
+      resource.version !== metadata.version
+    )
+      fail("executing_identity_mismatch");
+    await this.readPublisher(appBundlePath, signal);
+    const verified = await this.inspect(appBundlePath, signal);
+    if (JSON.stringify(verified) !== JSON.stringify(metadata)) fail("executing_identity_changed");
+    if (!sameBuild(await readBuildIdentityResource(appBundlePath), executing))
+      fail("executing_identity_mismatch");
+    if (signal?.aborted) fail("candidate_cancelled");
+    return verified;
   }
 
   async readPublisher(appBundlePath: string, signal?: AbortSignal): Promise<PublisherIdentity> {

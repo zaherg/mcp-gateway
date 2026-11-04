@@ -174,6 +174,8 @@ declare module "supergateway/dist/gateways/statefulSession.js" {
   } from "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js";
   export class StatefulSession {
     readonly transport: StreamableHTTPServerTransport;
+    settle(requestId: string | number): boolean;
+    endCancelled(requestId: unknown): void;
     static open(
       sessions: StatefulSessions,
       res: GatewayResponse,

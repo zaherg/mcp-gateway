@@ -2,10 +2,15 @@
 
 ## Current plan: src audit remediation
 
-Status: planning only, prepared on 2026-11-03 against commit `9bcb74a` and package version `0.3.1`.
-The user requested an extensive implementation plan for all 13 findings in the preceding `src/` audit.
-No remediation, dependency change, build, signing, installation, publication, or Git mutation is authorized by that planning request.
-All A1-A13 implementation items below are not started.
+Status: A2-A6 and prerequisite A12 are source-complete on 2026-11-04, starting from commit `ad4722a` and package version `0.3.1`.
+The original audit and plan used commit `9bcb74a`.
+A1 was implemented in `ad4722a`.
+The current request authorizes A2-A6 and explicitly includes A12 as their process-inspection prerequisite.
+A7-A11 and A13 remain outside this implementation scope.
+A2-A6 and A12 passed combined local verification, independent source review, and the subsequently authorized packaged acceptance on 2026-11-04.
+Independent packaged closure review is clear within the limits recorded below.
+That request authorized project-local signing, notarization, stapling and private replacement tests only.
+Installed-app replacement, publication and Git mutations remain unauthorized.
 The A numbers map directly to findings 1-13 in that audit and do not replace historical F, U, or R numbers.
 
 This section is the current work plan.
@@ -53,18 +58,18 @@ Convert those cases into maintained tests during implementation.
 
 | ID | Finding | Existing evidence | Implementation status |
 | --- | --- | --- | --- |
-| A1 | Retry Update can call an unloaded native library | Real lifecycle/service probe reached a closed native seam; a separate synthetic Bun FFI child crashed after library closure | Not started |
-| A2 | Failed backend termination is reported as completed cleanup | Pinned process owner fulfilled and released ownership after injected persistent `EPERM`, without an observed child exit | Not started |
-| A3 | Cancelling one batched call loses another reply | Real loopback gateway and stdio batch returned an empty response after cancelling only one member | Not started |
-| A4 | An old app instance can falsely confirm a new version | An existing boundary confirmed changed on-disk metadata and retired the journal without a replacement product process | Not started |
-| A5 | Quit does not wait for startup reconciliation | Paused verifier remained unfinished after cancellation and abandonment returned; no signal reached it | Not started |
-| A6 | Crash residue blocks future updates | An owner-only empty transaction directory repeatedly produced recovery-required and refused acquisition as busy | Not started |
+| A1 | Retry Update can call an unloaded native library | Real lifecycle/service probe reached a closed native seam; a separate synthetic Bun FFI child crashed after library closure | Implemented in `ad4722a`; preserved |
+| A2 | Failed backend termination is reported as completed cleanup | Pinned process owner fulfilled and released ownership after injected persistent `EPERM`, without an observed child exit | Source and packaged acceptance complete within the recorded limits |
+| A3 | Cancelling one batched call loses another reply | Real loopback gateway and stdio batch returned an empty response after cancelling only one member | Source and packaged acceptance complete within the recorded limits |
+| A4 | An old app instance can falsely confirm a new version | An existing boundary confirmed changed on-disk metadata and retired the journal without a replacement product process | Source and packaged acceptance complete within the recorded limits |
+| A5 | Quit does not wait for startup reconciliation | Paused verifier remained unfinished after cancellation and abandonment returned; no signal reached it | Source and packaged acceptance complete within the recorded limits |
+| A6 | Crash residue blocks future updates | An owner-only empty transaction directory repeatedly produced recovery-required and refused acquisition as busy | Source and packaged acceptance complete within the recorded limits |
 | A7 | An update can require newer macOS than the host | Real plist reads accepted minimum version `99.0` with signature and architecture checks injected as successful | Not started |
 | A8 | Native Quit bypasses the draft-discard warning | Source trace shows Cmd+Q/menu Quit bypassing the confirmation used by the renderer button | Not started |
 | A9 | Quit and update attempt numbers can move backwards | Two failed Quits produced attempts 1 and 2, followed by update attempt 1, which renderer ordering rejects | Not started |
 | A10 | An upstream notification hides its discovery reply | Finite loopback SSE notification followed by the matching supported-version result was classified as legacy | Not started |
 | A11 | Archive validation accepts bytes the installer rejects | Checksummed high-bit numeric bytes passed inspection/extraction; pinned native parsing rejects the original bytes | Not started |
-| A12 | Process-inspection commands escape worker deadlines | Worker exited after its deadline while the paused registration operation remained pending | Not started |
+| A12 | Process-inspection commands escape worker deadlines | Worker exited after its deadline while the paused registration operation remained pending | Source and packaged acceptance complete within the recorded limits |
 | A13 | Full HTTP capacity blocks cancellation and DELETE | At 32 admitted requests, both cancellation and DELETE returned HTTP 429 | Not started |
 
 The audit did not run a fresh signed update, a real permission-changing backend, a real incompatible-OS installation, or a packaged two-instance race.
@@ -84,7 +89,7 @@ Do not commit intermediate work unless Git operations are separately requested.
 | P4 | A7 host compatibility and A11 archive numeric validation | Ineligible candidates fail before readiness or gateway shutdown; valid retained fixtures still pass |
 | P5 | A8 native draft confirmation and combined retry/quit integration | Every interactive Quit path follows one draft decision without breaking signals, SDK handoff, or retry |
 | P6 | Full local checks, focused simplification, independent source closure, and isolated development-native acceptance | Correct final source, no unresolved blocking findings, no owned verification resources, and recorded limits |
-| P7 | Separately authorized signed packaged acceptance | Final signed payload passes two-version and failure/recovery cases; earlier artifacts cannot substitute |
+| P7 | Separately authorized signed packaged acceptance | Complete for A2-A6/A12 within the recorded limits; the remaining findings are not certified |
 | P8 | Separately authorized versioning and shipping | Any commit, tag, push, release, installation, or publication follows its own explicit request |
 
 A12 precedes A2 and A5 where they reuse bounded process inspection.
@@ -555,8 +560,9 @@ Stop the affected step and record the blocker if a required pinned seam is absen
 Do not work around a blocker by dropping a supported batch form, disabling validation, deleting an uncertain journal, accepting disk metadata as executing identity, or bypassing native checks.
 Do not silently upgrade dependencies, patch the SDK, change the update feed/publisher, move configuration, or add a custom installer.
 
-The present request authorizes this plan and documentation checks only.
-A later implementation request may authorize the source changes, regression tests, local review, and isolated development verification described above, but not the separately gated signing, packaged replacement, shipping, or installed-app operations.
+The source-remediation request authorized A2-A6 and prerequisite A12 source changes, regression tests, local review, and isolated development verification.
+A subsequent request authorized their project-local signing and packaged acceptance, now complete within the recorded limits.
+Neither request authorizes the remaining audit findings, shipping, or installed-app operations.
 Version selection, commit, tag, push, GitHub release creation, upload/publication, and installation each require explicit authorization under the repository rules.
 
 Final completion record must identify which A items are closed, which acceptance layers actually ran, any remaining blockers, and any permitted scope reduction.
@@ -572,6 +578,131 @@ The initial heading-count check also counted the audit-baseline heading; restric
 The historical 843-line body remains byte-for-byte unchanged, and `git diff --check` passes.
 No application tests, builds, native acceptance, implementation, or shipping were performed for this documentation-only request.
 The A3, A4, A6, and A13 proof gates remain pending execution.
+
+### A2-A6 and A12 source completion
+
+Baseline hashes and evidence are in `.cache/src-audit-a2-a6/20261104T085208Z/`.
+The initial checkout was clean at `ad4722a`.
+The A2-A6 audit reproductions each failed on their specific runtime defect before correction.
+The Kimi implementer completed the bounded A12 assignment; subsequent corrections and A2-A6 implementation were performed directly.
+No other implementation agents were used.
+
+- A12 shares the command owner in `src/core/command.ts` between verification and process inspection.
+  Deadlines, cancellation, and output overflow request termination and retain ownership until close.
+  A follow-up regression exposed overflow waiting for natural exit; the correction passed before reuse.
+- A2 uses `BackendProcesses` at the existing `ChildrenOwner` boundary.
+  Group inspection and confirmed leader exit govern release; permission refusal, unknown identity, and successful signal delivery alone do not release a lease.
+  A surviving group without a recognized leader or descendant remains pending rather than being signalled speculatively.
+- A3 confines SDK 1.30.0 and Supergateway 4.2.1 cancellation compatibility to `src/core/legacy-cancellation.ts`.
+  A forwarded cancellation retires one correlation and preserves live batch siblings without inventing a JSON-RPC response.
+  Entirely cancelled JSON-mode batches complete as empty SSE, a response media type the protocol requires clients to accept.
+  The pinned JSON resolver is joined to stream cleanup for cancelled batches.
+  Official cancellation and transport passages are retained beside the test evidence.
+- A4 generates a fresh identity when Electrobun evaluates its config and supplies the same value to the Bun define and signed resource copy.
+  Startup confirmation compares the captured compiled identity with the authenticated resource.
+  A further regression reproduced stale target metadata after a same-version rollback; post-signature metadata inspection and equality checks now refuse that case.
+  The test switches synthetic `version.json` and identity-resource files at a controlled source boundary with native-signature doubles; it does not perform an atomic native bundle replacement.
+  Source runs without an embedded identity cannot confirm an update; legacy recovery verification remains supported.
+- A5 puts reconciliation in the boundary's tracked operation and runs startup verification under the reconciler's kernel guard.
+  A cross-writer regression failed before the guard correction and passes after it.
+  Cancellation joins the verification child and prevents late startup results from publishing status or scheduling checks.
+- A6 permits guarded recovery of an empty transaction directory only when no native handoff evidence is present.
+  Canonical journals with valid, matching uncommitted partial records require absent writers and workers before scratch cleanup.
+  Partial-only, truncated, conflicting, unsafe, committed, or uncertain native state remains preserved and blocked.
+  Publication and retirement synchronize their directories; a failed publication sync preserves the canonical record.
+  Twelve child-process crash checkpoints cover initial publication, partial writes, rename, and retirement.
+
+Final combined checks passed on the corrected source:
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| Type checking and Biome | Passed; 170 files checked by lint | `accepted-typecheck.log`, `accepted-lint.log` |
+| Playwright real-service E2E | 20 passed | `accepted-test-e2e.log` |
+| React component tests | 54 passed | `accepted-test-components.log` |
+| Bun unit/integration | 504 passed; 3,671 assertions | `accepted-test-unit.log` |
+| A1/A12 and P0 gates; selected A2-A6 audit cases | Passed | `accepted-audit-gates.log`, `accepted-audit-selected.log` |
+| Configured LSP | Zero diagnostics across 29 changed files, plus the two-file A4 follow-up | Session tool results |
+| Development build and identity copy/define consistency | Passed | `accepted-development-build.log`, `accepted-development-identity.json` |
+| Isolated macOS native fresh, synthetic, JSONC, and SIGTERM scenarios | All four passed | `accepted-development-native.log`, `accepted-native/` |
+| Unchanged pinned SDK helper checks | 5 tests passed; 223 assertions | `accepted-real-sdk.log` |
+| Private acceptance source hooks | 8 tests passed; 59 assertions | `accepted-private-hooks.log` |
+
+The final development bundle is `build/a2-a6-accepted/dev-macos-arm64/MCP Gateway-dev.app`.
+Native development checks verify renderer RPC, window behavior, and synthetic-backend shutdown; they do not verify signed update confirmation or replacement.
+Desktop Logs and narrow configuration-dialog screenshots were inspected, and the eight generated tracked screenshots were restored after retaining copies in the evidence directory.
+The 14 protected package, lock, asset, and artifact files, HEAD, and the historical plan body remain unchanged.
+
+Two fresh read-only Kimi reviews returned CLEAR for the core/process and updater areas.
+Their reports are `independent-review.task-1.md` and `independent-review.task-2.md`.
+The later A4 rollback correction received a passing regression and independent closure review in `review-updater-closure.md` before the final combined checks and development rebuild.
+The closure report's atomic-swap wording is not an acceptance claim; the source fixture uses the controlled file switches described above.
+The initial review launch rejected unsupported per-task output fields before starting children; the supported retry completed.
+Expected red regressions and intermediate fixture corrections are retained in the evidence directory rather than counted as final failures.
+
+No commit, push, release signing, notarization, publication, installation, external configuration change, real Bear operation, or actual login registration was performed.
+The source-only phase did not include signed packaged acceptance; the later authorized results are recorded below.
+Linux/Windows runtime, live GitHub/CDN delivery, physical input, actual login cycles, prolonged load, and power-loss behavior remain unverified.
+Persistent permission refusal was injected; no backend was allowed to change its actual user permissions.
+Process-crash tests do not establish power-loss durability.
+Unconfirmed process cleanup intentionally retains ownership and can keep Quit pending.
+
+### A2-A6 and A12 packaged acceptance
+
+The separately authorized packaged gate completed on 2026-11-04.
+Evidence is in `.cache/src-audit-a2-a6/20261104T104310Z/packaged-acceptance/`.
+`COMPLETION.md`, `summary.json`, `preservation.json` and `independent-closure.md` record the results and limits.
+The independent Kimi closure review returned CLEAR for A2-A6/A12 after correction of the private race driver's ordering.
+A7-A11 and A13 remain open and outside this acceptance scope.
+The generic P7 checklist above also contains their future cases; this completion does not mark those cases passed.
+
+The production wrapper is `build-root/stable-macos-arm64/MCP Gateway.app` relative to the evidence directory.
+Its distribution files are in that directory's `artifacts/`, separate from published and previously retained assets.
+The production identity is version `0.3.1`, routing hash `3b2zg9bchjkkp`, and compiled build identity `062a5a77a5b85083330e15c35e6f8b64552bac903019c42d844f3886900c656e`.
+The DMG is 49,149,992 bytes with SHA-256 `aaa81a791d9df937991a148829fe9fbe9fd8d98072ef2e1f8cfda00214b92e0b`.
+The runtime archive SHA-256 is `8db36c5a80f4993d160df6556b48a6b8ea9d30b35966f0e2ed187b56f9247ea9`.
+All three production notarizations were accepted.
+Wrapper, payload and DMG signatures, staples, Gatekeeper, manifest, architecture, signed build identity and full DMG inventory checks passed.
+The signing-account/password scan checked 15,509 files with zero matches.
+
+| Packaged check | Result |
+| --- | --- |
+| Signed production native application | Fresh, synthetic MCP, JSONC and SIGTERM scenarios passed |
+| Ordinary private A-to-B updates | Success, HTTP 503, partial-download cancellation, cleanup failure/retry and delayed renderer readiness passed |
+| Native helper matrix | Seven success/failure/recovery cases passed, including isolated-image ENOSPC and manual restoration |
+| A3 production endpoint | First, middle and last batch-member cancellation preserved exact sibling IDs and values |
+| A4 old-instance race | Old compiled identity returned unconfirmed and preserved the journal; matching B later confirmed |
+| A5/A12 startup cancellation | Normal SIGTERM Quit joined the injected verifier child's checked SIGKILL/close; competing writer refused |
+| A6 packaged startup | Three process-crash residue cases recovered; unknown and committed arming states stayed byte-preserved across two launches |
+| Unchanged-SDK checks | Five tests and 223 assertions passed using the new production payload |
+| Private hook regressions | Eight tests and 59 assertions passed |
+
+The unit, component and browser suites passed earlier in this same packaged run: 504 tests with 3,671 assertions, 54 component tests and 20 browser tests.
+Their source hashes remain unchanged.
+Root type checking and lint passed after continuation.
+All four final private source variants and the final private drivers also passed type checks.
+The configured LSP timed out on an ignored private `.cache` file; no passing private LSP result is claimed.
+
+The old-instance race did not observe an automatic target process during its bounded three-second window after the old observer exited.
+The driver explicitly launched private B, delayed its initialization, then checked matching transaction confirmation and working RPC.
+This verifies executing-identity refusal and subsequent confirmation, not automatic relaunch while another old instance is active.
+Ordinary automatic relaunch passed separately in the product flows.
+The cause of the missing automatic launch was not established directly.
+
+The startup-cancellation case injects a waiting child at the verifier's native-command boundary and exercises the shared command owner and normal app Quit path.
+A paused `/bin/ps`, delayed physical SIGKILL completion and persistent backend permission refusal retain source-level coverage only.
+The residue cases use process death and seeded committed state, not host power loss.
+Live GitHub/CDN, minimum macOS hardware, physical input, actual login registration, second-device LAN, prolonged load and native Linux/Windows remain unverified.
+
+The inherited re-signed private fixture had lost its JIT entitlements; fresh private builds retained the normal signing entitlements and restored the missing fixture RPC assignment.
+Private deadline, dispatch-log timing, cancellation-signal expectation and race-ordering failures were corrected without production-source changes.
+Failed attempts remain in the evidence directory.
+A committed failed-run journal was reconciled by verified B startup before archival, not deleted to unblock testing.
+The extracted launcher produced nonfatal bootstrap-install warnings; installer-wrapper execution is not certified.
+
+Published `0.3.0` and retained `0.3.1` DMG/archive hashes, package/lock, assets, HEAD and the historical plan body were preserved.
+Eight generated screenshots were retained in the evidence directory and restored to baseline bytes.
+Owned application/backend processes, the loopback feed and test mounts were closed.
+No production-source change, version bump, commit, tag, push, release upload, installed-app replacement, real Bear operation or external configuration change was performed in this packaged acceptance phase.
 
 ## Historical implementation and acceptance records
 

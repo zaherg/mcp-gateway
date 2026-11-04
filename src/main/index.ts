@@ -27,6 +27,7 @@ import { applyVerifiedUpdate, loadApplySdk } from "./updater/apply";
 import { INSTALLATION_ENABLED, UpdaterSafetyBoundary } from "./updater/boundary";
 import { UPDATER_CHANNEL, UPDATER_IDENTIFIER } from "./updater/constants";
 import { UpdaterCoordinator } from "./updater/coordinator";
+import { EXECUTING_BUILD } from "./updater/executing-build";
 import type { ApplySettlement } from "./updater/handoff";
 import { withQuitInvocation } from "./updater/invocation";
 import { readUpdateSupport } from "./updater/support";
@@ -60,6 +61,7 @@ const updateSupport = await readUpdateSupport({
 const boundary = updateSupport.supported
   ? new UpdaterSafetyBoundary({
       appBundlePath,
+      executingBuild: EXECUTING_BUILD,
       dataDirectory,
       appDataDirectory: Utils.paths.appData,
       channelRoot: join(Utils.paths.appData, UPDATER_IDENTIFIER, UPDATER_CHANNEL),

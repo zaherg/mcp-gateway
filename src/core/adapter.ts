@@ -32,7 +32,6 @@ import {
 } from "supergateway/dist/lib/modernAdmission.js";
 import { ModernRequest } from "supergateway/dist/lib/modernRequest.js";
 import { PerRequestHTTPServerTransport } from "supergateway/dist/lib/modernSdk.js";
-import { OwnedChildProcesses } from "supergateway/dist/lib/ownedChildProcesses.js";
 import { OwnedStdioTransport } from "supergateway/dist/lib/ownedStdioTransport.js";
 import {
   CONTINUATION_TIMEOUT,
@@ -47,6 +46,7 @@ import { streamableHttpApp } from "supergateway/dist/lib/streamableHttpApp.js";
 import { UpstreamModernChild } from "supergateway/dist/lib/upstreamModernChild.js";
 import type { LogLevel } from "../shared/logs";
 import type { HttpServerConfig, StdioServerConfig } from "../shared/types";
+import { BackendProcesses } from "./backend-processes";
 import {
   BACKEND_CAPACITY_ERROR,
   BACKEND_ID_EXHAUSTED_ERROR,
@@ -59,6 +59,7 @@ import {
 import { isHttpServer } from "./config";
 import { UpstreamDiscovery } from "./discovery";
 import { failure } from "./errors";
+import { installLegacyCancellation } from "./legacy-cancellation";
 import { LogBuffer } from "./logs";
 import type { ResourceAdmission, ResourceLease } from "./resource-admission";
 
@@ -72,11 +73,11 @@ class CapacityError extends Error {}
 const MALFORMED_LEGACY_RESPONSE = "Legacy backend response envelope was malformed.";
 const DUPLICATE_DROPPED = "Duplicate in-flight legacy request was dropped.";
 
-// Unlike an HTTP response, these ownership callbacks settle after Supergateway's
-// process-group termination or upstream session cleanup. Keep failed cleanup charged.
+// Lease release requires confirmed process-group absence or upstream session cleanup.
 function leasedOwner(
-  children: OwnedChildProcesses,
+  children: BackendProcesses,
   lease: ResourceLease,
+  reportFailure: (error: unknown) => void,
   confirm?: () => void,
 ): ChildrenOwner {
   const track = (stop: () => Promise<void>) =>
@@ -93,7 +94,9 @@ function leasedOwner(
     spawnOptions: children.spawnOptions,
     own: (child) => {
       const stop = track(children.own(child));
-      child.once("exit", () => void stop());
+      child.once("exit", () => {
+        void stop().catch(reportFailure);
+      });
       return stop;
     },
     track,
@@ -114,6 +117,7 @@ function admitPeer(
   wires: BackendWireIds,
   calls: BackendCalls,
   localFailure: (error: unknown) => void,
+  cancelled: (id: string | number) => void,
 ): Peer {
   // A refusal answers a request the session already recorded in
   // pendingRequests/progressOf. Delivering the error through the inherited
@@ -200,6 +204,7 @@ function admitPeer(
             localFailure(error);
             return;
           }
+          cancelled(requestId);
           wires.release(requestId);
           calls.settle(work, requestId);
           return;
@@ -299,7 +304,7 @@ export function createMount(
           cwd: server.cwd,
         },
       };
-  const children = new OwnedChildProcesses(logger);
+  const children = new BackendProcesses(logger);
   // Local send failures are not backend diagnostics; keep them out of the
   // backend status while retaining the observation in app-local Logs.
   const localFailure = (error: unknown) =>
@@ -349,6 +354,9 @@ export function createMount(
       };
       let ended = false;
       let cleanup: (() => Promise<void>) | undefined;
+      let settleCancelled = (_id: string | number): void => {
+        throw new Error("Legacy session is not initialized.");
+      };
       const end = () => {
         ended = true;
         // A rejected/abandoned initialize must close only its own transport.
@@ -359,7 +367,7 @@ export function createMount(
       res.once("close", end);
       const work = calls.owner();
       const wires = new BackendWireIds();
-      const owner = leasedOwner(children, lease, () => {
+      const owner = leasedOwner(children, lease, localFailure, () => {
         calls.settleOwner(work);
         wires.clear();
       });
@@ -385,10 +393,18 @@ export function createMount(
               sessionLogger,
               "Session",
             );
-            return (peerOwner) => admitPeer(factory, peerOwner, work, wires, calls, localFailure);
+            return (peerOwner) =>
+              admitPeer(factory, peerOwner, work, wires, calls, localFailure, (id) =>
+                settleCancelled(id),
+              );
           },
         );
         transport = session.transport;
+        const cancel = installLegacyCancellation(session);
+        settleCancelled = (id) => {
+          cancel(id);
+          this.claimsFor(session.transport).delete(id);
+        };
         const onclose = transport.onclose;
         transport.onclose = () => {
           // Mark before the session stops its child, not during exit-triggered owner cleanup.

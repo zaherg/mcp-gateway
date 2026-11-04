@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { lstatSync, readdirSync, rmdirSync, unlinkSync } from "node:fs";
-import { lstat, mkdir, readdir, rm } from "node:fs/promises";
+import { lstat, mkdir, readdir } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import type { FrozenCandidate } from "./candidate";
 import { discardFrozenCandidate } from "./candidate";
@@ -26,6 +26,7 @@ import {
   readNativeJsonSync,
   readPrivateJson,
   readPrivateJsonSync,
+  syncDirectory,
   UpdaterStateError,
 } from "./storage";
 
@@ -252,6 +253,8 @@ export interface ReconcileTransactionOptions {
   channelRoot: string;
   dataDirectory: string;
   running?: RunningApplicationIdentity;
+  inspectRunning?: (signal?: AbortSignal) => Promise<RunningApplicationIdentity | undefined>;
+  signal?: AbortSignal;
   inspectHelper?: typeof inspectExactHelper;
   inspectOwner?: (pid: number) => "alive" | "absent" | "unknown";
   inspectGroup?: typeof inspectRegisteredGroup;
@@ -626,6 +629,97 @@ function assertLeaseDirectorySync(channelRoot: string): string {
   return directory;
 }
 
+// Runtime readers remain strict. Only the stable kernel guard authorizes this inventory.
+async function recoverTransactionResidue(
+  options: ReconcileTransactionOptions,
+  guard: KernelGuard,
+): Promise<void> {
+  if (
+    !guard.isHeld() ||
+    resolve(guard.path) !== resolve(join(options.channelRoot, KERNEL_GUARD_FILE))
+  )
+    throw new TransactionLeaseError("state");
+  options.signal?.throwIfAborted();
+  const directory = leaseDirectory(options.channelRoot);
+  const info = lstatSync(directory, { throwIfNoEntry: false });
+  if (!info) return;
+  if (
+    !info.isDirectory() ||
+    info.isSymbolicLink() ||
+    (info.mode & 0o077) !== 0 ||
+    info.uid !== process.getuid?.()
+  )
+    throw new TransactionLeaseError("state");
+  const names = readdirSync(directory).sort();
+  if (names.length === 1 && names[0] === LEASE_FILE) return;
+  // Without a canonical journal, native evidence cannot be attributed safely.
+  // Empty residue occurs only before initial publication or after checked retirement.
+  if (readdirSync(options.channelRoot).some((name) => name.startsWith(".electrobun-update-")))
+    throw new TransactionLeaseError("state");
+  if (names.length === 0) {
+    rmdirSync(directory);
+    syncDirectory(options.channelRoot);
+    return;
+  }
+  if (
+    !names.includes(LEASE_FILE) ||
+    names.length > 17 ||
+    names.some((name) => name !== LEASE_FILE && !/^lease\.json\.[a-f0-9]{16}\.partial$/.test(name))
+  )
+    throw new TransactionLeaseError("state");
+  const journal = parseJournal(readPrivateJsonSync(leasePath(options.channelRoot)));
+  if (
+    !["operation", "prepared", "preflight"].includes(journal.phase) ||
+    journal.binding ||
+    (options.inspectOwner ?? inspectOwner)(journal.owner_pid) !== "absent"
+  )
+    throw new TransactionLeaseError("state");
+  if (
+    journal.registered_group &&
+    (
+      await (options.inspectGroup ?? inspectRegisteredGroup)(
+        journal.registered_group,
+        options.signal,
+      )
+    ).status !== "absent"
+  )
+    throw new TransactionLeaseError("state");
+  options.signal?.throwIfAborted();
+  const current = lstatSync(directory);
+  if (
+    current.dev !== info.dev ||
+    current.ino !== info.ino ||
+    current.mtimeMs !== info.mtimeMs ||
+    current.ctimeMs !== info.ctimeMs ||
+    !sameIds(readdirSync(directory).sort(), names)
+  )
+    throw new TransactionLeaseError("state");
+  if (
+    JSON.stringify(parseJournal(readPrivateJsonSync(leasePath(options.channelRoot)))) !==
+    JSON.stringify(journal)
+  )
+    throw new TransactionLeaseError("state");
+  for (const name of names) {
+    const file = join(directory, name);
+    if (lstatSync(file).nlink !== 1) throw new TransactionLeaseError("state");
+    if (name === LEASE_FILE) continue;
+    const partial = parseJournal(readPrivateJsonSync(file));
+    if (
+      partial.lease_id !== journal.lease_id ||
+      partial.owner_pid !== journal.owner_pid ||
+      partial.created_at !== journal.created_at ||
+      partial.app_bundle_path !== journal.app_bundle_path ||
+      !["operation", "prepared", "preflight"].includes(partial.phase) ||
+      partial.binding ||
+      partial.registered_group !== null ||
+      partial.worker_granted
+    )
+      throw new TransactionLeaseError("state");
+  }
+  for (const name of names) if (name !== LEASE_FILE) unlinkSync(join(directory, name));
+  syncDirectory(directory);
+}
+
 export async function readLease(channelRoot: string): Promise<UpdateTransactionLease | undefined> {
   try {
     if (!(await assertLeaseDirectory(channelRoot))) return undefined;
@@ -804,8 +898,10 @@ export class TransactionLease {
     const directory = leaseDirectory(options.channelRoot);
     const guard = await acquireKernelGuard(options.channelRoot).catch(assertGuardError);
     try {
+      await recoverTransactionResidue(options, guard);
       await mkdir(options.channelRoot, { recursive: true, mode: 0o700 });
       await mkdir(directory, { recursive: false, mode: 0o700 });
+      syncDirectory(options.channelRoot);
     } catch (error) {
       guard.releaseSync();
       if ((error as NodeJS.ErrnoException).code === "EEXIST")
@@ -832,7 +928,7 @@ export class TransactionLease {
     try {
       await atomicWritePrivateJson(leasePath(options.channelRoot), journal);
     } catch {
-      await rm(directory, { recursive: true, force: true });
+      // A failed sync can follow a successful rename. Preserve its recovery evidence.
       guard.releaseSync();
       throw new TransactionLeaseError("state");
     }
@@ -1209,7 +1305,9 @@ export class TransactionLease {
   private removeJournalSync(): void {
     const directory = assertLeaseDirectorySync(this.channelRoot);
     unlinkSync(leasePath(this.channelRoot));
+    syncDirectory(directory);
     rmdirSync(directory);
+    syncDirectory(this.channelRoot);
   }
 
   /** Legal only after an issued unarmed proof and settled owned work. */
@@ -1269,8 +1367,9 @@ export class TransactionLease {
   }
 
   async recoverAbandoned(
-    options: Pick<ReconcileTransactionOptions, "inspectOwner" | "inspectGroup">,
+    options: Pick<ReconcileTransactionOptions, "inspectOwner" | "inspectGroup" | "signal">,
   ): Promise<void> {
+    options.signal?.throwIfAborted();
     const current = this.readReconciliationJournal();
     if (!["operation", "prepared", "preflight"].includes(current.phase) || current.binding)
       throw new TransactionLeaseError("state");
@@ -1278,32 +1377,41 @@ export class TransactionLease {
       throw new TransactionLeaseError("state");
     if (
       current.registered_group &&
-      (await (options.inspectGroup ?? inspectRegisteredGroup)(current.registered_group)).status !==
-        "absent"
+      (
+        await (options.inspectGroup ?? inspectRegisteredGroup)(
+          current.registered_group,
+          options.signal,
+        )
+      ).status !== "absent"
     )
       throw new TransactionLeaseError("state");
+    options.signal?.throwIfAborted();
     this.readReconciliationJournal();
     await cleanupInterruptedStaging({
       channelRoot: this.channelRoot,
       dataDirectory: this.dataDirectory,
     });
+    options.signal?.throwIfAborted();
     if (current.candidate)
       await discardFrozenCandidate(this.channelRoot, this.dataDirectory, current.candidate);
+    options.signal?.throwIfAborted();
     this.readReconciliationJournal();
     this.removeJournalSync();
   }
 
   /** Retire a reconciled committed transaction using the reconciler proof. */
-  async retireReconciled(proof: ReconciledCompletionProof): Promise<void> {
+  async retireReconciled(proof: ReconciledCompletionProof, signal?: AbortSignal): Promise<void> {
     if (!reconciledProofs.has(proof)) throw new TransactionLeaseError("state");
     try {
       await this.settleOwnedWork();
+      signal?.throwIfAborted();
       const recorded = this.readReconciliationJournal();
       if (
         recorded.registered_group &&
-        (await inspectRegisteredGroup(recorded.registered_group)).status !== "absent"
+        (await inspectRegisteredGroup(recorded.registered_group, signal)).status !== "absent"
       )
         throw new TransactionLeaseError("state");
+      signal?.throwIfAborted();
       const current = this.readReconciliationJournal();
       const binding = current.binding;
       const candidate = current.candidate;
@@ -1435,6 +1543,7 @@ function inspectOwner(pid: number): "alive" | "absent" | "unknown" {
 export async function reconcileTransaction(
   options: ReconcileTransactionOptions,
 ): Promise<TransactionReconciliation> {
+  options.signal?.throwIfAborted();
   let guard: KernelGuard;
   try {
     guard = await acquireKernelGuard(options.channelRoot);
@@ -1448,15 +1557,23 @@ export async function reconcileTransaction(
     });
   }
   try {
+    options.signal?.throwIfAborted();
+    const running = options.inspectRunning
+      ? await options.inspectRunning(options.signal)
+      : options.running;
+    options.signal?.throwIfAborted();
     let journal: UpdateTransactionLease | undefined;
     try {
+      await recoverTransactionResidue(options, guard);
       journal = await readLease(options.channelRoot);
     } catch {
+      options.signal?.throwIfAborted();
       return recoveryRequired(
         undefined,
         "An update transaction record is malformed or unsafe. No update work will start.",
       );
     }
+    options.signal?.throwIfAborted();
     if (!journal) return Object.freeze({ status: "none" });
     if (["operation", "prepared", "preflight"].includes(journal.phase)) {
       const lease = new TransactionLease(
@@ -1467,8 +1584,10 @@ export async function reconcileTransaction(
       );
       try {
         await lease.recoverAbandoned(options);
+        options.signal?.throwIfAborted();
         return Object.freeze({ status: "none" });
       } catch {
+        options.signal?.throwIfAborted();
         return recoveryRequired(journal, "Abandoned update cleanup could not be completed safely.");
       }
     }
@@ -1524,16 +1643,20 @@ export async function reconcileTransaction(
       );
     }
     const inspect = options.inspectHelper ?? inspectExactHelper;
-    const inspection: ExactHelperInspection = await inspect(binding.helperPath, planPath).catch(
-      () => ({ status: "unknown" as const, pids: [] }),
-    );
+    const inspection: ExactHelperInspection = await inspect(
+      binding.helperPath,
+      planPath,
+      process.getuid?.(),
+      {},
+      options.signal,
+    ).catch(() => ({ status: "unknown" as const, pids: [] }));
+    options.signal?.throwIfAborted();
     if (inspection.status !== "absent") {
       return recoveryRequired(
         journal,
         "The previous update helper has not been proven to have finished.",
       );
     }
-    const running = options.running;
     if (!running || running.appBundlePath !== journal.app_bundle_path) {
       return Object.freeze({
         status: "unconfirmed",
@@ -1571,8 +1694,10 @@ export async function reconcileTransaction(
     });
     const lease = new TransactionLease(options.channelRoot, options.dataDirectory, journal, guard);
     try {
-      await lease.retireReconciled(proof);
+      await lease.retireReconciled(proof, options.signal);
+      options.signal?.throwIfAborted();
     } catch {
+      options.signal?.throwIfAborted();
       return recoveryRequired(
         journal,
         "The completed update transaction could not be retired safely.",

@@ -18,7 +18,7 @@ export interface OwnedWorkerOptions {
   signal?: AbortSignal;
   fileSizeLimitBytes?: number;
   requireGrant?: boolean;
-  onRegistered?: (pid: number) => Promise<void>;
+  onRegistered?: (pid: number, signal?: AbortSignal) => Promise<void>;
   onGranted?: () => void;
   onSettled?: (pid: number) => Promise<void>;
 }
@@ -129,9 +129,14 @@ export async function runOwnedWorker(options: OwnedWorkerOptions): Promise<Owned
   const close = new Promise<number | null>((resolve) => {
     closeResolve = resolve;
   });
+  // The operation signal propagates both parent cancellation and the worker
+  // deadline to the registration probe, while cleanup/settlement keeps its own
+  // bounded lifetime rather than inheriting an already-aborted work signal.
+  const operationController = new AbortController();
   const stop = (reason: "timeout" | "cancelled") => {
     if (stopped) return;
     stopped = reason;
+    operationController.abort();
     if (pid) killGroup(pid);
   };
   const timer = setTimeout(() => stop("timeout"), options.deadlineMs);
@@ -155,7 +160,8 @@ export async function runOwnedWorker(options: OwnedWorkerOptions): Promise<Owned
     if (options.requireGrant) {
       try {
         if (!pid) throw new Error("worker pid unavailable");
-        await options.onRegistered?.(pid);
+        if (operationController.signal.aborted) throw new Error("worker operation aborted");
+        await options.onRegistered?.(pid, operationController.signal);
         if (stopped) {
           const stoppedExit = await waitForClose(close, TERMINATION_GRACE_MS);
           return {
@@ -171,7 +177,7 @@ export async function runOwnedWorker(options: OwnedWorkerOptions): Promise<Owned
         if (pid) killGroup(pid);
         const failedExit = await waitForClose(close, TERMINATION_GRACE_MS);
         return {
-          status: "failed",
+          status: stopped ?? "failed",
           exitCode: failedExit.closed ? failedExit.code : null,
           closed: failedExit.closed,
         };

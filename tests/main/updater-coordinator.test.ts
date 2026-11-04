@@ -228,6 +228,57 @@ test("manual and automatic update work stays closed until shared startup reconci
   }
 });
 
+for (const rejects of [false, true]) {
+  test(`stopped startup cannot publish late reconciliation or schedule checks, rejects=${rejects}`, async () => {
+    const data = await directory();
+    let release = () => {};
+    const gate = new Promise<void>((done) => {
+      release = done;
+    });
+    const updater = runtime({
+      reconcile: async () => {
+        await gate;
+        if (rejects) throw new Error("Synthetic late startup failure");
+        return { status: "confirmed", version: VERSION, hash: HASH };
+      },
+    });
+    const timers = new FakeTimers();
+    const coordinator = new UpdaterCoordinator({
+      dataDirectory: data,
+      supported: true,
+      installedVersion: "0.3.1",
+      runtime: updater,
+      timers,
+    });
+    await coordinator.start({ reconcile: false });
+    const startup = coordinator.completeInitialization();
+    let settled = false;
+    coordinator.stop();
+    const abandonment = coordinator.abandonPrepared().then(() => {
+      settled = true;
+    });
+    const stopped = coordinator.statusValue();
+    try {
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      release();
+      await startup;
+      await abandonment;
+      expect(coordinator.statusValue().transaction).toEqual(stopped.transaction);
+      expect(coordinator.statusValue().recoveryRequired).toBe(false);
+      expect(timers.startup).toBeUndefined();
+      expect(timers.poll).toBeUndefined();
+      expect(updater.checks).toBe(0);
+    } finally {
+      release();
+      coordinator.stop();
+      await startup;
+      await abandonment;
+      await rm(data, { recursive: true, force: true });
+    }
+  });
+}
+
 test("default-on scheduling checks after startup and automatically prepares an eligible update", async () => {
   const data = await directory();
   try {

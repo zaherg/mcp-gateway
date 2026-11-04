@@ -59,7 +59,7 @@ test("A13 capability: installed transport uses a validated supplied body without
 const darwinTest = test.skipIf(process.platform !== "darwin");
 
 darwinTest(
-  "A6 authority probe: an empty transaction directory blocks new acquisition",
+  "A6 authority probe: an empty transaction directory is recovered under the kernel guard",
   async () => {
     await mkdir(resolve(".cache"), { recursive: true });
     const root = await mkdtemp(resolve(".cache/audit-a6-"));
@@ -72,7 +72,7 @@ darwinTest(
       });
       await mkdir(data, { mode: 0o700 });
       const reconciled = await reconcileTransaction({ channelRoot: channel, dataDirectory: data });
-      expect(reconciled.status).toBe("recovery-required");
+      expect(reconciled.status).toBe("none");
     } finally {
       await rm(root, { recursive: true });
     }

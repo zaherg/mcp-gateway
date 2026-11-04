@@ -9,7 +9,7 @@ import {
   UPDATER_HASH_PATTERN,
   UPDATER_IDENTIFIER,
 } from "../src/main/updater/constants";
-import { runCommand } from "../src/main/updater/verify";
+import { readBuildIdentityResource, runCommand } from "../src/main/updater/verify";
 import { withDmgMount } from "./release-dmg";
 import { compareBundleInventories, inventoryBundle, inventoryDigest } from "./release-inventory";
 
@@ -291,6 +291,15 @@ try {
     payloadMetadata.baseUrl !== UPDATER_FEED_URL
   )
     throw new Error("Payload identity, version, hash, or fixed feed does not match the manifest.");
+  const buildIdentity = await readBuildIdentityResource(payload);
+  const bundledMain = await readFile(join(payload, "Contents/Resources/app/bun/index.js"), "utf8");
+  if (
+    buildIdentity.identifier !== UPDATER_IDENTIFIER ||
+    buildIdentity.version !== packageInfo.version ||
+    !bundledMain.includes(buildIdentity.build_id)
+  )
+    throw new Error("Signed build identity is missing from the matching bundled main process.");
+  evidence.executingBuild = buildIdentity;
   await check("payload signing metadata", [
     "/usr/bin/codesign",
     "--display",

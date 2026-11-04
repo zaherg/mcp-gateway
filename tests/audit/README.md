@@ -1,29 +1,28 @@
 # Audit remediation reproduction suite
 
 This directory holds deterministic reproductions for the A1-A13 findings from
-the src audit at HEAD `9bcb74a`. The suite is split by authorization status:
-
-- `a1-login-lifetime.test.ts`, `a9-attempt-numbering.test.ts`, and
-  `a12-bounded-inspection.test.ts` are in-scope for P1. They must fail on the
-  unchanged baseline and become passing maintained regressions after the
-  authorized corrections.
-- `pending/` contains faithful reproductions for findings that are out of scope
-  for the current authorization (A2-A8, A10-A11, A13). These tests stay visibly
-  failing when explicitly replayed; they are not part of the default green
-  suite.
+the src audit at HEAD `9bcb74a`.
+A1 was fixed in `ad4722a`.
+The current source scope is A2-A6 plus prerequisite A12.
+Their audit cases supplement the maintained regressions in the default core/main suites.
+The `pending/` directory retains its original layout and therefore contains both corrected and still-open findings.
+A7-A11 and A13 remain outside scope, including `a9-attempt-numbering.test.ts`.
+Those unfixed reproductions remain explicitly failing and are not part of the default green suite.
 
 Run in-scope tests:
 
 ```sh
 bun test tests/audit/a1-login-lifetime.test.ts \
-         tests/audit/a9-attempt-numbering.test.ts \
-         tests/audit/a12-bounded-inspection.test.ts
+         tests/audit/a12-bounded-inspection.test.ts \
+         tests/audit/gates.test.ts
+bun test tests/audit/pending -t 'A[23456]:'
 ```
 
-Run pending reproductions:
+Run the still-open reproductions:
 
 ```sh
-bun test tests/audit/pending
+bun test tests/audit/a9-attempt-numbering.test.ts
+bun test tests/audit/pending -t 'A(7|8|10|11|13):'
 ```
 
 Do not mark pending findings green by weakening assertions, skipping, or

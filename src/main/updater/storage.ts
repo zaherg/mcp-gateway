@@ -82,7 +82,7 @@ function assertPrivateDirectory(info: Stats): void {
     throw new UpdaterStateError("stateOwner");
 }
 
-function syncDirectory(directory: string): void {
+export function syncDirectory(directory: string): void {
   const descriptor = openSync(
     directory,
     fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_DIRECTORY,
@@ -234,6 +234,7 @@ export async function atomicWritePrivateJson(path: string, value: unknown): Prom
     assertOwned(published);
     if (!published.isFile() || published.size !== bytes.length)
       throw new UpdaterStateError("stateWrite");
+    syncDirectory(directory);
   } finally {
     if (descriptor !== undefined) {
       try {

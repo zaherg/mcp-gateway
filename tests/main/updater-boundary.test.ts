@@ -33,6 +33,7 @@ import {
   type CommandResult,
   type CommandRunner,
 } from "../../src/main/updater/verify";
+import { parseBuildIdentity } from "../../src/shared/build-identity";
 import { versionJson, writeBundleFixture } from "../fixtures/updater";
 
 const _TEAM = "ABCDEFGHIJ";
@@ -776,7 +777,28 @@ test("startup reconciliation waits for a late exact result only after initializa
         { mode: 0o644 },
       );
     }, 150);
-    const outcome = await fixture.boundary.reconcile();
+    const executingBuild = parseBuildIdentity({
+      schema_version: 1,
+      identifier: "dev.srvr.mcpgateway",
+      version: "0.3.1",
+      build_id: "a".repeat(64),
+    });
+    await mkdir(join(fixture.app, "Contents/Resources/app"));
+    await writeFile(
+      join(fixture.app, "Contents/Resources/app/build-identity.json"),
+      JSON.stringify(executingBuild),
+    );
+    // Only the replacement's executing identity may confirm its late result.
+    const running = new UpdaterSafetyBoundary({
+      appBundlePath: fixture.app,
+      dataDirectory: fixture.data,
+      channelRoot: fixture.channel,
+      home: fixture.home,
+      appDataDirectory: join(fixture.home, "Library/Application Support"),
+      executingBuild,
+      verifier: new ApplicationVerifier(fakeRunner()),
+    });
+    const outcome = await running.reconcile();
     expect(outcome).toMatchObject({ status: "confirmed", version: "0.3.1", hash: "target123456" });
     expect(await readLease(fixture.channel)).toBeUndefined();
   } finally {

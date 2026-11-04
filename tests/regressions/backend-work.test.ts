@@ -1,6 +1,7 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import * as serverSource from "supergateway/dist/lib/serverSource.js";
 import {
   BACKEND_CAPACITY_ERROR,
   DUPLICATE_REQUEST_ERROR,
@@ -190,6 +191,61 @@ function modernDisconnected(
   response.catch(() => {});
   return abort;
 }
+
+test("regression: failed cancellation forwarding retains the request and its reply", async () => {
+  const original = serverSource.startServer;
+  const mocked = spyOn(serverSource, "startServer").mockImplementation((...args) => {
+    const factory = original(...args);
+    return (owner) => {
+      const peer = factory(owner);
+      return {
+        write(message) {
+          if ("method" in message && message.method === "notifications/cancelled")
+            throw new Error("Synthetic cancellation forwarding refusal");
+          peer.write(message);
+        },
+        end: () => peer.end(),
+        stop: () => peer.stop(),
+        get gone() {
+          return peer.gone;
+        },
+      };
+    };
+  });
+  const context = await setup(await configFor({}));
+  const callLog = join(context.directory, "calls");
+  let client: Awaited<ReturnType<typeof connect>> | undefined;
+  let pending: ReturnType<typeof delayCall> | undefined;
+  try {
+    await context.controller.saveConfig(
+      JSON.stringify(await configFor({ echo: stdio({ CALL_LOG: callLog }) })),
+      context.controller.snapshot().revision,
+    );
+    const { address } = await context.controller.start();
+    if (!address) throw new Error("Missing test address");
+    client = await connect(address);
+    const session = client.transport.sessionId;
+    if (!session) throw new Error("Missing test session");
+    pending = delayCall(address, session, 101, 500, "retained-after-refusal");
+    const result = pending.then(
+      (value) => ({ value }),
+      (error: unknown) => ({ error }),
+    );
+    await eventually(async () => dispatched(await started(callLog), "retained-after-refusal"));
+    expect(await cancel(address, session, 101)).toBe(202);
+    const settled = await result;
+    if ("error" in settled) throw settled.error;
+    expect(settled.value.status).toBe(200);
+    expect(settled.value.messages).toEqual([
+      expect.objectContaining({ id: 101, result: expect.any(Object) }),
+    ]);
+  } finally {
+    mocked.mockRestore();
+    await client?.close();
+    await context.cleanup();
+    if (pending) await Promise.allSettled([pending]);
+  }
+});
 
 test("regression: disconnected session calls are bounded by one shared backend-work cap", async () => {
   const context = await setup(await configFor({}));

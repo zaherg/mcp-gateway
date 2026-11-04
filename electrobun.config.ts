@@ -1,6 +1,9 @@
 import type { ElectrobunConfig } from "electrobun";
 import packageInfo from "./package.json";
+import { prepareBuildIdentity } from "./scripts/build-identity";
 import { UPDATER_FEED_URL } from "./src/main/updater/constants";
+
+const executingBuild = prepareBuildIdentity(import.meta.dir, packageInfo.version);
 
 export default {
   app: {
@@ -14,9 +17,11 @@ export default {
     mainProcess: "bun",
     bun: {
       entrypoint: "src/main/index.ts",
+      define: executingBuild.define,
       external: ["supergateway", "supergateway/*", "jsonc-parser"],
     },
     copy: {
+      ...executingBuild.copy,
       "dist/index.html": "views/mainview/index.html",
       "dist/assets": "views/mainview/assets",
       "assets/tray.png": "views/assets/tray.png",
