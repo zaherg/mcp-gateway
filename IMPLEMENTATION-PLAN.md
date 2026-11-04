@@ -1,5 +1,583 @@
 # MCP Gateway implementation plan
 
+## Current plan: src audit remediation
+
+Status: planning only, prepared on 2026-11-03 against commit `9bcb74a` and package version `0.3.1`.
+The user requested an extensive implementation plan for all 13 findings in the preceding `src/` audit.
+No remediation, dependency change, build, signing, installation, publication, or Git mutation is authorized by that planning request.
+All A1-A13 implementation items below are not started.
+The A numbers map directly to findings 1-13 in that audit and do not replace historical F, U, or R numbers.
+
+This section is the current work plan.
+The automatic-update and F1-F5 sections below it are preserved historical records of earlier work, authorizations, and verification.
+Their successful checks do not establish that the new A findings are fixed, and their earlier permissions are not standing authorization for this work.
+
+### Objective and acceptance boundary
+
+Correct the confirmed lifecycle, process-ownership, protocol, updater, and admission failures while preserving the current product behavior outside those fixes.
+Assume one desktop owner and several LAN clients, including operation at the supported resource limits.
+Keep one implementation writer in the current checkout because several findings share `adapter.ts`, `boundary.ts`, `index.ts`, and lifecycle tests.
+Independent reviews may inspect separate areas without writing them.
+Do not infer permission to delegate implementation, select a particular model, create branches, or ship from this plan.
+
+The implementation must preserve these contracts:
+
+- Gateway authentication, private-network admission, exact routes, Host/Origin checks, and independent upstream credentials remain enforced before dispatch.
+- Hard ceilings remain 32 concurrent HTTP requests, 16 backend resources, 16 protocol-outstanding calls, and 64 configured servers.
+  A13 reserves capacity within the existing HTTP and rate ceilings rather than creating an unlimited control path.
+- Protocol cancellation is not a guarantee that arbitrary upstream physical work stops.
+  Local process cleanup must nevertheless confirm termination before releasing its resource ownership or allowing replacement.
+- Strict JSON, JSONC comment preservation, byte-preserved no-ops, revision checks, owner-only files, and existing configuration paths remain unchanged.
+- Downloads never install an update, ordinary Quit never becomes install-on-quit, and Restart to Update requires explicit confirmation.
+- A failed or uncertain cleanup keeps ownership and a visible failure or pending state.
+  A deadline requests termination; it is not evidence that a child has exited.
+- Supported updates remain signed macOS arm64 stable builds from the fixed GitHub feed, with publisher, identity, version, archive, and retained-recovery checks.
+- Linux keeps its existing experimental behavior and does not acquire macOS FFI merely by importing portable modules.
+  Windows runtime support and platform ports remain outside scope.
+- Raw diagnostics remain confined to the existing app-local Logs policy.
+  Tests, screenshots, reports, and process output use synthetic values only.
+- No vendor file, installed application, real Bear data, external configuration, published artifact, or signing setting changes as an incidental fix.
+
+A finding is source-complete only after its regression fails on the baseline, passes with the correction, and survives connected-path review.
+The complete remediation is not release-ready until the applicable packaged checks pass on the final source under separate authorization.
+If only source work is authorized, report source closure and the remaining packaged gate separately.
+
+### Audit baseline and evidence quality
+
+The audit baseline passed 439 Bun unit/integration tests with 3,242 assertions, 54 component tests, type checking, and Biome lint.
+Those results predate the proposed regressions and are not evidence that the findings are fixed.
+Four read-only reviewers inspected protocol handling, updater storage/admission, updater transactions/recovery, and desktop/UI behavior.
+Supervisor probes then checked the important failure paths.
+The temporary probe directories and owned processes were cleaned; the preceding conversation contains their results rather than a permanent regression suite.
+Convert those cases into maintained tests during implementation.
+
+| ID | Finding | Existing evidence | Implementation status |
+| --- | --- | --- | --- |
+| A1 | Retry Update can call an unloaded native library | Real lifecycle/service probe reached a closed native seam; a separate synthetic Bun FFI child crashed after library closure | Not started |
+| A2 | Failed backend termination is reported as completed cleanup | Pinned process owner fulfilled and released ownership after injected persistent `EPERM`, without an observed child exit | Not started |
+| A3 | Cancelling one batched call loses another reply | Real loopback gateway and stdio batch returned an empty response after cancelling only one member | Not started |
+| A4 | An old app instance can falsely confirm a new version | An existing boundary confirmed changed on-disk metadata and retired the journal without a replacement product process | Not started |
+| A5 | Quit does not wait for startup reconciliation | Paused verifier remained unfinished after cancellation and abandonment returned; no signal reached it | Not started |
+| A6 | Crash residue blocks future updates | An owner-only empty transaction directory repeatedly produced recovery-required and refused acquisition as busy | Not started |
+| A7 | An update can require newer macOS than the host | Real plist reads accepted minimum version `99.0` with signature and architecture checks injected as successful | Not started |
+| A8 | Native Quit bypasses the draft-discard warning | Source trace shows Cmd+Q/menu Quit bypassing the confirmation used by the renderer button | Not started |
+| A9 | Quit and update attempt numbers can move backwards | Two failed Quits produced attempts 1 and 2, followed by update attempt 1, which renderer ordering rejects | Not started |
+| A10 | An upstream notification hides its discovery reply | Finite loopback SSE notification followed by the matching supported-version result was classified as legacy | Not started |
+| A11 | Archive validation accepts bytes the installer rejects | Checksummed high-bit numeric bytes passed inspection/extraction; pinned native parsing rejects the original bytes | Not started |
+| A12 | Process-inspection commands escape worker deadlines | Worker exited after its deadline while the paused registration operation remained pending | Not started |
+| A13 | Full HTTP capacity blocks cancellation and DELETE | At 32 admitted requests, both cancellation and DELETE returned HTTP 429 | Not started |
+
+The audit did not run a fresh signed update, a real permission-changing backend, a real incompatible-OS installation, or a packaged two-instance race.
+Its native-boundary probes must not be presented as those acceptance results.
+
+### Execution sequence and dependencies
+
+Implement one bounded change at a time and rerun the connected tests after each change.
+Do not commit intermediate work unless Git operations are separately requested.
+
+| Phase | Work | Dependency and exit condition |
+| --- | --- | --- |
+| P0 | Preserve the baseline, add faithful failing regressions, and prove the A3/A4/A6/A13 integration constraints | No product behavior changes until the relevant seam is demonstrated; unresolved capability or compatibility changes require a decision |
+| P1 | A1 native lifetime, A9 attempt numbering, A12 bounded inspection | Safe status reads, monotonic attempts, and joined inspection children are available to later lifecycle work |
+| P2 | A2 backend ownership, A3 batch cancellation, A10 discovery, A13 control admission | Protocol and shutdown regressions pass through real loopback/stdio boundaries; all resource ceilings remain enforced |
+| P3 | A5 startup ownership, A6 crash recovery, A4 executing identity | Startup cancellation, abandoned-state recovery, and confirmation use the same checked transaction ownership |
+| P4 | A7 host compatibility and A11 archive numeric validation | Ineligible candidates fail before readiness or gateway shutdown; valid retained fixtures still pass |
+| P5 | A8 native draft confirmation and combined retry/quit integration | Every interactive Quit path follows one draft decision without breaking signals, SDK handoff, or retry |
+| P6 | Full local checks, focused simplification, independent source closure, and isolated development-native acceptance | Correct final source, no unresolved blocking findings, no owned verification resources, and recorded limits |
+| P7 | Separately authorized signed packaged acceptance | Final signed payload passes two-version and failure/recovery cases; earlier artifacts cannot substitute |
+| P8 | Separately authorized versioning and shipping | Any commit, tag, push, release, installation, or publication follows its own explicit request |
+
+A12 precedes A2 and A5 where they reuse bounded process inspection.
+A1 and A9 precede A8 and the combined update-retry checks.
+A3 precedes A13 so control-capacity tests exercise correct cancellation semantics rather than merely accepting a POST.
+A4 and A7 must be integrated into verification before generating the final acceptance packages.
+A6 must be checked with both A4 confirmation and A5 cancellation before source closure.
+
+### P0: baseline, reproduction, and integration gates
+
+- [ ] Confirm the current revision, working tree, staged changes, pinned dependencies, and available test commands before implementation.
+- [ ] Record hashes of package/lock files, retained release artifacts, assets, and the historical portion of this plan.
+  Preserve unrelated user changes and generated screenshots from the actual starting tree, not an assumed clean HEAD.
+- [ ] Use a new project-local evidence directory such as `.cache/src-audit-remediation/<run-id>/` when execution is authorized.
+  Do not overwrite `.cache/auto-update-0.3.1/final-acceptance/`, published artifacts, or previous recovery copies.
+- [ ] Turn each audit case into a deterministic regression with exact assertions for its failure, using the closest supported user-facing path.
+- [ ] Separate tests that can use portable doubles from macOS FFI, process, and packaged tests.
+  Missing native prerequisites must be reported, not counted as a pass.
+- [ ] Document the observed cause if a baseline reproduction does not fail; do not weaken a test or claim the audit case is closed without tracing the difference.
+
+Blocking integration gates:
+
+1. **Cancellation settlement, A3.**
+   The pinned session closes an entire SSE stream after forwarding a cancellation, while the SDK associates multiple batch IDs with that stream.
+   Prove a narrow way to retire one cancelled request and all its bookkeeping without closing live siblings or inventing incompatible wire behavior.
+   Prefer the existing session/transport settlement path if the installed protocol permits its exact response behavior.
+   Do not introduce an arbitrary cancellation error code, scatter private SDK-map mutations, silently disable batches, or edit `node_modules`.
+   If no compatible local seam exists, stop A3 and dependent A13 integration for approval of the smallest pinned compatibility or dependency change.
+2. **Executing identity, A4.**
+   A cached SDK getter or an earlier read of replaceable `version.json` is not sufficient proof of the executing build.
+   The pinned `Updater.getLocalInfo()` also schedules reconciliation writes, so it is not a harmless identity lookup.
+   Prove an independent build identity embedded in the bundled main code and a matching signed resource through the supported Electrobun `build.bun.define` and copy surfaces.
+   Generate that value before bundling, without attempting to embed the final archive hash into the bytes from which that hash is computed.
+   Prove both same-version/different-build refusal and signed-resource consistency before integrating confirmation.
+3. **Crash-state authority, A6.**
+   Define which exact empty-directory and partial-write states are safe to recover under the stable kernel guard.
+   A temporary filename, age, missing parent process, or absent canonical journal alone must never authorize deletion of possible committed native work.
+   Preserve existing version-1 records and establish a compatibility decision before changing persisted schemas or path layouts.
+4. **Control admission, A13.**
+   Prove classification and reservation before forwarding any body to the SDK.
+   Include body-reading requests in the 32-request ceiling and distinguish pure control payloads from batches containing new work.
+   Do not trust `Mcp-Method`, an HTTP method alone, or a claimed session ID to bypass ordinary admission.
+
+### A1: own the native login-library lifetime
+
+Affected paths: `src/main/login.ts`, `src/main/index.ts`, `src/main/service.ts`, `tests/main/login.test.ts`, `tests/main/service.test.ts`, and lifecycle/native fixtures.
+
+Implementation:
+
+- Put the closed state and last safe status in the login-library owner.
+  After closure, read-only status access returns the retained status without calling a native symbol.
+- Make close idempotent and explicitly refuse registration mutations or native shortcut calls after closure.
+  Apply the guard to every exposed wrapper, including status-code and verification shortcuts.
+- Remove any service assumption that lifecycle phase `idle` proves the library is loaded.
+  Keep one authoritative lifetime state instead of duplicating closed flags across service and entrypoint.
+- Preserve pending-approval and refused-unregister behavior while the library is open.
+  Do not solve the failure by silently reopening the library or registering login again during retry.
+
+Regression and acceptance:
+
+- [ ] Successful cleanup followed by unarmed handoff failure, retry reservation, delayed revalidation, and repeated snapshots never call the closed native seam.
+- [ ] Closed mutations and shortcuts fail explicitly; repeated close releases the library once.
+- [ ] Snapshot, Logs, Retry Update, and ordinary Quit remain usable after partial cleanup.
+- [ ] Existing login registration doubles, approval transitions, and isolated-build restrictions pass unchanged.
+- [ ] An isolated synthetic native-library test verifies wrapper safety after close without calling real login registration.
+
+Done when no public wrapper can invoke an unloaded library, regardless of lifecycle phase or renderer timing.
+
+### A2: require confirmed backend-process cleanup
+
+Affected paths: `src/core/adapter.ts`, `src/core/backend-work.ts`, the narrow process-ownership helper if needed, `src/types/supergateway.d.ts`, `tests/core/shutdown.test.ts`, and adapter/backend-work regressions.
+
+Implementation:
+
+- Replace reliance on the pinned owner's fulfilled stop promise with application-owned confirmation of the exact child process group.
+  `ESRCH` or checked group absence can establish completion; `EPERM`, inspection failure, and successful delivery of SIGKILL cannot establish it alone.
+- Keep the existing cooperative termination and escalation behavior, but await confirmed disappearance afterward.
+  Track leader exit and descendant survival separately and refuse to signal a recycled or unproven process identity.
+- Retain the stop operation, resource lease, and work reservations through delayed or uncertain cleanup.
+  The existing shutdown deadline may return a sanitized failure while the same underlying cleanup remains owned.
+- Use a narrow local owner at the existing `ChildrenOwner`/transport seam if the pinned implementation cannot express the required outcome.
+  Do not add a second gateway implementation or fork unrelated transport behavior.
+- Preserve dependency direction.
+  If A2 and A12 genuinely share a command/inspection primitive, move that primitive below both consumers rather than importing `src/main/updater` into `src/core` or copying its implementation.
+- Keep endpoint restart, controller Stop, listener failure, Quit, and update handoff blocked from replacing unconfirmed resources.
+
+Regression and acceptance:
+
+- [ ] Persistent injected `EPERM` leaves the process owned and both resource/work reservations charged.
+- [ ] Temporary permission refusal while a child is being reaped eventually clears only after absence is confirmed.
+- [ ] Delayed SIGKILL completion, leader exit with a surviving descendant, spawn failure, and unknown inspection produce distinct correct outcomes.
+- [ ] Cleanup retries join the original operation and cannot kill an unrelated or recycled PID/group.
+- [ ] Failure in one backend preserves a usable sibling and does not release the sibling's work.
+- [ ] A synthetic active backend is confirmed absent before updater handoff; the handoff assertion must not kill or wait away a failure itself.
+
+Done when cleanup completion means the owned local process group is gone, not merely that termination was attempted.
+
+### A3: cancel one legacy request without losing batch siblings
+
+Affected paths: `src/core/adapter.ts`, `src/core/backend-work.ts`, the narrow pinned-transport compatibility seam established in P0, `src/types/supergateway.d.ts`, and `tests/regressions/adapter.test.ts`/`backend-work.test.ts`.
+
+Implementation:
+
+- Model terminal cancellation as one operation over the affected client ID, backend wire ID, work reservation, pending/progress entries, and transport correlation state.
+  Retain a shared batch response while any uncancelled sibling still needs it.
+- Forward cancellation using the current wire ID before retiring that request's mapping.
+  Failed forwarding keeps ownership and work charged; unknown or already-settled IDs remain harmless.
+- Preserve number/string ID distinctions, monotonic wire IDs, duplicate refusal, and rejection of late replies for reused client IDs.
+- Prevent the inherited session cancellation callback from closing a stream still serving siblings.
+  Centralize any pinned compatibility handling in one tested location and fail explicitly if its required capabilities are absent.
+- Bound cancellation bookkeeping by active requests; do not replace the leak with an ever-growing tombstone list.
+- Preserve both streamed and supported JSON response behavior, notifications, reverse server requests, and session cleanup.
+
+Regression and acceptance:
+
+- [ ] Two-call and larger batches retain exact uncancelled results when the first, middle, or last pending member is cancelled.
+- [ ] Cancellation before or after a sibling response, cancellation of all members, and cancellation racing completion close streams exactly when appropriate.
+- [ ] Repeated cancellations return request, response, progress, wire, and work bookkeeping to the expected baseline.
+- [ ] Late replies, original-ID reuse, duplicate cancellations, disconnects, and cross-session identical IDs remain isolated.
+- [ ] JSON batches cannot wait forever for a cancelled member, and the chosen wire behavior has an explicit compatibility assertion.
+- [ ] The complete existing adapter and backend-work regression suites pass without weakening their exact response assertions.
+
+Done when cancelling one request neither loses another request's result nor leaves request state growing with each cancellation.
+
+### A4: bind confirmation to the executing build
+
+Affected paths: `src/main/index.ts`, `src/main/updater/support.ts`, `boundary.ts`, `transaction.ts`, `verify.ts`, `scripts/build.ts`, `electrobun.config.ts`, release verification and private acceptance fixtures.
+
+Implementation:
+
+- Generate one independent build identity before bundling and embed it in main-process code through the supported build definition.
+  Generate a matching resource from the same value and include it in the signed application and release inventory.
+- Keep the SDK's existing version/hash and feed contract unchanged.
+  The new identity proves that executing code matches the inspected signed bundle; it does not replace publisher verification or the SDK release-routing hash.
+- Capture the embedded identity once in the running application and pass it explicitly to startup reconciliation.
+  Re-reading a replaced path, an environment variable alone, or another instance's state cannot substitute for it.
+- Verify the signed resource against the executing identity before using the inspected version/hash as the running identity.
+  A mismatch remains unconfirmed, retains the transaction/recovery evidence, and does not schedule new update work over it.
+- Keep candidate admission, current-process confirmation, and retained-old-app verification distinct.
+  Existing supported recovery bundles lacking the new resource must not become unreadable merely to simplify current-build confirmation.
+- Test clean and dirty source builds and private fixture generation so build identity cannot silently come from a stale generated file.
+  Do not manually modify generated identity files or retained signed packages.
+
+Regression and acceptance:
+
+- [ ] An old boundary/process observes replacement files but cannot confirm or retire the new transaction.
+- [ ] Same-version/different-build identities, wrong channel/path, missing/malformed identity resources, and conflicting embedded/resource identities refuse confirmation.
+- [ ] The actual new build confirms its exact completed transaction only after initialization and working renderer RPC.
+- [ ] A delayed second old instance cannot confirm for a failed or not-yet-ready replacement instance.
+- [ ] Older recovery fixtures retain their supported read/verification behavior without acquiring confirmation authority.
+- [ ] Build and release checks verify the generated identity's provenance and signed inclusion; packaged two-process acceptance remains a separate gate.
+
+Done when files at an installation path cannot make older executing code attest that replacement code initialized.
+
+### A5: track and join startup reconciliation
+
+Affected paths: `src/main/updater/boundary.ts`, `coordinator.ts`, `transaction.ts`, `src/main/index.ts`, and boundary/coordinator/lifecycle tests.
+
+Implementation:
+
+- Route reconciliation through the boundary's existing tracked-operation ownership rather than creating a second independent lifecycle.
+  Coalesce repeated initialization and preserve exclusion against check, prepare, handoff, and abandonment.
+- Pass cancellation through installed-app inspection, native helper/group inspection, bounded reconciliation waits, and every awaited step that can own a child.
+  Replace uncancellable polling sleeps with a bounded cancellation-aware wait where needed.
+- Make abandonment capture, cancel, and join startup work before deciding no lease or child remains.
+  Recheck cancellation before publishing confirmation or retiring transaction records.
+- Keep short synchronous durable transitions indivisible and retain ownership if their completion or a child close remains uncertain.
+  Do not add a race timeout that returns while the underlying operation can still mutate state.
+- Prevent late initialization results from restarting scheduling or replacing terminal UI state after shutdown.
+
+Regression and acceptance:
+
+- [ ] Quit during a paused startup verifier cancels its child and waits for actual close before exit approval.
+- [ ] Quit during helper inspection, journal recovery, and the wait for a late native result has the same ownership guarantee.
+- [ ] Repeated Quit/abandon and simultaneous manual check requests do not create independent reconciliation work.
+- [ ] A second writer remains excluded until cancelled work and cleanup settle.
+- [ ] Cancelled startup cannot later confirm a transaction, publish a ready state, or begin a scheduled check.
+- [ ] Delayed renderer readiness and inaccessible update storage still leave supported gateway behavior intact.
+
+Done when startup reconciliation has the same cancellation and cleanup ownership as other updater operations.
+
+### A6: recover proven crash residue without losing transaction authority
+
+Affected paths: `src/main/updater/transaction.ts`, `storage.ts`, related boundary recovery paths, `tests/main/updater-transaction.test.ts`, `updater-storage.test.ts`, and isolated crash fixtures.
+
+Implementation:
+
+- Perform recovery inventory under the stable kernel guard with existing owner, mode, type, no-follow, and bounded-read checks.
+  Keep ordinary runtime readers strict; add a deliberate recovery decision rather than ignoring arbitrary extra files everywhere.
+- Recover an empty transaction directory only after proving there is no active writer or unaccounted native handoff that could still own it.
+  Preserve unrelated candidate, recovery, and SDK files.
+- When a valid canonical journal and recognized atomic partial files coexist, validate the authoritative journal first and establish writer absence before reclaiming proven abandoned scratch files.
+- Do not promote a partial journal automatically or choose one by timestamp.
+  Partial-only, malformed, conflicting, arming, handed-off, live-owner, and unknown-helper states require explicit evidence before any deletion; otherwise retain them and report recovery-required.
+- Close the avoidable initial-publication and retirement crash windows where the existing layout permits it, and synchronize affected directories where durability requires it.
+  Do not replace the stable guard inode during cleanup.
+- Preserve version-1 fixtures and existing path names.
+  A format or migration change requires an explicit compatibility decision before implementation, not regeneration of fixtures to fit new code.
+
+Regression and acceptance:
+
+- [ ] Owner-only empty-directory residue from initial creation and final retirement permits a later valid acquisition after safe recovery.
+- [ ] A valid journal plus an abandoned known partial file recovers according to its phase without losing committed state.
+- [ ] Faults after partial creation/write/sync, before/after rename, after journal unlink, and before/after directory removal have exact expected inventories.
+- [ ] Child-process crash-point tests exercise process death; injected file-operation tests separately cover refused writes, sync errors, and truncation.
+- [ ] Live/unknown workers, native plans/results/helpers, unknown files, unsafe permissions, symlinks, and conflicting records remain preserved and blocked.
+- [ ] Recovery is idempotent across repeated launches and does not discard a different writer's files.
+
+Done when known harmless crash residue is recoverable while uncertain committed work still prevents a new transaction.
+Process-crash tests do not establish power-loss durability; report that limit separately.
+
+### A7: reject host-incompatible macOS candidates
+
+Affected paths: `src/main/updater/verify.ts`, `boundary.ts`, `support.ts` as needed, `tests/main/updater-verify.test.ts`, boundary tests, and release/native acceptance fixtures.
+
+Implementation:
+
+- Read the candidate's applicable minimum macOS requirement using checked native metadata tools and compare numeric version components with the actual host version.
+  Inspect architecture-specific plist overrides and executable deployment requirements so a generic plist value cannot understate the effective requirement.
+- Keep host-version acquisition injectable for portable tests and native only on supported macOS paths.
+  Reject malformed or unavailable required evidence explicitly instead of guessing the host version or treating inspection failure as compatibility.
+- Establish precedence and valid missing-key behavior from the pinned package layout and platform metadata contract before coding the parser.
+  A supported legacy bundle with a determinable requirement must not be rejected solely because an optional plist key is absent.
+- Apply the gate during candidate preparation and the pre-shutdown restart check, then revalidate its authenticated evidence at final handoff.
+  Bind retained compatibility evidence to the exact verified candidate so a changed payload cannot reuse an earlier decision, and reject a known ineligible update before stopping the gateway.
+  Preserve signature, publisher, version, identity, and architecture checks as independent requirements.
+- Preserve retained recovery verification even when the candidate admission policy becomes stricter.
+
+Regression and acceptance:
+
+- [ ] Lower and equal minimum versions pass; a higher effective minimum fails before readiness and leaves the listener/configuration unchanged.
+- [ ] Numeric comparisons cover multi-digit versions, missing optional components, malformed values, generic and architecture-specific requirements, and unavailable native inspection.
+- [ ] Plist and executable requirements cannot contradict each other into a false acceptance.
+- [ ] Wrong architecture/publisher and legacy recovery fixtures continue to exercise their intended checks rather than short-circuiting on a host default.
+- [ ] Separately authorized native acceptance uses a signed incompatible fixture to verify refusal without replacing an installed application.
+
+Done when a candidate that cannot run on the current Mac never becomes an installable ready update.
+
+### A8: share the unsaved-draft decision across interactive Quit paths
+
+Affected paths: `src/main/index.ts`, `lifecycle.ts`, `service.ts`, `src/shared/rpc.ts`, `src/mainview/client.ts`, `App.tsx`, component/browser tests, and native menu fixtures.
+
+Implementation:
+
+- Route Cmd+Q, application-menu Quit, tray Quit, and the visible Quit button through one interactive quit-request decision before irreversible gateway cleanup begins.
+  Reuse the existing confirmation UI and explicit discard action rather than adding a second dialog policy.
+- Account for the main document, raw editor, and open add/edit/delete dialogs without saving or discarding any draft implicitly.
+  Keep cancellation, keyboard focus, and draft-copying behavior consistent.
+- Where a native event requires an immediate answer, veto synchronously, request the renderer decision asynchronously, and resume once with an identified confirmed intent.
+  Repeated menu/keyboard actions must coalesce rather than open duplicate prompts or start duplicate cleanup.
+- Distinguish interactive user requests, already-confirmed renderer requests, SDK apply approval, update shutdown, and noninteractive process signals.
+  Reuse the existing invocation/lifecycle authority; do not let the new confirmation loop veto its own approved retry or convert normal Quit into installation.
+- On missing renderer acknowledgement, preserve the draft decision and show a recoverable local error rather than treating silence as consent.
+  A clean windowless background app can quit without fabricating a renderer draft.
+- Keep SIGTERM/SIGINT on the existing noninteractive graceful-shutdown path.
+  They must not depend on a responsive renderer or silently authorize an update.
+- Leave Cmd+W window-only behavior unchanged in this remediation.
+  Draft persistence across window destruction is a separate behavior decision, not an implicit addition to A8.
+
+Regression and acceptance:
+
+- [ ] Dirty typed settings, raw configuration, and open-dialog edits survive cancelling each interactive Quit entrypoint.
+- [ ] Confirmed discard starts cleanup exactly once and never writes configuration.
+- [ ] Missing/lost/delayed renderer acknowledgements and repeated Cmd+Q requests cannot bypass confirmation or unlock shutdown editing.
+- [ ] Failed cleanup still exposes Logs, retained drafts, Retry Quit, and eligible Retry Update without repeating an already-resolved discard decision.
+- [ ] Clean background Quit, SIGTERM/SIGINT, ordinary Quit replacing update intent, and tagged SDK approval retain their existing semantics.
+- [ ] Browser and native checks inspect focus, keyboard access, desktop/narrow layout, and actual app-local Cocoa menu delivery.
+
+Done when all interactive Quit entrypoints honor the same draft decision without making noninteractive shutdown depend on the renderer.
+
+### A9: use one monotonically increasing terminal-attempt counter
+
+Affected paths: `src/main/lifecycle.ts`, `src/mainview/App.tsx` only if integration requires it, lifecycle/service/coordinator tests, and quit/update component tests.
+
+Implementation:
+
+- Allocate every new ordinary-Quit or update attempt from one authoritative counter.
+  Retry after a settled failure gets a higher number; duplicate requests for one in-flight attempt retain that attempt.
+- Preserve existing renderer stale-response rejection and coordinator reservation coalescing.
+  Do not fix the issue by accepting backwards attempt numbers or resetting renderer history.
+- Keep cancellation, retained candidates, and handoff sessions associated with the exact attempt that created them.
+  Old callbacks must not cancel, unlock, or settle a newer attempt.
+
+Regression and acceptance:
+
+- [ ] Two failed Quits followed by an update use strictly increasing IDs and display the update's pending/failure state.
+- [ ] Update-to-Quit, Quit-to-update, failed-preflight retry, duplicate requests, and delayed stale responses preserve ordering and coalescing.
+- [ ] Real lifecycle/service integration feeds the renderer's acceptance rule, rather than substituting unrelated attempt-number doubles.
+- [ ] Lost acknowledgement still requires fresh matching updater/lifecycle evidence before Retry Update is enabled.
+
+Done when every genuine new terminal attempt is newer than every preceding attempt in that process.
+
+### A10: find the matching discovery response in streamed events
+
+Affected paths: `src/core/discovery.ts`, `tests/core/discovery.test.ts`, HTTP fixtures, and relevant ingress/adapter integration tests.
+
+Implementation:
+
+- Use the existing event parser to inspect complete framed messages until the response matching the discovery request ID is found.
+  Ignore valid notifications and permitted priming/keepalive events without allowing an unrelated response to determine protocol support.
+- Validate the matching response envelope and supported-version array through the installed protocol schema where applicable.
+  A matching error, malformed terminal reply, or unsupported result must follow an explicit refusal/fallback policy.
+- Preserve the 64 KiB discovery limit, timeout, coalescing/cache behavior, upstream credential isolation, cancellation, and reader cleanup.
+- Test the finite notification-before-response case first.
+  Separately establish whether a complete matching SSE result can finish discovery before EOF; do not remove truncation checks or claim compatibility for an unproven stream shape.
+
+Regression and acceptance:
+
+- [ ] Notifications before the result, several notifications, unrelated IDs, matching error responses, malformed messages, and unsupported versions have exact outcomes.
+- [ ] Existing JSON, LF/CRLF/CR SSE, split UTF-8, multiline data, priming, byte-limit, timeout, and cancellation cases remain covered.
+- [ ] A user-facing gateway call selects the modern path after the formerly rejected discovery stream and returns its exact result.
+- [ ] Stopping during discovery closes the reader and cannot create a late backend.
+
+Done when a valid preceding notification cannot hide the matching capability response or select the wrong protocol.
+
+### A11: validate original TAR numeric bytes
+
+Affected paths: `src/main/updater/archive.ts`, `tests/main/updater-archive.test.ts`, archive fixtures, and native helper acceptance tests.
+
+Implementation:
+
+- Remove lossy ASCII conversion from numeric admission.
+  Validate original bytes and accept only the exact octal/padding forms supported by the retained native extractor.
+- Apply the same byte-preserving reasoning to size, mode, and checksum fields.
+  Check overflow, terminators, bytes after terminators, and unsupported numeric encodings before extraction.
+- Preserve path, link, entry-count, materialized-entry, per-file, aggregate-size, cancellation, and signed-payload checks.
+  Do not normalize malformed archives into a different valid interpretation.
+
+Regression and acceptance:
+
+- [ ] A recomputed-checksum archive with high-bit size digits is refused before extraction or readiness.
+- [ ] High-bit mode/checksum digits, invalid octal, overflow, misplaced padding, embedded terminators, and trailing junk are rejected consistently.
+- [ ] Valid boundary-sized and supported padding fixtures still extract byte-identical output.
+- [ ] Retained valid release archives pass unchanged; rejection expectations match the actual bundled extractor rather than a different system tar implementation.
+- [ ] Separately authorized native-helper acceptance confirms rejected inputs cannot reach replacement.
+
+Done when application admission and native extraction interpret every accepted numeric field consistently.
+
+### A12: bound and join process-inspection commands
+
+Affected paths: `src/main/updater/registered-group.ts`, `process-inspector.ts`, `process.ts`, `transaction.ts`, `verify.ts` or an extracted shared command helper, and process/registration/transaction tests.
+
+Implementation:
+
+- Reuse the existing checked command lifecycle instead of maintaining separate unbounded `Bun.spawn` collection paths for `ps` and `pgrep`.
+  Make per-call deadlines and output bounds explicit and support cancellation without shell interpolation.
+- Pass the operation signal through registration and settlement callers.
+  Parent cancellation must stop a registration probe and prevent a worker grant, while cleanup uses its own bounded inspection lifetime rather than abandoning required settlement merely because the work signal is already aborted.
+- Distinguish absent, alive, and unknown process results.
+  Timeout, malformed/oversized output, permission failure, and unconfirmed command termination are uncertainty, never proof that a worker group is absent.
+- Terminate and join inspection children before releasing their owning operation.
+  If the OS does not confirm termination, retain ownership and surface the limit instead of returning a false completed cleanup.
+- Reuse existing UID, leader-start, process-group, exact helper/plan, and recycled-identity restrictions.
+  Keep tests able to inject the inspection command or runner without exposing executable selection in production RPC/configuration.
+
+Regression and acceptance:
+
+- [ ] Hanging `ps` during registration and hanging `pgrep` during settlement receive termination at their deadline and are joined before completion.
+- [ ] Cancellation before spawn, during output, after leader exit, and during settlement cannot grant an unregistered worker or release an uncertain group.
+- [ ] Delayed actual close, command error, output overflow, malformed output, permission refusal, and successful empty inspection have distinct assertions.
+- [ ] A real owned synthetic inspection child is killed and reaped; a double alone is insufficient for the process lifecycle assertion.
+- [ ] Existing cross-process registration, surviving-descendant, helper-unlink, and guard-retention tests pass.
+
+Done when inspection has bounded termination attempts and explicit ownership through actual close, with no untracked subprocess wait.
+
+### A13: reserve bounded capacity for authenticated control traffic
+
+Affected paths: `src/core/ingress.ts`, `adapter.ts`, admission helpers/constants, `src/types/supergateway.d.ts` if the parsed-body seam changes, ingress/resource/backend-work tests, and load fixtures.
+
+Proposed internal budgets are 28 ordinary HTTP slots plus 4 reserved control slots within the existing hard total of 32.
+For the existing 240-request-per-minute ceiling, reserve 16 admissions for control and allow at most 224 ordinary admissions, with total accounting still capped at 240.
+These values are implementation targets for bounded tests, not new configuration options or promises that control traffic is unthrottled.
+Document the reduced ordinary-request peak and adjust old saturation expectations only against this explicit policy while retaining exact overall-ceiling assertions.
+
+Implementation:
+
+- Preserve authentication, network, Host/Origin, route, encoding, header, byte, and time checks before dispatch.
+  Count provisional body classification against the same total request ceiling and release every reservation exactly once.
+- At ordinary capacity, permit only bounded provisional parsing in reserved slots, then admit validated control operations for an existing owned session/request.
+  Control includes cancellation, session DELETE, and client replies to genuine server-originated requests; new calls and mixed batches remain ordinary work.
+- Validate the complete payload once and pass the same checked body through the existing transport path.
+  Do not consume the incoming stream twice, buffer beyond the existing body limit, or dispatch any element of a refused mixed batch.
+- Keep modern continuation semantics and the independent backend-resource/work ledgers intact.
+  A control label must not create a new backend, reuse another session's ownership, or evade duplicate checks.
+- Apply equivalent bounded headroom to rate accounting so exhausting ordinary request tokens does not also consume the reserved control allowance.
+  Provisional classification must not charge a request twice or refund abuse into unlimited admission.
+- Define bounded handling of incomplete bodies and abusive authenticated control traffic.
+  The goal is control progress under ordinary saturation, not an availability guarantee against an authenticated client deliberately occupying every reserved slot.
+
+Regression and acceptance:
+
+- [ ] At ordinary saturation, valid cancellation and DELETE succeed and release their intended work/resources.
+- [ ] Client replies to genuine server-originated requests remain deliverable without admitting additional tool work.
+- [ ] Reserved-slot saturation still refuses excess traffic and never exceeds 32 HTTP requests, 16 resources, or 16 calls.
+- [ ] Invalid tokens, forged control headers, unknown sessions/IDs, mixed batches, oversized/chunked/slow bodies, and disconnected parsers cannot bypass policy or leak slots.
+- [ ] Rate exhaustion, window rollover, duplicate controls, and concurrent cancellation/DELETE use exact accounting.
+- [ ] A bounded multi-session loopback run shows renewed ordinary admission after cleanup and stable bookkeeping across repeated saturation cycles.
+
+Done when normal workload saturation leaves bounded control progress without weakening authentication, body validation, or resource limits.
+
+### Combined verification and review
+
+Run focused tests after each implementation step, then run the existing complete local sequence on the final source:
+
+```sh
+bun run typecheck
+bun run lint
+bun run test:e2e
+bun run test:components
+bun run test:unit
+```
+
+Use the existing project-local toolchain/cache configuration; do not install or upgrade dependencies merely to make a check pass.
+Run configured LSP diagnostics for the changed source and tests.
+Report missing configured server commands as configuration errors, not successful diagnostics.
+
+Required combined scenarios:
+
+- A1 + A9 + A8: failed update cleanup/handoff, repeated ordinary Quit failures, delayed retry validation, status polling, and native draft confirmation.
+- A2 + A3 + A13: saturated sessions, batched cancellation, a backend whose cleanup is delayed or refused, and admission that resumes only for actually released ownership.
+- A4 + A5 + A6: an old second instance, interrupted startup reconciliation, delayed native results, safe crash residue, and preserved committed records.
+- A7 + A11: an authenticated but incompatible or structurally invalid candidate rejected before readiness, with the gateway and configuration unchanged.
+- Existing F1-F5 and R1-R16 regression contracts: stale configuration refusal, no late DNS publication, lost acknowledgements, duplicate calls, credential isolation, storage-parent restrictions, and retained helper ownership.
+
+UI checks must inspect rendered desktop and narrow layouts, keyboard interaction, focus restoration, selectable retained drafts, Logs, retry, and error states.
+Use the existing UI/browser harnesses and retain synthetic screenshots in the new evidence directory.
+Restore only verification-generated changes to tracked screenshots from the captured baseline; never discard concurrent user edits.
+
+Local development-native checks use a separately rooted project-local bundle and isolated home/data/temp roots.
+Keep actual login registration disabled and use synthetic MCP servers.
+Do not launch, replace, or terminate the user's installed app or an unrelated retained app instance.
+
+After behavior passes, perform a focused simplification pass within the changed scope.
+Remove superseded phase-based lifetime assumptions, duplicated process inspection, or obsolete compatibility paths introduced by the fixes when their callers are updated.
+Do not add unrelated restructuring, a general state-machine framework, new configuration knobs, or speculative abstractions.
+Then obtain independent source review of process/transport ownership, updater persistence/identity, and native UI/lifecycle integration.
+Corrections require a failing regression, a passing correction, and closure review of the affected boundary.
+A self-review is not independent review; if independence is unavailable, disclose the gap rather than silently marking that gate complete.
+
+For each A item, record the changed files, red/green commands, exact observed outcome, review disposition, and remaining native/platform limits in this section or its project-local execution evidence.
+Keep these distinct statuses: not started, reproduced, implemented, locally verified, independently reviewed, packaged verified, and blocked with a concrete reason.
+Do not mark an item packaged verified based on source tests or an older signed bundle.
+
+### Separately authorized packaged acceptance
+
+Signing, Apple notarization, stapling, and packaged replacement require a new explicit authorization after source closure.
+Build from the final reviewed source into distinct project-local build and asset directories.
+Preserve the retained `0.3.1` acceptance assets and published `0.3.0` artifacts unchanged.
+Private version-A/version-B fixtures are acceptance inputs, not public releases or authorization to change `package.json`.
+
+- [ ] Verify the wrapper, payload, manifest, archive, publisher, architecture, build identity, host compatibility metadata, notarization tickets, and full DMG inventory.
+- [ ] Exercise successful A-to-B replacement with an active synthetic MCP session; prove backend absence immediately before handoff, one target startup, working RPC, exact transaction confirmation, and byte-identical configuration.
+- [ ] Reproduce the old-instance/delayed-renderer race with two isolated processes and require only the matching executing build to confirm.
+- [ ] Exercise failed cleanup, unarmed refusal, retry with live polling, repeated ordinary Quit attempts, and cancelled interactive draft confirmation.
+- [ ] Quit during startup verification and process inspection; require checked child termination and joined transaction work.
+- [ ] Exercise crash-point residue and unknown/committed recovery states without deleting evidence merely to complete the test.
+- [ ] Reject incompatible macOS requirements and malformed numeric archive fields before replacement; keep valid same-payload controls.
+- [ ] Rerun unchanged-SDK storage-limit and helper failure/recovery checks when their inputs or connected ownership paths changed.
+- [ ] Confirm all owned processes, mounts, test listeners, and temporary displays are stopped or explicitly retained as unresolved ownership.
+- [ ] Recheck source/artifact preservation and independently review the final evidence before declaring packaged acceptance complete.
+
+Fresh live GitHub/CDN delivery, minimum-OS hardware, physical input, actual login cycles, second-device LAN access, prolonged soak, host power loss, and Linux/Windows runtime remain separately scoped unless explicitly included and exercised.
+A local loopback feed, small storage fixture, or injected native result does not establish those properties.
+
+### Stop conditions and authorization gates
+
+Stop the affected step and record the blocker if a required pinned seam is absent, a schema/protocol compatibility promise would change, a process cannot be proven stopped, or a test requires real user data or external infrastructure.
+Do not work around a blocker by dropping a supported batch form, disabling validation, deleting an uncertain journal, accepting disk metadata as executing identity, or bypassing native checks.
+Do not silently upgrade dependencies, patch the SDK, change the update feed/publisher, move configuration, or add a custom installer.
+
+The present request authorizes this plan and documentation checks only.
+A later implementation request may authorize the source changes, regression tests, local review, and isolated development verification described above, but not the separately gated signing, packaged replacement, shipping, or installed-app operations.
+Version selection, commit, tag, push, GitHub release creation, upload/publication, and installation each require explicit authorization under the repository rules.
+
+Final completion record must identify which A items are closed, which acceptance layers actually ran, any remaining blockers, and any permitted scope reduction.
+An agreed source-only completion must leave the signed-package and release gates visibly pending.
+
+### Planning verification
+
+Independent read-only plan review found no issues; its report is `.cache/src-audit-plan-review/review.md`.
+This is plan review, not implementation or source closure.
+The pre-shutdown compatibility clarification in A7 and this closeout record received focused self-review.
+Documentation checks verified all 13 numbered sections and not-started statuses, all nine phases, balanced code fences, existing explicit source/test/build paths, quote consistency, and no added em dashes.
+The initial heading-count check also counted the audit-baseline heading; restricting it to numbered A headings corrected the check without changing the plan.
+The historical 843-line body remains byte-for-byte unchanged, and `git diff --check` passes.
+No application tests, builds, native acceptance, implementation, or shipping were performed for this documentation-only request.
+The A3, A4, A6, and A13 proof gates remain pending execution.
+
+## Historical implementation and acceptance records
+
+The following material is retained unchanged from the prior plan.
+It records earlier scopes and outcomes, not authorization or acceptance for A1-A13.
+
 ## Next feature: automatic updates and manual checks
 
 Status: both requested local gates are complete; independent source and packaged acceptance reviews are clear.

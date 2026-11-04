@@ -62,6 +62,10 @@ export class MacLoginManager implements LoginManager {
   }
 }
 
+function closedError(): never {
+  throw new Error("closed");
+}
+
 export function openLoginManager(platform: DesktopPlatform, path: string, allowChanges: boolean) {
   if (platform === "linux") {
     const status = (): LoginStatus => ({
@@ -87,18 +91,31 @@ export function openLoginManager(platform: DesktopPlatform, path: string, allowC
     mcp_test_close_shortcut: { args: [], returns: FFIType.void },
     mcp_test_quit_shortcut: { args: [], returns: FFIType.void },
   });
-  const manager = new MacLoginManager(
-    {
-      status: () => library.symbols.mcp_login_status(),
-      set: (enabled) => library.symbols.mcp_login_set(enabled ? 1 : 0),
+  let closed = false;
+  let cachedStatus: number | undefined;
+  const native: LoginNative = {
+    status: () => {
+      if (closed) return cachedStatus ?? -1;
+      const status = library.symbols.mcp_login_status();
+      cachedStatus = status;
+      return status;
     },
-    allowChanges,
-  );
+    set: (enabled) => {
+      if (closed) closedError();
+      return library.symbols.mcp_login_set(enabled ? 1 : 0);
+    },
+  };
+  const manager = new MacLoginManager(native, allowChanges);
   return {
     manager,
-    statusCode: () => library.symbols.mcp_login_status(),
-    requestCloseShortcut: () => library.symbols.mcp_test_close_shortcut(),
-    requestQuitShortcut: () => library.symbols.mcp_test_quit_shortcut(),
-    close: () => library.close(),
+    statusCode: () => (closed ? closedError() : library.symbols.mcp_login_status()),
+    requestCloseShortcut: () =>
+      closed ? closedError() : library.symbols.mcp_test_close_shortcut(),
+    requestQuitShortcut: () => (closed ? closedError() : library.symbols.mcp_test_quit_shortcut()),
+    close: () => {
+      if (closed) return;
+      closed = true;
+      library.close();
+    },
   };
 }
