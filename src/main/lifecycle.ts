@@ -60,7 +60,8 @@ export class QuitCoordinator {
       signal: controller.signal,
     });
     this.intent = { kind: "update", attempt };
-    this.state = { attempt: id, phase: "idle", error: null };
+    // Reserving a retry must not erase an earlier shutdown failure.
+    this.state = { ...this.state, attempt: id };
     return attempt;
   }
 
@@ -92,7 +93,7 @@ export class QuitCoordinator {
     if (this.handoff?.attemptId === attemptId) this.handoff = undefined;
     this.approved = false;
     this.cleanupDone = false;
-    if (!this.cleanupInFlight && !this.dispatchInFlight)
+    if (this.state.phase !== "idle" && !this.cleanupInFlight && !this.dispatchInFlight)
       this.state = {
         attempt: this.state.attempt,
         phase: "failed",

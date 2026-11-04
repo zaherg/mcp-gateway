@@ -154,6 +154,79 @@ function startUpdate(
   return candidate;
 }
 
+test("cancelling a preflight reservation keeps the live lifecycle idle and allows a fresh retry", () => {
+  let cleaned = 0;
+  const coordinator = new QuitCoordinator(
+    async () => {
+      cleaned++;
+    },
+    () => {},
+    () => {},
+  );
+  const first = coordinator.reserveUpdate(updateCandidate());
+  if (!first) throw new Error("Expected reservation");
+  coordinator.cancelUpdate(first.id);
+  expect(coordinator.status()).toEqual({ attempt: first.id, phase: "idle", error: null });
+  expect(first.signal.aborted).toBe(true);
+  expect(coordinator.acceptUpdateRestart(first)).toBe(false);
+  const second = coordinator.reserveUpdate(updateCandidate());
+  if (!second) throw new Error("Expected retry reservation");
+  expect(second.id).toBe(first.id + 1);
+  coordinator.cancelUpdate(first.id);
+  expect(second.signal.aborted).toBe(false);
+  expect(coordinator.status()).toEqual({ attempt: second.id, phase: "idle", error: null });
+  coordinator.cancelUpdate(second.id);
+  expect(cleaned).toBe(0);
+});
+
+for (const stage of ["accepted", "cleaning"] as const) {
+  test(`cancelling an update at the ${stage} stage does not reopen configuration after shutdown admission`, async () => {
+    let finish = () => {};
+    let cleaned = 0;
+    let dispatched = 0;
+    let quits = 0;
+    const coordinator = new QuitCoordinator(
+      () =>
+        new Promise<void>((resolve) => {
+          cleaned++;
+          finish = resolve;
+        }),
+      () => {
+        quits++;
+      },
+      () => {},
+      async () => {
+        dispatched++;
+        return { kind: "unarmed", reason: "cancelled" };
+      },
+    );
+    const attempt = coordinator.reserveUpdate(updateCandidate());
+    if (!attempt) throw new Error("Expected reservation");
+    expect(coordinator.acceptUpdateRestart(attempt)).toBe(true);
+    if (stage === "cleaning") {
+      withQuitInvocation({ kind: "begin-update-shutdown", attemptId: attempt.id }, () =>
+        coordinator.handle(() => {}),
+      );
+      await eventually(() => cleaned === 1);
+    }
+    try {
+      coordinator.cancelUpdate(attempt.id);
+      expect(attempt.signal.aborted).toBe(true);
+      expect(coordinator.status()).toEqual(
+        stage === "cleaning"
+          ? { attempt: attempt.id, phase: "pending", error: null }
+          : { attempt: attempt.id, phase: "failed", error: "The update attempt was cancelled." },
+      );
+      expect(quits).toBe(0);
+      expect(dispatched).toBe(0);
+    } finally {
+      finish();
+      if (stage === "cleaning") await eventually(() => quits === 1);
+    }
+    expect(dispatched).toBe(0);
+  });
+}
+
 test("a normal quit clears an armed update and never installs on quit", async () => {
   let quits = 0;
   const dispatched: string[] = [];
@@ -248,6 +321,11 @@ test("failed cleanup does not dispatch an update and allows an explicit retry", 
     "Update cleanup failed. The app has not exited. Retry Update or Quit.",
   );
   expect(JSON.stringify(coordinator.status())).not.toContain("private-cleanup");
+  const retry = coordinator.reserveUpdate(updateCandidate());
+  if (!retry) throw new Error("Expected retry reservation");
+  expect(coordinator.status().phase).toBe("failed");
+  coordinator.cancelUpdate(retry.id);
+  expect(coordinator.status().phase).toBe("failed");
   startUpdate(coordinator, "0.3.3");
   await eventually(() => dispatched === 1);
   expect(coordinator.status().phase).toBe("failed");
@@ -398,8 +476,14 @@ test("Quit and update retries share one counter and ignore cancelled older attem
   const first = coordinator.reserveUpdate(updateCandidate());
   if (!first) throw new Error("Expected reservation");
   expect(first.id).toBe(3);
+  expect(coordinator.status()).toEqual({
+    attempt: first.id,
+    phase: "failed",
+    error: "Quit cleanup failed. The app has not exited. Retry Quit.",
+  });
   expect(coordinator.reserveUpdate(updateCandidate())).toBe(first);
   coordinator.cancelUpdate(first.id);
+  expect(coordinator.status().phase).toBe("failed");
   const second = coordinator.reserveUpdate(updateCandidate("0.3.3"));
   if (!second) throw new Error("Expected retry reservation");
   expect(second.id).toBe(4);

@@ -1097,7 +1097,7 @@ async function until(check: () => boolean | Promise<boolean>) {
 }
 
 for (const refusal of ["incompatible host", "non-executable candidate"] as const) {
-  test(`${refusal} restart preflight preserves a live gateway and configuration through AppService`, async () => {
+  test(`${refusal} restart preflight leaves configuration editable and the gateway running through AppService`, async () => {
     const compatibility = { hostVersion: "14.0" };
     let revokeExecution = false;
     const runner = fakeRunner({ compatibility });
@@ -1145,9 +1145,41 @@ for (const refusal of ["incompatible host", "non-executable candidate"] as const
       expect(rig.counts.dispatch).toBe(0);
       expect(context.controller.snapshot().running).toBe(true);
       expect(await readFile(context.path)).toEqual(before);
-      expect(rig.updates.statusValue().error).toContain(
+      const updateError = rig.updates.statusValue().error;
+      expect(updateError).toContain(
         refusal === "incompatible host" ? "compatibility with this Mac" : "signature was rejected",
       );
+      const text = `${JSON.stringify({
+        ...context.config,
+        gateway: { ...context.config.gateway, autoStart: true },
+      })}\n`;
+      expect(
+        await service.handlers.saveConfig({
+          text,
+          expectedRevision: context.controller.snapshot().revision,
+        }),
+      ).toMatchObject({ ok: true, value: { gateway: { running: true, configText: text } } });
+      expect(await readFile(context.path, "utf8")).toBe(text);
+      expect(await service.handlers.quitStatus()).toEqual({
+        ok: true,
+        value: { attempt: 1, phase: "idle", error: null },
+      });
+      expect(rig.updates.statusValue()).toMatchObject({
+        phase: "error",
+        error: updateError,
+        attemptId: null,
+      });
+      expect(rig.counts).toMatchObject({ cleanup: 0, dispatch: 0, quits: 0 });
+
+      expect(await service.handlers.quit()).toMatchObject({
+        ok: true,
+        value: { requested: true, status: { attempt: 2, phase: "pending", error: null } },
+      });
+      await until(() => rig.counts.quits === 1);
+      expect(rig.quit.status()).toEqual({ attempt: 2, phase: "ready", error: null });
+      expect(rig.counts).toMatchObject({ cleanup: 1, dispatch: 0, quits: 1 });
+      expect(context.controller.snapshot().running).toBe(false);
+      expect(await readFile(context.path, "utf8")).toBe(text);
     } finally {
       rig.updates.stop();
       await rig.updates.abandonPrepared();
