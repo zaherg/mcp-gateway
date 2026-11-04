@@ -1,4 +1,5 @@
-import { lstat, readdir, readFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, lstat, open, readdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import {
   type CommandChild,
@@ -16,6 +17,7 @@ import {
 } from "../../shared/build-identity";
 import {
   isSafeRelativeComponent,
+  requiredBundleExecutables,
   UPDATER_ARCH,
   UPDATER_CHANNEL,
   UPDATER_FEED_URL,
@@ -30,6 +32,9 @@ const MAX_BUNDLE_BYTES = 2 * 1024 * 1024 * 1024;
 const CODESIGN = "/usr/bin/codesign";
 const LIPO = "/usr/bin/lipo";
 const PLUTIL = "/usr/bin/plutil";
+const MACHO_MAGIC = new Set([
+  0xfeedface, 0xcefaedfe, 0xfeedfacf, 0xcffaedfe, 0xcafebabe, 0xbebafeca, 0xcafebabf, 0xbfbafeca,
+]);
 
 export type { CommandChild as VerificationChild, CommandResult, CommandRunner };
 export { runCommand };
@@ -162,7 +167,11 @@ async function runChecked(
   return result;
 }
 
-async function assertPlainBundleTree(bundlePath: string, signal?: AbortSignal): Promise<void> {
+async function assertPlainBundleTree(
+  bundlePath: string,
+  signal?: AbortSignal,
+  onFile?: (path: string) => Promise<void>,
+): Promise<void> {
   let entries = 0;
   let bytes = 0;
   async function visit(path: string): Promise<void> {
@@ -179,6 +188,7 @@ async function assertPlainBundleTree(bundlePath: string, signal?: AbortSignal): 
     bytes += info.size;
     if (entries > MAX_BUNDLE_ENTRIES || bytes > MAX_BUNDLE_BYTES)
       fail("candidate_bundle_too_large");
+    await onFile?.(path);
   }
   await visit(bundlePath);
 }
@@ -219,11 +229,18 @@ async function readMetadata(
   const executable = executableResult.stdout.trim();
   if (!isSafeRelativeComponent(executable)) fail("candidate_executable_invalid");
   const executablePath = join(bundlePath, "Contents/MacOS", executable);
-  const executableInfo = await lstat(executablePath);
-  if (executableInfo.isSymbolicLink() || !executableInfo.isFile())
-    fail("candidate_executable_invalid");
-  const uninstallInfo = await lstat(join(bundlePath, "Contents/Resources/uninstall"));
-  if (uninstallInfo.isSymbolicLink() || !uninstallInfo.isFile()) fail("candidate_manager_invalid");
+  for (const relative of requiredBundleExecutables(executable)) {
+    if (signal?.aborted) fail("candidate_cancelled");
+    try {
+      const path = join(bundlePath, relative);
+      const info = await lstat(path);
+      if (info.isSymbolicLink() || !info.isFile()) fail("candidate_executable_unavailable");
+      // Code signatures do not authenticate executable mode or ACL access.
+      await access(path, constants.R_OK | constants.X_OK);
+    } catch {
+      fail("candidate_executable_unavailable");
+    }
+  }
   const arch = await runChecked(
     run,
     LIPO,
@@ -273,6 +290,106 @@ async function verifySignature(
   const parsed = parseCodesignDisplay(`${display.stdout}\n${display.stderr}`);
   if (parsed.identifier !== identifier || parsed.teamId !== teamId || !parsed.developerId)
     fail("candidate_publisher_mismatch");
+}
+
+async function isMachOFile(path: string): Promise<boolean> {
+  const file = await open(path, "r");
+  try {
+    const magic = Buffer.alloc(4);
+    const { bytesRead } = await file.read(magic, 0, 4, 0);
+    return bytesRead === 4 && MACHO_MAGIC.has(magic.readUInt32BE());
+  } finally {
+    await file.close();
+  }
+}
+
+function macOSVersion(value: unknown): readonly [number, number, number] {
+  if (typeof value !== "string" || value.length > 32 || !/^\d+(?:\.\d+){0,2}$/.test(value))
+    fail("candidate_macos_invalid");
+  const parts = value.split(".").map(Number);
+  if (parts.some((part) => !Number.isSafeInteger(part)) || !parts[0])
+    fail("candidate_macos_invalid");
+  return [parts[0], parts[1] ?? 0, parts[2] ?? 0];
+}
+
+function requiresNewerMacOS(minimum: readonly number[], host: readonly number[]): boolean {
+  for (let index = 0; index < 3; index++) {
+    const required = minimum[index] ?? 0;
+    const available = host[index] ?? 0;
+    if (required !== available) return required > available;
+  }
+  return false;
+}
+
+function executableMinimumMacOS(output: string): string {
+  const commands = output.split(/^Load command \d+\r?$/m).slice(1);
+  if (commands.length !== 1) fail("candidate_macos_invalid");
+  const lines = (commands[0] ?? "").split(/\r?\n/).map((line) => line.trim());
+  const field = (name: string): string => {
+    const values = lines.filter((line) => line.startsWith(`${name} `));
+    if (values.length !== 1) fail("candidate_macos_invalid");
+    return (values[0] ?? "").slice(name.length).trim();
+  };
+  const command = field("cmd");
+  if (command === "LC_VERSION_MIN_MACOSX") return field("version");
+  if (command !== "LC_BUILD_VERSION" || field("platform") !== "MACOS")
+    fail("candidate_macos_invalid");
+  return field("minos");
+}
+
+async function assertMacOSCompatibility(
+  run: CommandRunner,
+  metadata: BundleMetadata,
+  signal?: AbortSignal,
+): Promise<void> {
+  const checked = (command: string, args: readonly string[]) =>
+    runChecked(run, command, args, "candidate_macos_unavailable", signal);
+  try {
+    const plistResult = await checked(PLUTIL, [
+      "-convert",
+      "json",
+      "-o",
+      "-",
+      join(metadata.bundlePath, "Contents/Info.plist"),
+    ]);
+    let plist: unknown;
+    try {
+      plist = JSON.parse(plistResult.stdout);
+    } catch {
+      fail("candidate_macos_invalid");
+    }
+    if (!isRecord(plist)) fail("candidate_macos_invalid");
+    const requirements: (readonly [number, number, number])[] = [];
+    if ("LSMinimumSystemVersion" in plist)
+      requirements.push(macOSVersion(plist.LSMinimumSystemVersion));
+    if ("LSMinimumSystemVersionByArchitecture" in plist) {
+      const architectures = plist.LSMinimumSystemVersionByArchitecture;
+      if (!isRecord(architectures)) fail("candidate_macos_invalid");
+      if (UPDATER_ARCH in architectures)
+        requirements.push(macOSVersion(architectures[UPDATER_ARCH]));
+    }
+    const host = macOSVersion(
+      (await checked("/usr/bin/sw_vers", ["-productVersion"])).stdout.trim(),
+    );
+    if (requirements.some((minimum) => requiresNewerMacOS(minimum, host)))
+      fail("candidate_macos_incompatible");
+    const checkExecutable = async (path: string) => {
+      const build = await checked("/usr/bin/vtool", ["-arch", UPDATER_ARCH, "-show-build", path]);
+      if (requiresNewerMacOS(macOSVersion(executableMinimumMacOS(build.stdout)), host))
+        fail("candidate_macos_incompatible");
+    };
+    const executable = join(metadata.bundlePath, "Contents/MacOS", metadata.executable);
+    await checkExecutable(executable);
+    // Bun, required dylibs and the update helper can require a newer host than the launcher.
+    await assertPlainBundleTree(metadata.bundlePath, signal, async (path) => {
+      if (path !== executable && (await isMachOFile(path))) await checkExecutable(path);
+    });
+    if (signal?.aborted) fail("candidate_cancelled");
+  } catch (error) {
+    if (signal?.aborted) fail("candidate_cancelled");
+    if (error instanceof ApplicationVerificationError) throw error;
+    fail("candidate_macos_unavailable");
+  }
 }
 
 export class ApplicationVerifier {
@@ -332,7 +449,7 @@ export class ApplicationVerifier {
     return { identifier: UPDATER_IDENTIFIER, teamId: parsed.teamId };
   }
 
-  async verifyCandidate(
+  async verifyRetained(
     appBundlePath: string,
     expected: ExpectedCandidate,
     signal?: AbortSignal,
@@ -354,11 +471,13 @@ export class ApplicationVerifier {
     return metadata;
   }
 
-  async verifyRetained(
+  async verifyCandidate(
     appBundlePath: string,
     expected: ExpectedCandidate,
     signal?: AbortSignal,
   ): Promise<BundleMetadata> {
-    return this.verifyCandidate(appBundlePath, expected, signal);
+    const metadata = await this.verifyRetained(appBundlePath, expected, signal);
+    await assertMacOSCompatibility(this.run, metadata, signal);
+    return metadata;
   }
 }

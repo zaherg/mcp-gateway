@@ -13,6 +13,7 @@ import {
   type CommandRunner,
   runCommand,
 } from "../../src/main/updater/verify";
+import { macOSCompatibilityCommand } from "../fixtures/macos-compatibility";
 import { writeBundleFixture } from "../fixtures/updater";
 
 const TEAM = "ABCDEFGHIJ";
@@ -22,6 +23,8 @@ function success(stdout = "", stderr = ""): CommandResult {
 }
 
 const runner: CommandRunner = async (command, args) => {
+  const compatibility = macOSCompatibilityCommand(command, args);
+  if (compatibility) return compatibility;
   if (command.endsWith("plutil")) {
     if (args.includes("CFBundleIdentifier")) return success("dev.srvr.mcpgateway\n");
     if (args.includes("CFBundleVersion")) {

@@ -73,7 +73,11 @@ export async function httpFixture(
       if (message.method === "server/discover" && options.modernDiscovery === "sse") {
         res.writeHead(200, { "Content-Type": "text/event-stream" });
         res.end(
-          `id: priming\ndata\n\ndata:\n\n${JSON.stringify(reply, null, 2)
+          `id: priming\ndata\n\ndata:\n\ndata: {"jsonrpc":"2.0","method":"notifications/message","params":{"level":"info","data":"synthetic discovery notice"}}\n\n${JSON.stringify(
+            reply,
+            null,
+            2,
+          )
             .split("\n")
             .map((line) => `data: ${line}`)
             .join("\n")}\n\n`,

@@ -1,24 +1,30 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Socket } from "node:net";
-import type { StatefulMount } from "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js";
 import type { GatewayConfig, InterfaceChoice, ServerSnapshot, VisibleError } from "../shared/types";
+import type { GatewayMount } from "./adapter";
 import { backendSummary, closeMount, createMount } from "./adapter";
 import { BackendCalls, MAX_BACKEND_CALLS } from "./backend-work";
 import { isHttpServer, serverFingerprint } from "./config";
 import { failure, visible } from "./errors";
 import { LogBuffer } from "./logs";
 import { peerAllowed, rejectSelfProxy, type SelfProxyOptions, selectInterface } from "./network";
+import { RequestBodyError, readRequestBody } from "./request-body";
 import { ResourceAdmission } from "./resource-admission";
 
 export const MAX_BODY_BYTES = 4 * 1024 * 1024;
 export const MAX_CONCURRENT_REQUESTS = 32;
+export const MAX_CONTROL_REQUESTS = 4;
+export const MAX_ORDINARY_REQUESTS = MAX_CONCURRENT_REQUESTS - MAX_CONTROL_REQUESTS;
 export const MAX_SESSIONS = 16;
 export const REQUEST_DEADLINE_MS = 30_000;
 const MAX_CONNECTIONS = 64;
 const MAX_REQUESTS_PER_MINUTE = 240;
+export const MAX_CONTROL_REQUESTS_PER_MINUTE = 16;
+export const MAX_ORDINARY_REQUESTS_PER_MINUTE =
+  MAX_REQUESTS_PER_MINUTE - MAX_CONTROL_REQUESTS_PER_MINUTE;
 interface Endpoint {
-  mount: StatefulMount;
+  mount: GatewayMount;
   fingerprint: string;
   responses: Set<ServerResponse>;
 }
@@ -29,13 +35,15 @@ export class GatewayIngress {
   private readonly sockets = new Set<Socket>();
   private readonly endpoints = new Map<string, Endpoint>();
   private readonly backendErrors = new Map<string, VisibleError>();
-  private readonly closingMounts = new Map<string, StatefulMount>();
+  private readonly closingMounts = new Map<string, GatewayMount>();
   private readonly admission = new ResourceAdmission(MAX_SESSIONS);
   // One backend-work budget shared by every endpoint and session.
   private readonly work = new BackendCalls(MAX_BACKEND_CALLS);
   private selected: InterfaceChoice;
-  private activeRequests = 0;
+  private ordinaryActive = 0;
+  private reservedActive = 0;
   private rateStart = Date.now();
+  private ordinaryRate = 0;
   private rateCount = 0;
   private closed = false;
   private closePromise: Promise<void> | undefined;
@@ -264,61 +272,98 @@ export class GatewayIngress {
       reject(413);
       return;
     }
+    if (
+      req.method !== "POST" &&
+      (req.headers["transfer-encoding"] !== undefined || Number(length ?? 0) > 0)
+    ) {
+      reject(400);
+      return;
+    }
     if (req.headers["content-encoding"] && req.headers["content-encoding"] !== "identity") {
       reject(415);
       return;
     }
     if (Date.now() - this.rateStart >= 60_000) {
       this.rateStart = Date.now();
+      this.ordinaryRate = 0;
       this.rateCount = 0;
     }
+    const reserved =
+      this.ordinaryActive >= MAX_ORDINARY_REQUESTS ||
+      this.ordinaryRate >= MAX_ORDINARY_REQUESTS_PER_MINUTE;
     if (
-      ++this.rateCount > MAX_REQUESTS_PER_MINUTE ||
-      this.activeRequests >= MAX_CONCURRENT_REQUESTS
+      this.ordinaryActive + this.reservedActive >= MAX_CONCURRENT_REQUESTS ||
+      this.rateCount >= MAX_REQUESTS_PER_MINUTE ||
+      (reserved && this.reservedActive >= MAX_CONTROL_REQUESTS)
     ) {
       reject(429);
       return;
     }
-    this.activeRequests++;
-    endpoint.responses.add(res);
-    let bytes = 0;
-    let finished = false;
-    const timeout = setTimeout(() => {
-      if (!res.headersSent) {
-        res.statusCode = 504;
-        res.end();
-      } else res.destroy();
-    }, REQUEST_DEADLINE_MS);
-    const count = (chunk: Buffer) => {
-      bytes += chunk.length;
-      if (bytes > MAX_BODY_BYTES) {
-        if (!res.headersSent) {
-          res.statusCode = 413;
-          res.setHeader("Connection", "close");
-          res.end();
-        } else res.destroy();
-        req.destroy();
-      }
+    // Charge once before reading. Refused and disconnected parsers never refund
+    // tokens, and settlement in a later minute cannot corrupt that window.
+    this.rateCount++;
+    if (reserved) this.reservedActive++;
+    else {
+      this.ordinaryActive++;
+      this.ordinaryRate++;
+    }
+    const controller = new AbortController();
+    const requestError = () => {
+      controller.abort();
+      res.destroy();
     };
+    req.once("error", requestError);
+    req.once("close", () => req.off("error", requestError));
+    let finished = false;
+    let releaseControl: (() => void) | undefined;
+    const timeout = setTimeout(() => {
+      if (!res.headersSent) reject(504);
+      else res.destroy();
+      controller.abort();
+      req.destroy();
+    }, REQUEST_DEADLINE_MS);
     const done = () => {
       if (finished) return;
       finished = true;
       clearTimeout(timeout);
-      req.off("data", count);
-      this.activeRequests--;
+      controller.abort();
+      releaseControl?.();
+      if (reserved) this.reservedActive--;
+      else this.ordinaryActive--;
       endpoint.responses.delete(res);
     };
-    req.on("data", count);
+    endpoint.responses.add(res);
     res.once("finish", done);
     res.once("close", done);
-    try {
-      endpoint.mount.app(req, res);
-    } catch {
-      if (!res.headersSent) {
-        res.statusCode = 502;
-        res.end();
-      } else res.destroy();
-    }
+    void (async () => {
+      try {
+        const messages =
+          req.method === "POST"
+            ? await readRequestBody(req, MAX_BODY_BYTES, controller.signal)
+            : undefined;
+        if (
+          finished ||
+          controller.signal.aborted ||
+          this.closed ||
+          this.endpoints.get(name) !== endpoint
+        )
+          return;
+        if (reserved) {
+          releaseControl = endpoint.mount.claimControl(req, messages);
+          if (!releaseControl) {
+            reject(429);
+            return;
+          }
+        }
+        endpoint.mount.app(req, res);
+      } catch (error) {
+        if (finished || controller.signal.aborted) return;
+        if (!(error instanceof RequestBodyError))
+          this.logs.append({ server: name, level: "error", source: "controller" }, [error]);
+        if (!res.headersSent) reject(error instanceof RequestBodyError ? error.status : 502);
+        else res.destroy();
+      }
+    })();
   }
 
   close(): Promise<void> {

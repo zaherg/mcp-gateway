@@ -70,6 +70,60 @@ async function save(page: import("@playwright/test").Page) {
   await expect(page.getByText("Configuration saved.", { exact: true })).toBeVisible();
 }
 
+for (const width of [1280, 390]) {
+  test(`interactive native Quit intent protects an open dialog at ${width}px`, async ({
+    page,
+    bridge,
+  }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(`${bridge.url}/#${bridge.secret}`);
+    await expect(page.getByRole("button", { name: "Add server", exact: true })).toBeEnabled();
+    const before = (await bridge.control("inspect")).snapshot.configText;
+    await page.getByRole("button", { name: "Add server", exact: true }).click();
+    const name = page.getByLabel("Server name", { exact: false });
+    await name.fill("retained-dialog");
+    const command = page.getByLabel("Command", { exact: true });
+    await command.fill("/synthetic/retained");
+    await command.focus();
+    expect(
+      await page.evaluate(
+        () => !window.dispatchEvent(new Event("mcp-gateway:request-quit", { cancelable: true })),
+      ),
+    ).toBe(true);
+    const confirm = page.getByRole("dialog", { name: "Quit MCP Gateway?" });
+    await expect(confirm).toBeVisible();
+    await page.evaluate(() =>
+      window.dispatchEvent(new Event("mcp-gateway:request-quit", { cancelable: true })),
+    );
+    await expect(confirm).toHaveCount(1);
+    await expect(confirm.getByRole("button", { name: "Discard changes and quit" })).toBeEnabled();
+    await page.keyboard.press("Tab");
+    expect(await confirm.evaluate((dialog) => dialog.contains(document.activeElement))).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await page.screenshot({
+      path: `.cache/src-audit-a7-a11/quit-confirm-${width}.png`,
+      fullPage: true,
+    });
+    await page.keyboard.press("Escape");
+    await expect(confirm).not.toBeVisible();
+    await expect(command).toBeFocused();
+    await expect(name).toHaveValue("retained-dialog");
+    await expect(command).toHaveValue("/synthetic/retained");
+    expect((await bridge.control("inspect")).snapshot.configText).toBe(before);
+    await bridge.control("quit-hold");
+    await page.evaluate(() =>
+      window.dispatchEvent(new Event("mcp-gateway:request-quit", { cancelable: true })),
+    );
+    await confirm.getByRole("button", { name: "Discard changes and quit" }).click();
+    await expect(command).toHaveAttribute("readonly");
+    await expect(name).toHaveValue("retained-dialog");
+    expect((await bridge.control("inspect")).snapshot.configText).toBe(before);
+    await bridge.control("quit-release");
+  });
+}
+
 test("real App CRUD, gateway, MCP transports, login preferences and close cleanup", async ({
   page,
   bridge,

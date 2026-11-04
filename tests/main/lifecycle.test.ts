@@ -380,3 +380,67 @@ test("ordinary Quit survives a rejected final revalidation/preparation", async (
   await eventually(() => quits === 1);
   expect(coordinator.status().phase).toBe("ready");
 });
+
+test("Quit and update retries share one counter and ignore cancelled older attempts", async () => {
+  const coordinator = new QuitCoordinator(
+    async () => {
+      throw new Error("synthetic cleanup refusal");
+    },
+    () => {},
+    () => {},
+  );
+  for (const attempt of [1, 2]) {
+    coordinator.armQuit();
+    coordinator.handle(() => {});
+    await eventually(() => coordinator.status().phase === "failed");
+    expect(coordinator.status().attempt).toBe(attempt);
+  }
+  const first = coordinator.reserveUpdate(updateCandidate());
+  if (!first) throw new Error("Expected reservation");
+  expect(first.id).toBe(3);
+  expect(coordinator.reserveUpdate(updateCandidate())).toBe(first);
+  coordinator.cancelUpdate(first.id);
+  const second = coordinator.reserveUpdate(updateCandidate("0.3.3"));
+  if (!second) throw new Error("Expected retry reservation");
+  expect(second.id).toBe(4);
+  const status = coordinator.status();
+  coordinator.cancelUpdate(first.id);
+  expect(coordinator.status()).toEqual(status);
+  expect(second.signal.aborted).toBe(false);
+  expect(coordinator.acceptUpdateRestart(first)).toBe(false);
+  expect(coordinator.status()).toEqual(status);
+});
+
+test("ordinary Quit supersedes a pending update with one newer identity and joins its cleanup", async () => {
+  let finish = () => {};
+  let cleaned = 0;
+  let dispatched = 0;
+  const coordinator = new QuitCoordinator(
+    () =>
+      new Promise<void>((resolve) => {
+        cleaned++;
+        finish = resolve;
+      }),
+    () => {},
+    () => {},
+    async () => {
+      dispatched++;
+      return { kind: "unarmed", reason: "vetoed" };
+    },
+  );
+  startUpdate(coordinator);
+  await eventually(() => cleaned === 1);
+  expect(coordinator.status().attempt).toBe(1);
+  coordinator.armQuit();
+  coordinator.handle(() => {});
+  coordinator.armQuit();
+  coordinator.handle(() => {});
+  expect(coordinator.status()).toEqual({ attempt: 2, phase: "pending", error: null });
+  coordinator.cancelUpdate(1);
+  expect(coordinator.status()).toEqual({ attempt: 2, phase: "pending", error: null });
+  finish();
+  await eventually(() => coordinator.status().phase === "ready");
+  expect(coordinator.status().attempt).toBe(2);
+  expect(cleaned).toBe(1);
+  expect(dispatched).toBe(0);
+});

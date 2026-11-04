@@ -3,7 +3,21 @@ import { createServer } from "node:http";
 import { UpstreamDiscovery } from "../../src/core/discovery";
 import { configFor, eventually, setup, TOKEN } from "./helpers";
 
-const supported = JSON.stringify({ result: { supportedVersions: ["2026-07-28"], label: "🦊" } });
+const supported = JSON.stringify({
+  jsonrpc: "2.0",
+  id: "supergateway-discover",
+  result: { supportedVersions: ["2026-07-28"], label: "🦊" },
+});
+const notification = JSON.stringify({
+  jsonrpc: "2.0",
+  method: "notifications/message",
+  params: { level: "info", data: "synthetic" },
+});
+const unrelated = JSON.stringify({
+  jsonrpc: "2.0",
+  id: "unrelated",
+  result: { supportedVersions: ["2025-03-26"] },
+});
 const multiline = JSON.stringify(JSON.parse(supported), null, 2)
   .split("\n")
   .map((line) => `data: ${line}`)
@@ -11,6 +25,13 @@ const multiline = JSON.stringify(JSON.parse(supported), null, 2)
 const atByteCap = `:${" ".repeat(65_536 - Buffer.byteLength(supported) - 10)}\ndata: ${supported}\n\n`;
 const accepted = [
   { name: "JSON", contentType: "application/json", body: supported },
+  {
+    name: "notifications and unrelated reply before result",
+    contentType: "text/event-stream",
+    body: [notification, unrelated, notification, supported]
+      .map((value) => `data: ${value}\n\n`)
+      .join(""),
+  },
   { name: "single-line SSE", contentType: "text/event-stream", body: `data: ${supported}\n\n` },
   { name: "multiline SSE", contentType: "text/event-stream", body: `${multiline}\n\n` },
   {
@@ -90,14 +111,60 @@ for (const { name, contentType, body, chunked } of accepted) {
 for (const { name, contentType, body, status = 200 } of [
   { name: "malformed JSON", contentType: "application/json", body: "{" },
   {
+    name: "invalid UTF-8 in an otherwise supported response",
+    contentType: "application/json",
+    body: Buffer.concat([
+      Buffer.from(
+        '{"jsonrpc":"2.0","id":"supergateway-discover","result":{"supportedVersions":["2026-07-28"],"label":"',
+      ),
+      Buffer.from([0xff]),
+      Buffer.from('"}}'),
+    ]),
+  },
+  {
+    name: "unrelated supported response before matching unsupported response",
+    contentType: "text/event-stream",
+    body: `data: ${supported.replace("supergateway-discover", "unrelated")}\n\ndata: ${supported.replace("2026-07-28", "2025-03-26")}\n\n`,
+  },
+  {
+    name: "matching unsupported response before later success",
+    contentType: "text/event-stream",
+    body: `data: ${supported.replace("2026-07-28", "2025-03-26")}\n\ndata: ${supported}\n\n`,
+  },
+  {
+    name: "missing response envelope",
+    contentType: "application/json",
+    body: '{"result":{"supportedVersions":["2026-07-28"]}}',
+  },
+  {
+    name: "wrong response ID",
+    contentType: "application/json",
+    body: supported.replace("supergateway-discover", "other"),
+  },
+  {
+    name: "mixed version element types",
+    contentType: "application/json",
+    body: supported.replace('["2026-07-28"]', '["2026-07-28",1]'),
+  },
+  {
+    name: "matching error before later success",
+    contentType: "text/event-stream",
+    body: `data: {"jsonrpc":"2.0","id":"supergateway-discover","error":{"code":-32601,"message":"unsupported"}}\n\ndata: ${supported}\n\n`,
+  },
+  {
+    name: "malformed notification before result",
+    contentType: "text/event-stream",
+    body: `data: {"method":42}\n\ndata: ${supported}\n\n`,
+  },
+  {
     name: "unsupported version",
     contentType: "application/json",
-    body: '{"result":{"supportedVersions":["2025-03-26"]}}',
+    body: '{"jsonrpc":"2.0","id":"supergateway-discover","result":{"supportedVersions":["2025-03-26"]}}',
   },
   {
     name: "invalid versions",
     contentType: "application/json",
-    body: '{"result":{"supportedVersions":"2026-07-28"}}',
+    body: '{"jsonrpc":"2.0","id":"supergateway-discover","result":{"supportedVersions":"2026-07-28"}}',
   },
   { name: "oversized JSON", contentType: "application/json", body: "x".repeat(65_537) },
   { name: "truncated SSE event", contentType: "text/event-stream", body: `data: ${supported}\n` },
@@ -237,3 +304,36 @@ test("discovery times out an unfinished SSE body and closes its reader", async (
     await new Promise<void>((resolve) => upstream.close(() => resolve()));
   }
 }, 15_000);
+
+test("a complete matching SSE reply finishes discovery before EOF and cancels its reader", async () => {
+  let closed = false;
+  const upstream = createServer((req, res) => {
+    req.resume();
+    res.on("close", () => {
+      closed = true;
+    });
+    res.writeHead(200, { "Content-Type": "text/event-stream" });
+    res.write(`data: ${notification}\r\rdata: ${supported}\r\r`);
+  });
+  await new Promise<void>((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+  const address = upstream.address();
+  if (!address || typeof address === "string") throw new Error("No upstream address");
+  const probe = new UpstreamDiscovery({
+    type: "streamableHttp",
+    url: new URL(`http://127.0.0.1:${address.port}/mcp`),
+  });
+  try {
+    let result: boolean | undefined;
+    const pending = probe.speaks().then((value) => {
+      result = value;
+    });
+    await eventually(() => result !== undefined, 1000);
+    expect(result).toBe(true);
+    await pending;
+    await eventually(() => closed);
+  } finally {
+    await probe.close();
+    upstream.closeAllConnections();
+    await new Promise<void>((resolve) => upstream.close(() => resolve()));
+  }
+});

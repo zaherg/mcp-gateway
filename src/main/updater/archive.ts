@@ -3,7 +3,11 @@ import { createReadStream } from "node:fs";
 import { lstat, mkdir, open, readdir, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { MAX_UPDATE_TREE_ENTRIES, MAX_UPDATE_TREE_FILES } from "./budget";
-import { MAX_EXPANDED_ARCHIVE_BYTES, UPDATER_HASH_PATTERN } from "./constants";
+import {
+  MAX_EXPANDED_ARCHIVE_BYTES,
+  requiredBundleExecutables,
+  UPDATER_HASH_PATTERN,
+} from "./constants";
 
 const BLOCK_BYTES = 512;
 const DEFAULT_MAX_ARCHIVE_BYTES = MAX_EXPANDED_ARCHIVE_BYTES;
@@ -114,15 +118,18 @@ function cString(value: Buffer): string {
 }
 
 function octal(value: Buffer): number {
-  const end = value.indexOf(0);
-  const content = end === -1 ? value : value.subarray(0, end);
-  if (content.length === 0 || content.some((byte) => byte !== 0x20 && byte < 0x30))
-    fail("invalidHeader");
-  const text = content.toString("ascii").trim();
-  if (text.length === 0) return 0;
-  if (!/^[0-7]+$/.test(text)) fail("invalidHeader");
-  const parsed = Number.parseInt(text, 8);
-  if (!Number.isSafeInteger(parsed) || parsed < 0) fail("invalidHeader");
+  let parsed = 0;
+  let padding = false;
+  // The pinned native extractor permits trailing spaces/NULs, not leading whitespace.
+  for (const byte of value) {
+    if (byte === 0 || byte === 0x20) {
+      padding = true;
+      continue;
+    }
+    if (padding || byte < 0x30 || byte > 0x37) fail("invalidHeader");
+    parsed = parsed * 8 + byte - 0x30;
+    if (!Number.isSafeInteger(parsed)) fail("invalidHeader");
+  }
   return parsed;
 }
 
@@ -135,11 +142,7 @@ function headerChecksum(header: Buffer): number {
 }
 
 function validChecksum(header: Buffer): boolean {
-  const raw = field(header, 148, 8);
-  const end = raw.indexOf(0);
-  const content = (end === -1 ? raw : raw.subarray(0, end)).toString("ascii").trim();
-  if (!/^[0-7]+$/.test(content)) return false;
-  return Number.parseInt(content, 8) === headerChecksum(header);
+  return octal(field(header, 148, 8)) === headerChecksum(header);
 }
 
 function pathComponents(value: string): string[] {
@@ -240,6 +243,13 @@ function validateBundleLayout(entries: Map<string, UpdateArchiveEntry>): string 
   ]) {
     const entry = entries.get(requiredFile);
     if (entry?.type !== "file") fail("invalidBundleLayout");
+  }
+  for (const relative of requiredBundleExecutables()) {
+    const entry = entries.get(`${bundleName}/${relative}`);
+    if (entry?.type !== "file") fail("invalidBundleLayout");
+    // Extracted files belong to the current user. Group/other execute bits alone
+    // do not make the owner able to launch a required runtime or update helper.
+    if ((entry.mode & 0o500) !== 0o500) fail("unsafeMode");
   }
   return bundleName;
 }

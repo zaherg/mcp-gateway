@@ -13,8 +13,10 @@ import { parseConfig } from "../core/config";
 import { McpGatewayController } from "../core/controller";
 import { GatewayError } from "../core/errors";
 import type { AppRPC, QuitStatus, ViewportPolicy } from "../shared/rpc";
+import { InteractiveQuitGate } from "./interactive-quit";
 import { QuitCoordinator } from "./lifecycle";
 import { openLoginManager } from "./login";
+import { observeNativeQuitSignals } from "./native-signals";
 import {
   configurationDirectory,
   desktopPlatform,
@@ -29,7 +31,7 @@ import { UPDATER_CHANNEL, UPDATER_IDENTIFIER } from "./updater/constants";
 import { UpdaterCoordinator } from "./updater/coordinator";
 import { EXECUTING_BUILD } from "./updater/executing-build";
 import type { ApplySettlement } from "./updater/handoff";
-import { withQuitInvocation } from "./updater/invocation";
+import { asOrdinaryQuit, withQuitInvocation } from "./updater/invocation";
 import { readUpdateSupport } from "./updater/support";
 import type { UpdateAttempt } from "./updater/transaction";
 
@@ -42,6 +44,10 @@ if (updaterWorkerMode) {
 const platform = desktopPlatform(process.platform);
 const isolated = process.env.MCP_GATEWAY_ISOLATED === "1";
 const dataDirectory = configurationDirectory(platform, homedir(), process.env, Utils.paths.config);
+const nativeQuitSignal = observeNativeQuitSignals(
+  platform,
+  join(PATHS.RESOURCES_FOLDER, "app/native/login.dylib"),
+);
 const login = openLoginManager(
   platform,
   join(PATHS.RESOURCES_FOLDER, "app/native/login.dylib"),
@@ -103,8 +109,10 @@ const service = new AppService(
     platform,
     requestQuit: () => {
       quitRequested = true;
-      quit?.armQuit();
-      Utils.quit();
+      asOrdinaryQuit(() => {
+        quit?.armQuit();
+        Utils.quit();
+      });
       return quitStatus();
     },
     quitStatus,
@@ -124,6 +132,7 @@ let renderedWindows = 0;
 let viewportPolicy: ViewportPolicy | undefined;
 let inspectViewport: (() => Promise<ViewportPolicy>) | undefined;
 let requestRendererQuit: (() => Promise<boolean>) | undefined;
+let requestInteractiveRendererQuit: (() => Promise<boolean>) | undefined;
 let minimizeObserved = false;
 let restoreObserved = false;
 let closeRequestedHandled = false;
@@ -237,6 +246,8 @@ function openWindow(): void {
   });
   inspectViewport = () => rpc.request.viewportPolicy();
   requestRendererQuit = () => rpc.request.smokeQuit();
+  requestInteractiveRendererQuit = () =>
+    rpc.request.interactiveQuit(undefined, { maxRequestTime: 5_000 });
   const created = new BrowserWindow({
     title: "MCP Gateway",
     url: "views://mainview/index.html",
@@ -258,6 +269,7 @@ function openWindow(): void {
       windowReady = false;
       inspectViewport = undefined;
       requestRendererQuit = undefined;
+      requestInteractiveRendererQuit = undefined;
       if (platform === "macos") Utils.setDockIconVisible(false);
     }
   });
@@ -373,8 +385,10 @@ async function waitForNativeWindow(check: () => boolean): Promise<void> {
 function smokeFailure(error: unknown): void {
   smokeError = "Native lifecycle verification failed.";
   console.error(smokeError, error instanceof Error ? error.message : "Unknown native failure.");
-  quit?.armQuit();
-  Utils.quit();
+  asOrdinaryQuit(() => {
+    quit?.armQuit();
+    Utils.quit();
+  });
 }
 
 const refresh = setInterval(updateMenu, 1_000);
@@ -432,16 +446,42 @@ quit = new QuitCoordinator(
   },
 );
 boundary?.setHandoffAuthority(quit.handoffAuthority);
+const interactiveQuit = new InteractiveQuitGate(
+  quit,
+  () => {
+    if (!window) return undefined;
+    restoreWindow(window);
+    return windowReady && requestInteractiveRendererQuit
+      ? requestInteractiveRendererQuit()
+      : Promise.resolve(false);
+  },
+  () => Utils.quit(),
+  (error) => {
+    controller.recordLocalError(error);
+    openWindow();
+    void Utils.showMessageBox({
+      type: "error",
+      title: "Quit acknowledgement unavailable",
+      message: "The application could not confirm whether the window received Quit.",
+      detail:
+        "Check the window's status before retrying. A missing acknowledgement does not authorize discarding drafts.",
+      buttons: ["OK"],
+    }).catch((failure) => controller.recordLocalError(failure));
+  },
+  nativeQuitSignal,
+);
 Electrobun.events.on("before-quit", (event) =>
-  quit.handle(() => {
+  interactiveQuit.handle(() => {
     event.response = { allow: false };
   }),
 );
 Electrobun.events.on("reopen", openWindow);
 for (const signal of ["SIGINT", "SIGTERM"] as const)
   process.on(signal, () => {
-    quit?.armQuit();
-    Utils.quit();
+    asOrdinaryQuit(() => {
+      quit?.armQuit();
+      Utils.quit();
+    });
   });
 
 async function dispatch(event: unknown): Promise<void> {
@@ -468,7 +508,6 @@ async function dispatch(event: unknown): Promise<void> {
       }
       break;
     case "quit":
-      quit?.armQuit();
       Utils.quit();
       if (smoke && shortcutRequested) shortcutHandled = true;
       break;
@@ -536,5 +575,8 @@ if (!window) await completeUpdateStartup();
 if (smoke)
   setTimeout(() => {
     smokeError = "Native verification timed out.";
-    Utils.quit();
+    asOrdinaryQuit(() => {
+      quit?.armQuit();
+      Utils.quit();
+    });
   }, 50_000).unref();

@@ -110,6 +110,7 @@ export type AppRPC = {
     requests: {
       viewportPolicy: { params: undefined; response: ViewportPolicy };
       smokeQuit: { params: undefined; response: boolean };
+      interactiveQuit: { params: undefined; response: boolean };
     };
     messages: Record<string, never>;
   };

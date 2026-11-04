@@ -108,6 +108,13 @@ export function appEntries(
       mode: 0o755,
     },
   ];
+  for (const helper of ["bun", "bspatch", "zig-zstd"]) {
+    entries.push({
+      name: `MCP Gateway.app/Contents/MacOS/${helper}`,
+      contents: `fixture ${helper}`,
+      mode: 0o755,
+    });
+  }
   if (options.extra) entries.push(...options.extra);
   return entries;
 }
@@ -134,5 +141,8 @@ export function writeBundleFixture(
   writeFileSync(`${bundle}/Contents/Resources/uninstall`, "fixture update manager", {
     mode: 0o755,
   });
+  for (const helper of ["bun", "bspatch", "zig-zstd"]) {
+    writeFileSync(`${bundle}/Contents/MacOS/${helper}`, `fixture ${helper}`, { mode: 0o755 });
+  }
   return bundle;
 }

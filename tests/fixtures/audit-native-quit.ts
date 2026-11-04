@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { configFor, eventually, setup } from "../core/helpers";
 
 const action = process.argv[2];
-if (action !== "native" && action !== "menu" && action !== "signal")
+if (!["native", "menu", "signal", "unready", "lost", "ack", "approved"].includes(action ?? ""))
   throw new Error("Unknown native-event fixture action");
 const context = await setup(await configFor({}));
 process.env.MCP_GATEWAY_ISOLATED = "1";
@@ -17,6 +17,8 @@ const handlers = new Map<
 >();
 let rendererDecisions = 0;
 let cleanupStarted = 0;
+let initializeRenderer: (() => Promise<unknown>) | undefined;
+let approveRenderer: (() => Promise<unknown>) | undefined;
 const originalClose = context.controller.close.bind(context.controller);
 spyOn(context.controller, "close").mockImplementation(async () => {
   cleanupStarted++;
@@ -64,17 +66,28 @@ mock.module("electrobun/main", () => ({
   },
   BrowserWindow: Window,
   BrowserView: {
-    defineRPC: () => ({
-      request: new Proxy(
-        {},
-        {
-          get: () => async () => {
-            rendererDecisions++;
-            return false;
+    defineRPC: (config: {
+      handlers: { requests: { snapshot: () => Promise<unknown>; quit: () => Promise<unknown> } };
+    }) => {
+      initializeRenderer = config.handlers.requests.snapshot;
+      approveRenderer = config.handlers.requests.quit;
+      return {
+        request: new Proxy(
+          {},
+          {
+            get: () => async () => {
+              rendererDecisions++;
+              if (action === "lost") throw new Error("Synthetic lost renderer acknowledgement");
+              if (action === "approved") {
+                if (!approveRenderer) throw new Error("Missing confirmed Quit boundary");
+                await approveRenderer();
+              }
+              return action === "ack" || action === "approved";
+            },
           },
-        },
-      ),
-    }),
+        ),
+      };
+    },
   },
   Tray,
   PATHS: { RESOURCES_FOLDER: context.directory },
@@ -82,6 +95,7 @@ mock.module("electrobun/main", () => ({
     quit,
     setDockIconVisible() {},
     clipboardWriteText() {},
+    showMessageBox: async () => ({ response: 0 }),
     paths: { config: context.directory, appData: context.directory },
   },
 }));
@@ -89,6 +103,11 @@ const controllerModule = await import("../../src/core/controller");
 mock.module(resolve("src/core/controller.ts"), () => ({
   ...controllerModule,
   McpGatewayController: { open: async () => context.controller },
+}));
+// This fixture tests JS wiring only. Actual native signals are covered by the
+// development-bundle native-quit acceptance test, without mocked SDK callbacks.
+mock.module(resolve("src/main/native-signals.ts"), () => ({
+  observeNativeQuitSignals: () => () => false,
 }));
 const loginStatus = { enabled: false, supported: false, error: null };
 mock.module(resolve("src/main/login.ts"), () => ({
@@ -107,7 +126,9 @@ let initialized = false;
 try {
   await import("../../src/main/index");
   initialized = true;
-  if (action === "native") quit();
+  if (!initializeRenderer) throw new Error("Missing renderer startup boundary");
+  if (action !== "unready") await initializeRenderer();
+  if (action !== "menu" && action !== "signal") quit();
   else if (action === "menu")
     handlers.get("application-menu-clicked")?.({ data: { action: "quit" } });
   else

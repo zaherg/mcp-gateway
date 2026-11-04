@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import {
   ApplicationVerificationError,
@@ -11,6 +11,10 @@ import {
   runCommand,
 } from "../../src/main/updater/verify";
 import { alive, eventually } from "../core/helpers";
+import {
+  type MacOSCompatibilityFixture,
+  macOSCompatibilityCommand,
+} from "../fixtures/macos-compatibility";
 import { writeBundleFixture } from "../fixtures/updater";
 
 const TEAM = "ABCDEFGHIJ";
@@ -25,9 +29,12 @@ function fakeRunner(
     identifier?: string;
     authority?: boolean;
     requirementFailure?: boolean;
+    compatibility?: MacOSCompatibilityFixture;
   } = {},
 ): CommandRunner {
   return async (command, args) => {
+    const compatibility = macOSCompatibilityCommand(command, args, options.compatibility);
+    if (compatibility) return compatibility;
     if (command.endsWith("plutil")) {
       if (args.includes("CFBundleIdentifier")) return success("dev.srvr.mcpgateway\n");
       if (args.includes("CFBundleVersion")) {
@@ -89,6 +96,253 @@ test("accepts a candidate only when its selected version, hash, publisher, and a
     });
     expect(metadata.version).toBe("0.3.1");
     expect(metadata.hash).toBe("target123456");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+const candidateSelection = {
+  publisher: { identifier: "dev.srvr.mcpgateway", teamId: TEAM },
+  version: "0.3.1",
+  hash: "target123456",
+};
+
+for (const relative of [
+  "Contents/MacOS/launcher",
+  "Contents/MacOS/bun",
+  "Contents/MacOS/bspatch",
+  "Contents/MacOS/zig-zstd",
+  "Contents/Resources/uninstall",
+]) {
+  test(`rejects non-executable required candidate file ${relative}`, async () => {
+    const root = await directory();
+    try {
+      const bundle = writeBundleFixture(root, candidateSelection);
+      const path = join(bundle, relative);
+      await writeFile(path, "synthetic executable", { mode: 0o755 });
+      const verifier = new ApplicationVerifier(fakeRunner());
+      await expect(verifier.verifyCandidate(bundle, candidateSelection)).resolves.toMatchObject({
+        version: "0.3.1",
+      });
+      await chmod(path, 0o600);
+      await expect(verifier.verifyCandidate(bundle, candidateSelection)).rejects.toMatchObject({
+        code: "candidate_executable_unavailable",
+      });
+      await expect(verifier.verifyRetained(bundle, candidateSelection)).rejects.toMatchObject({
+        code: "candidate_executable_unavailable",
+      });
+      await chmod(path, 0o500);
+      await expect(verifier.verifyCandidate(bundle, candidateSelection)).resolves.toMatchObject({
+        version: "0.3.1",
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const [name, compatibility, code] of [
+  [
+    "newer generic minimum",
+    { plist: { LSMinimumSystemVersion: "99.0" } },
+    "candidate_macos_incompatible",
+  ],
+  [
+    "newer arm64 minimum",
+    {
+      plist: {
+        LSMinimumSystemVersion: "12",
+        LSMinimumSystemVersionByArchitecture: { arm64: "14.1" },
+      },
+    },
+    "candidate_macos_incompatible",
+  ],
+  [
+    "generic still applies with lower arm64 override",
+    {
+      plist: {
+        LSMinimumSystemVersion: "15",
+        LSMinimumSystemVersionByArchitecture: { arm64: "12" },
+      },
+    },
+    "candidate_macos_incompatible",
+  ],
+  [
+    "newer executable minimum",
+    {
+      plist: { LSMinimumSystemVersion: "12" },
+      buildVersion: "Load command 1\n cmd LC_BUILD_VERSION\n platform MACOS\n minos 15.0\n",
+    },
+    "candidate_macos_incompatible",
+  ],
+  [
+    "malformed generic minimum",
+    { plist: { LSMinimumSystemVersion: "14.x" } },
+    "candidate_macos_invalid",
+  ],
+  ["non-string minimum", { plist: { LSMinimumSystemVersion: 14 } }, "candidate_macos_invalid"],
+  [
+    "malformed architecture dictionary",
+    { plist: { LSMinimumSystemVersionByArchitecture: [] } },
+    "candidate_macos_invalid",
+  ],
+  [
+    "malformed arm64 minimum",
+    { plist: { LSMinimumSystemVersionByArchitecture: { arm64: "14.0junk" } } },
+    "candidate_macos_invalid",
+  ],
+  ["unavailable executable requirement", { buildVersion: "fixture:\n" }, "candidate_macos_invalid"],
+  [
+    "wrong executable platform",
+    { buildVersion: "Load command 1\n cmd LC_BUILD_VERSION\n platform IOS\n minos 14.0\n" },
+    "candidate_macos_invalid",
+  ],
+  [
+    "conflicting executable records",
+    {
+      buildVersion:
+        "Load command 1\n cmd LC_BUILD_VERSION\n platform MACOS\n minos 14.0\nLoad command 2\n cmd LC_BUILD_VERSION\n platform MACOS\n minos 15.0\n",
+    },
+    "candidate_macos_invalid",
+  ],
+  ["malformed host version", { hostVersion: "Darwin 27" }, "candidate_macos_invalid"],
+  [
+    "host patch below requirement",
+    { hostVersion: "14.2.1", plist: { LSMinimumSystemVersion: "14.2.2" } },
+    "candidate_macos_incompatible",
+  ],
+] satisfies [string, MacOSCompatibilityFixture, string][]) {
+  test(`rejects candidate macOS compatibility: ${name}`, async () => {
+    const root = await directory();
+    try {
+      const bundle = writeBundleFixture(root, candidateSelection);
+      await expect(
+        new ApplicationVerifier(fakeRunner({ compatibility })).verifyCandidate(
+          bundle,
+          candidateSelection,
+        ),
+      ).rejects.toMatchObject({ code });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const compatibility of [
+  {},
+  { plist: { LSMinimumSystemVersion: "13.9" } },
+  { plist: { LSMinimumSystemVersion: "14.0.0" } },
+  { hostVersion: "14.10", plist: { LSMinimumSystemVersion: "14.9" } },
+  { plist: { LSMinimumSystemVersionByArchitecture: { x86_64: "99", arm64: "14" } } },
+  {
+    buildVersion:
+      "Load command 1\n cmd LC_VERSION_MIN_MACOSX\n cmdsize 16\n version 10.15\n sdk 12.0\n",
+  },
+] satisfies MacOSCompatibilityFixture[]) {
+  test(`accepts compatible candidate metadata ${JSON.stringify(compatibility)}`, async () => {
+    const root = await directory();
+    try {
+      const bundle = writeBundleFixture(root, candidateSelection);
+      await expect(
+        new ApplicationVerifier(fakeRunner({ compatibility })).verifyCandidate(
+          bundle,
+          candidateSelection,
+        ),
+      ).resolves.toMatchObject({ version: "0.3.1" });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const tool of ["plutil", "vtool", "sw_vers"]) {
+  test(`refuses unavailable compatibility ${tool} and propagates cancellation`, async () => {
+    const root = await directory();
+    try {
+      const bundle = writeBundleFixture(root, candidateSelection);
+      const runner = fakeRunner();
+      const failing: CommandRunner = async (command, args, timeout, signal) =>
+        command.endsWith(tool) && (tool !== "plutil" || args.includes("-convert"))
+          ? { stdout: "", stderr: "synthetic unavailable", exitCode: 1 }
+          : runner(command, args, timeout, signal);
+      await expect(
+        new ApplicationVerifier(failing).verifyCandidate(bundle, candidateSelection),
+      ).rejects.toMatchObject({ code: "candidate_macos_unavailable" });
+      const controller = new AbortController();
+      const cancelling: CommandRunner = async (command, args, timeout, signal) => {
+        if (command.endsWith(tool) && (tool !== "plutil" || args.includes("-convert"))) {
+          expect(signal).toBe(controller.signal);
+          controller.abort();
+        }
+        return runner(command, args, timeout, signal);
+      };
+      await expect(
+        new ApplicationVerifier(cancelling).verifyCandidate(
+          bundle,
+          candidateSelection,
+          controller.signal,
+        ),
+      ).rejects.toMatchObject({ code: "candidate_cancelled" });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const [relative, magic] of [
+  ["Contents/MacOS/bun", 0xcffaedfe],
+  ["Contents/MacOS/libRequired.dylib", 0xcafebabe],
+  ["Contents/Resources/app/native/login.dylib", 0xcafebabf],
+  ["Contents/Resources/uninstall", 0xfeedfacf],
+] as const) {
+  test(`candidate compatibility includes the required Mach-O at ${relative}`, async () => {
+    const root = await directory();
+    try {
+      const bundle = writeBundleFixture(root, candidateSelection);
+      const path = join(bundle, relative);
+      await mkdir(dirname(path), { recursive: true });
+      const bytes = Buffer.alloc(4);
+      bytes.writeUInt32BE(magic);
+      await writeFile(path, bytes);
+      let inspected = 0;
+      let minimum = "99.0";
+      const base = fakeRunner();
+      const runner: CommandRunner = async (command, args, timeout, signal) => {
+        if (command.endsWith("vtool") && args.at(-1) === path) {
+          inspected++;
+          expect(args.slice(0, 3)).toEqual(["-arch", "arm64", "-show-build"]);
+          return success(
+            `Load command 1\n cmd LC_BUILD_VERSION\n platform MACOS\n minos ${minimum}\n`,
+          );
+        }
+        return base(command, args, timeout, signal);
+      };
+      const verifier = new ApplicationVerifier(runner);
+      await expect(verifier.verifyCandidate(bundle, candidateSelection)).rejects.toMatchObject({
+        code: "candidate_macos_incompatible",
+      });
+      expect(inspected).toBe(1);
+      minimum = "13.0";
+      await expect(verifier.verifyCandidate(bundle, candidateSelection)).resolves.toMatchObject({
+        version: "0.3.1",
+      });
+      expect(inspected).toBe(2);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+}
+
+test("retained recovery verification does not acquire new-candidate compatibility policy", async () => {
+  const root = await directory();
+  try {
+    const bundle = writeBundleFixture(root, candidateSelection);
+    const verifier = new ApplicationVerifier(
+      fakeRunner({ compatibility: { plist: { LSMinimumSystemVersion: "99" } } }),
+    );
+    await expect(verifier.verifyRetained(bundle, candidateSelection)).resolves.toMatchObject({
+      version: "0.3.1",
+    });
   } finally {
     await rm(root, { recursive: true, force: true });
   }

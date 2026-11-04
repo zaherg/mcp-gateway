@@ -16,6 +16,110 @@ async function poll() {
   });
 }
 
+function nativeQuit(): boolean {
+  return !window.dispatchEvent(new Event("mcp-gateway:request-quit", { cancelable: true }));
+}
+
+test.each(["typed", "raw", "add", "edit", "delete"])(
+  "native Quit preserves the %s draft on cancellation and uses the shared discard action",
+  async (kind) => {
+    const initial = snapshot();
+    initial.gateway.configText = JSON.stringify({
+      ...config,
+      mcpServers: { existing: { url: "https://synthetic.example/original" } },
+    });
+    const context = fixture(initial);
+    render(<App client={context.client} />);
+    await act(async () => {});
+    let draft: HTMLElement;
+    if (kind === "typed" || kind === "raw") {
+      fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+      if (kind === "raw") {
+        fireEvent.click(screen.getByRole("button", { name: /Authoritative configuration/ }));
+        draft = screen.getByLabelText("mcp.json", { exact: true });
+        fireEvent.change(draft, { target: { value: "retained incomplete JSON" } });
+      } else {
+        draft = screen.getByLabelText("Port", { exact: true });
+        fireEvent.change(draft, { target: { value: "8766" } });
+      }
+    } else {
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: kind === "add" ? "Add server" : kind === "edit" ? "Edit server" : "Delete existing",
+        }),
+      );
+      draft =
+        kind === "delete"
+          ? screen.getByRole("button", { name: "Delete server" })
+          : screen.getByLabelText("Server name", { exact: false });
+      if (kind !== "delete") fireEvent.change(draft, { target: { value: "retained" } });
+    }
+    draft.focus();
+    act(() => {
+      expect(nativeQuit()).toBe(true);
+    });
+    act(() => {
+      expect(nativeQuit()).toBe(true);
+    });
+    expect(screen.getAllByRole("dialog", { name: "Quit MCP Gateway?" })).toHaveLength(1);
+    expect(context.client.quit).not.toHaveBeenCalled();
+    const confirmation = screen.getByRole("dialog", { name: "Quit MCP Gateway?" });
+    fireEvent(confirmation, new Event("cancel", { cancelable: true }));
+    expect(screen.queryByRole("dialog", { name: "Quit MCP Gateway?" })).not.toBeInTheDocument();
+    expect(draft).toHaveFocus();
+    if (kind === "typed") expect(draft).toHaveValue(8766);
+    else if (kind === "raw") expect(draft).toHaveValue("retained incomplete JSON");
+    else if (kind !== "delete") expect(draft).toHaveValue("retained");
+    else expect(draft).toBeEnabled();
+    expect(context.client.saveConfig).not.toHaveBeenCalled();
+    act(() => {
+      nativeQuit();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Discard changes and quit" }));
+    act(() => {
+      nativeQuit();
+      nativeQuit();
+    });
+    await act(async () => {});
+    expect(context.client.quit).toHaveBeenCalledTimes(1);
+    expect(context.client.saveConfig).not.toHaveBeenCalled();
+  },
+);
+
+test("native Quit retries failed cleanup without repeating the draft decision", async () => {
+  const context = fixture();
+  context.client.quit.mockResolvedValueOnce(ok({ requested: true, status: failed }));
+  render(<App client={context.client} />);
+  await act(async () => {});
+  fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+  fireEvent.change(screen.getByLabelText("Port", { exact: true }), { target: { value: "8766" } });
+  act(() => {
+    nativeQuit();
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Discard changes and quit" }));
+  await act(async () => {});
+  act(() => {
+    nativeQuit();
+  });
+  await act(async () => {});
+  expect(context.client.quit).toHaveBeenCalledTimes(2);
+  expect(screen.queryByRole("dialog", { name: "Quit MCP Gateway?" })).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Port", { exact: true })).toHaveValue(8766);
+});
+
+test("native Quit refuses an unavailable renderer and coalesces clean requests", async () => {
+  expect(nativeQuit()).toBe(false);
+  const context = fixture();
+  render(<App client={context.client} />);
+  await act(async () => {});
+  act(() => {
+    expect(nativeQuit()).toBe(true);
+    nativeQuit();
+  });
+  await act(async () => {});
+  expect(context.client.quit).toHaveBeenCalledTimes(1);
+});
+
 test("a recreated renderer waits for authoritative Quit status before allowing edits", async () => {
   const context = fixture();
   let receiveStatus = () => {};

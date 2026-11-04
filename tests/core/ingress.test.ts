@@ -1,21 +1,44 @@
 import { describe, expect, test } from "bun:test";
 import { access, readFile, rm, writeFile } from "node:fs/promises";
-import { request } from "node:http";
+import { type IncomingMessage, request } from "node:http";
 import { join } from "node:path";
+import { createParser } from "eventsource-parser";
 import { MAX_BACKEND_CALLS } from "../../src/core/backend-work";
-import { GatewayIngress, MAX_BODY_BYTES, MAX_SESSIONS } from "../../src/core/ingress";
+import {
+  GatewayIngress,
+  MAX_BODY_BYTES,
+  MAX_CONTROL_REQUESTS_PER_MINUTE,
+  MAX_ORDINARY_REQUESTS,
+  MAX_ORDINARY_REQUESTS_PER_MINUTE,
+  MAX_SESSIONS,
+} from "../../src/core/ingress";
 import { httpFixture } from "../fixtures/http-mcp";
 import {
   alive,
   configFor,
   connect,
   eventually,
+  ingressCounts,
+  initializeSession,
   pids,
   setup,
   stdio,
   TOKEN,
   testDirectory,
 } from "./helpers";
+
+async function callMarkers(path: string): Promise<string[]> {
+  try {
+    return (await readFile(path, "utf8"))
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => line.split("\t")[1] ?? "");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+}
 
 function textValue(result: Record<string, unknown>): {
   value: string;
@@ -566,20 +589,23 @@ describe("shared MCP ingress", () => {
     }
   }, 15_000);
 
-  test("32 open HTTP requests are bounded independently of the backend-work cap", async () => {
-    const context = await setup();
+  test("28 ordinary HTTP requests are bounded independently of the backend-work cap", async () => {
+    const directory = await testDirectory();
+    const context = await setup(
+      await configFor({ echo: stdio({ PID_FILE: join(directory, "pids") }) }),
+    );
     const pending: ReturnType<typeof request>[] = [];
     const streams: ReturnType<typeof request>[] = [];
-    const clients: Array<Awaited<ReturnType<typeof connect>>> = [];
-    let listening = 0;
+    const sessions: string[] = [];
+    const getStatuses: number[] = [];
     try {
       const { address } = await context.controller.start();
-      // Sixteen sessions each keep one call and one listening stream open:
-      // the backend-work cap limits calls, not the independent HTTP limit.
+      // Sixteen sessions each keep one backend call open; twelve additional GET
+      // streams fit into the 28 ordinary HTTP slots. The hard total of 32 leaves
+      // four reserved slots for control traffic.
       for (let index = 0; index < MAX_BACKEND_CALLS; index++)
-        clients.push(await connect(address as string));
-      for (const [index, client] of clients.entries()) {
-        const session = client.transport.sessionId as string;
+        sessions.push(await initializeSession(address as string));
+      for (const [index, session] of sessions.entries()) {
         const req = request(
           `${address}/mcp/echo`,
           {
@@ -603,6 +629,12 @@ describe("shared MCP ingress", () => {
           }),
         );
         pending.push(req);
+      }
+      await eventually(
+        async () =>
+          (await pids(join(directory, "pids"))).filter(alive).length === MAX_BACKEND_CALLS,
+      );
+      for (const session of sessions) {
         const stream = request(`${address}/mcp/echo`, {
           method: "GET",
           headers: {
@@ -613,27 +645,849 @@ describe("shared MCP ingress", () => {
         });
         stream.on("error", () => {});
         stream.on("response", (response) => {
-          listening++;
+          getStatuses.push(response.statusCode ?? 0);
           response.resume();
         });
         stream.end();
         streams.push(stream);
       }
-      await eventually(
-        () => listening === MAX_BACKEND_CALLS && pending.length === MAX_BACKEND_CALLS,
+      await eventually(() => getStatuses.length === MAX_BACKEND_CALLS);
+      expect(getStatuses.filter((s) => s === 200).length).toBe(
+        MAX_ORDINARY_REQUESTS - MAX_BACKEND_CALLS,
       );
-      await Bun.sleep(300);
+      expect(getStatuses.filter((s) => s === 429).length).toBe(
+        MAX_BACKEND_CALLS - (MAX_ORDINARY_REQUESTS - MAX_BACKEND_CALLS),
+      );
       expect(
         await raw(address as string, "/mcp/echo", {
-          headers: { "Mcp-Session-Id": clients[0].transport.sessionId as string },
+          headers: { "Mcp-Session-Id": sessions[0] },
           body: '{"jsonrpc":"2.0","id":999,"method":"tools/list"}',
         }),
       ).toBe(429);
     } finally {
       for (const req of pending) req.destroy();
       for (const stream of streams) stream.destroy();
-      for (const client of clients) await client.client.close();
       await context.cleanup();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  test("control cancellation and DELETE are admitted through reserved slots and free ordinary capacity", async () => {
+    const directory = await testDirectory();
+    const callLog = join(directory, "calls");
+    const pidFile = join(directory, "pids");
+    const context = await setup(
+      await configFor({ echo: stdio({ CALL_LOG: callLog, PID_FILE: pidFile }) }),
+    );
+    const pending: ReturnType<typeof request>[] = [];
+    const streams: ReturnType<typeof request>[] = [];
+    const sessions: string[] = [];
+    const getStatuses: number[] = [];
+    try {
+      const { address } = await context.controller.start();
+      for (let index = 0; index < MAX_BACKEND_CALLS; index++)
+        sessions.push(await initializeSession(address as string));
+      for (const [index, session] of sessions.entries()) {
+        const req = request(
+          `${address}/mcp/echo`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${TOKEN}`,
+              "Content-Type": "application/json",
+              Accept: "application/json, text/event-stream",
+              "Mcp-Session-Id": session,
+            },
+          },
+          (response) => response.resume(),
+        );
+        req.on("error", () => {});
+        req.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 100 + index,
+            method: "tools/call",
+            params: { name: "delay", arguments: { delay: 10_000 } },
+          }),
+        );
+        pending.push(req);
+      }
+      await eventually(
+        async () => (await pids(pidFile)).filter(alive).length === MAX_BACKEND_CALLS,
+      );
+      for (const session of sessions.slice(0, MAX_ORDINARY_REQUESTS - MAX_BACKEND_CALLS)) {
+        const stream = request(`${address}/mcp/echo`, {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${TOKEN}`,
+            Accept: "text/event-stream",
+            "Mcp-Session-Id": session,
+          },
+        });
+        stream.on("error", () => {});
+        stream.on("response", (response) => {
+          getStatuses.push(response.statusCode ?? 0);
+          response.resume();
+        });
+        stream.end();
+        streams.push(stream);
+      }
+      await eventually(() => getStatuses.length === MAX_ORDINARY_REQUESTS - MAX_BACKEND_CALLS);
+      expect(
+        await raw(address as string, "/mcp/echo", {
+          headers: { "Mcp-Session-Id": sessions[0] },
+          body: '{"jsonrpc":"2.0","id":999,"method":"tools/list"}',
+        }),
+      ).toBe(429);
+
+      // A valid cancellation uses a reserved control slot and releases its target work.
+      expect(
+        await raw(address as string, "/mcp/echo", {
+          headers: { "Mcp-Session-Id": sessions[0] },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            method: "notifications/cancelled",
+            params: { requestId: 100 },
+          }),
+        }),
+      ).toBe(202);
+      await eventually(async () => (await callMarkers(callLog)).length === MAX_BACKEND_CALLS);
+      const callsAfterCancel = await callMarkers(callLog);
+      expect(callsAfterCancel).not.toContain("held-100");
+      expect(
+        await raw(address as string, "/mcp/echo", {
+          headers: { "Mcp-Session-Id": sessions[0] },
+          body: '{"jsonrpc":"2.0","id":999,"method":"tools/list"}',
+        }),
+      ).toBe(200);
+
+      // DELETE uses a reserved control slot and frees the session's resources.
+      expect(
+        await raw(address as string, "/mcp/echo", {
+          method: "DELETE",
+          headers: { "Mcp-Session-Id": sessions[1] },
+        }),
+      ).toBe(200);
+      await eventually(
+        async () => (await pids(pidFile)).filter(alive).length === MAX_BACKEND_CALLS - 1,
+      );
+      expect(
+        await raw(address as string, "/mcp/echo", {
+          headers: { "Mcp-Session-Id": sessions[2] },
+          body: '{"jsonrpc":"2.0","id":998,"method":"tools/list"}',
+        }),
+      ).toBe(200);
+    } finally {
+      for (const req of pending) req.destroy();
+      for (const stream of streams) stream.destroy();
+      await context.cleanup();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  test("forged or mixed control payloads cannot steal reserved slots at ordinary saturation", async () => {
+    const directory = await testDirectory();
+    const callLog = join(directory, "calls");
+    const pidFile = join(directory, "pids");
+    const context = await setup(
+      await configFor({ echo: stdio({ CALL_LOG: callLog, PID_FILE: pidFile }) }),
+    );
+    const pending: ReturnType<typeof request>[] = [];
+    const streams: ReturnType<typeof request>[] = [];
+    const sessions: string[] = [];
+    const getStatuses: number[] = [];
+    try {
+      const { address } = await context.controller.start();
+      for (let index = 0; index < MAX_BACKEND_CALLS; index++)
+        sessions.push(await initializeSession(address as string));
+      for (const [index, session] of sessions.entries()) {
+        const req = request(
+          `${address}/mcp/echo`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${TOKEN}`,
+              "Content-Type": "application/json",
+              Accept: "application/json, text/event-stream",
+              "Mcp-Session-Id": session,
+            },
+          },
+          (response) => response.resume(),
+        );
+        req.on("error", () => {});
+        req.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 100 + index,
+            method: "tools/call",
+            params: { name: "delay", arguments: { delay: 10_000 } },
+          }),
+        );
+        pending.push(req);
+      }
+      await eventually(
+        async () => (await pids(pidFile)).filter(alive).length === MAX_BACKEND_CALLS,
+      );
+      for (const session of sessions.slice(0, MAX_ORDINARY_REQUESTS - MAX_BACKEND_CALLS)) {
+        const stream = request(`${address}/mcp/echo`, {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${TOKEN}`,
+            Accept: "text/event-stream",
+            "Mcp-Session-Id": session,
+          },
+        });
+        stream.on("error", () => {});
+        stream.on("response", (response) => {
+          getStatuses.push(response.statusCode ?? 0);
+          response.resume();
+        });
+        stream.end();
+        streams.push(stream);
+      }
+      await eventually(() => getStatuses.length === MAX_ORDINARY_REQUESTS - MAX_BACKEND_CALLS);
+      // Confirm ordinary saturation is still in effect before testing forged controls.
+      expect(
+        await raw(address as string, "/mcp/echo", {
+          headers: { "Mcp-Session-Id": sessions[0] },
+          body: '{"jsonrpc":"2.0","id":999,"method":"tools/list"}',
+        }),
+      ).toBe(429);
+
+      // Unknown session, unknown request id, and mixed batches stay ordinary and are refused.
+      expect(
+        await raw(address as string, "/mcp/echo", {
+          method: "DELETE",
+          headers: { "Mcp-Session-Id": "unknown-synthetic-session" },
+        }),
+      ).toBe(429);
+      expect(
+        await raw(address as string, "/mcp/echo", {
+          headers: { "Mcp-Session-Id": sessions[0] },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            method: "notifications/cancelled",
+            params: { requestId: 9999 },
+          }),
+        }),
+      ).toBe(429);
+      expect(
+        await raw(address as string, "/mcp/echo", {
+          headers: { "Mcp-Session-Id": sessions[0] },
+          body: JSON.stringify([
+            {
+              jsonrpc: "2.0",
+              method: "notifications/cancelled",
+              params: { requestId: 100 },
+            },
+            { jsonrpc: "2.0", id: 200, method: "tools/list" },
+          ]),
+        }),
+      ).toBe(429);
+      // No new backend work was dispatched for any refused payload.
+      expect((await callMarkers(callLog)).length).toBe(MAX_BACKEND_CALLS);
+    } finally {
+      for (const req of pending) req.destroy();
+      for (const stream of streams) stream.destroy();
+      await context.cleanup();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  test("rate budget reserves 16 control admissions after 224 ordinary", async () => {
+    const directory = await testDirectory();
+    const pidFile = join(directory, "pids");
+    const context = await setup(await configFor({ echo: stdio({ PID_FILE: pidFile }) }));
+    let pending: ReturnType<typeof request> | undefined;
+    try {
+      const { address } = await context.controller.start();
+      const session = await initializeSession(address as string);
+      // Establish one pending request before exhausting the ordinary rate.
+      const req = request(
+        `${address}/mcp/echo`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${TOKEN}`,
+            "Content-Type": "application/json",
+            Accept: "application/json, text/event-stream",
+            "Mcp-Session-Id": session,
+          },
+        },
+        (response) => response.resume(),
+      );
+      req.on("error", () => {});
+      req.end(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 100,
+          method: "tools/call",
+          params: { name: "delay", arguments: { delay: 10_000 } },
+        }),
+      );
+      pending = req;
+      await eventually(async () => (await pids(pidFile)).filter(alive).length === 1);
+      for (let index = 0; index < MAX_ORDINARY_REQUESTS_PER_MINUTE - 2; index++) {
+        expect(
+          await raw(address as string, "/mcp/echo", {
+            method: "GET",
+            headers: { "Mcp-Session-Id": "unknown-rate-session" },
+          }),
+        ).toBe(404);
+      }
+      // Ordinary rate is now exhausted (initialize + delay + 222 GETs = 224); control still has its reserved budget.
+      expect(
+        await raw(address as string, "/mcp/echo", {
+          headers: { "Mcp-Session-Id": session },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            method: "notifications/cancelled",
+            params: { requestId: 100 },
+          }),
+        }),
+      ).toBe(202);
+      // A fresh ordinary request is refused without refunding capacity.
+      expect(await raw(address as string, "/mcp/echo", { method: "GET" })).toBe(429);
+    } finally {
+      pending?.destroy();
+      await context.cleanup();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  test("rejected provisional parses consume rate budget and prevent unbounded abuse", async () => {
+    const context = await setup();
+    try {
+      const { address } = await context.controller.start();
+      for (let index = 0; index < MAX_ORDINARY_REQUESTS_PER_MINUTE; index++) {
+        expect(
+          await raw(address as string, "/mcp/echo", {
+            method: "GET",
+            headers: { "Mcp-Session-Id": "unknown-rate-session" },
+          }),
+        ).toBe(404);
+      }
+      // Each rejected provisional parse consumes one total-rate slot.
+      for (let index = 0; index < MAX_CONTROL_REQUESTS_PER_MINUTE; index++) {
+        expect(
+          await raw(address as string, "/mcp/echo", {
+            method: "GET",
+            headers: { "Mcp-Session-Id": "unknown-rate-session" },
+          }),
+        ).toBe(429);
+      }
+      // The hard total of 240 is now exhausted; no further traffic is admitted.
+      expect(await raw(address as string, "/mcp/echo", { method: "GET" })).toBe(429);
+      expect(
+        await raw(address as string, "/mcp/echo", {
+          method: "GET",
+          headers: { "Mcp-Session-Id": "unknown-rate-session" },
+        }),
+      ).toBe(429);
+    } finally {
+      await context.cleanup();
+    }
+  }, 30_000);
+
+  test("repeated saturation cycles keep stable ordinary and control accounting", async () => {
+    const directory = await testDirectory();
+    const pidFile = join(directory, "pids");
+    const context = await setup(await configFor({ echo: stdio({ PID_FILE: pidFile }) }));
+    const pending: ReturnType<typeof request>[] = [];
+    try {
+      const { address } = await context.controller.start();
+      for (let cycle = 0; cycle < 3; cycle++) {
+        const sessions: string[] = [];
+        for (let index = 0; index < MAX_BACKEND_CALLS; index++)
+          sessions.push(await initializeSession(address as string));
+        for (const [index, session] of sessions.entries()) {
+          const req = request(
+            `${address}/mcp/echo`,
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${TOKEN}`,
+                "Content-Type": "application/json",
+                Accept: "application/json, text/event-stream",
+                "Mcp-Session-Id": session,
+              },
+            },
+            (response) => response.resume(),
+          );
+          req.on("error", () => {});
+          req.end(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: cycle * 1000 + index,
+              method: "tools/call",
+              params: { name: "delay", arguments: { delay: 10_000 } },
+            }),
+          );
+          pending.push(req);
+        }
+        await eventually(
+          async () => (await pids(pidFile)).filter(alive).length === MAX_BACKEND_CALLS,
+        );
+        for (const session of sessions.slice(0, MAX_ORDINARY_REQUESTS - MAX_BACKEND_CALLS)) {
+          const stream = request(`${address}/mcp/echo`, {
+            method: "GET",
+            headers: {
+              Authorization: `Bearer ${TOKEN}`,
+              Accept: "text/event-stream",
+              "Mcp-Session-Id": session,
+            },
+          });
+          stream.on("error", () => {});
+          stream.on("response", (response) => response.resume());
+          stream.end();
+          pending.push(stream);
+        }
+        expect(
+          await raw(address as string, "/mcp/echo", {
+            headers: { "Mcp-Session-Id": sessions[0] },
+            body: '{"jsonrpc":"2.0","id":999,"method":"tools/list"}',
+          }),
+        ).toBe(429);
+        // A control cancellation still succeeds at ordinary saturation and
+        // releases the target backend work.
+        expect(
+          await raw(address as string, "/mcp/echo", {
+            headers: { "Mcp-Session-Id": sessions[0] },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              method: "notifications/cancelled",
+              params: { requestId: cycle * 1000 },
+            }),
+          }),
+        ).toBe(202);
+        expect(
+          await raw(address as string, "/mcp/echo", {
+            headers: { "Mcp-Session-Id": sessions[0] },
+            body: '{"jsonrpc":"2.0","id":999,"method":"tools/list"}',
+          }),
+        ).toBe(200);
+        // Close every session so the next cycle starts with zero backend work.
+        for (const session of sessions) {
+          await raw(address as string, "/mcp/echo", {
+            method: "DELETE",
+            headers: { "Mcp-Session-Id": session },
+          });
+        }
+        for (const req of pending.splice(0)) req.destroy();
+        await eventually(async () => (await pids(pidFile)).filter(alive).length === 0);
+        // Process absence precedes the checked ownership settlement by a microtask/probe.
+        await eventually(() => {
+          // biome-ignore lint/complexity/useLiteralKeys: Observe the owned listener after cleanup.
+          const ingress = context.controller["ingress"];
+          if (!ingress) throw new Error("Expected the test listener to remain active");
+          const counts = ingressCounts(ingress);
+          return (
+            counts.resources === 0 &&
+            counts.calls === 0 &&
+            counts.ordinary === 0 &&
+            counts.reserved === 0
+          );
+        });
+      }
+    } finally {
+      for (const req of pending) req.destroy();
+      await context.cleanup();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  test("an incomplete ordinary body holds its HTTP slot until disconnect", async () => {
+    const directory = await testDirectory();
+    const pidFile = join(directory, "pids");
+    const context = await setup(await configFor({ echo: stdio({ PID_FILE: pidFile }) }));
+    const pending: ReturnType<typeof request>[] = [];
+    try {
+      const { address } = await context.controller.start();
+      const sessions: string[] = [];
+      for (let index = 0; index < MAX_BACKEND_CALLS; index++)
+        sessions.push(await initializeSession(address as string));
+      for (const [index, session] of sessions.entries()) {
+        const req = request(
+          `${address}/mcp/echo`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${TOKEN}`,
+              "Content-Type": "application/json",
+              Accept: "application/json, text/event-stream",
+              "Mcp-Session-Id": session,
+            },
+          },
+          (response) => response.resume(),
+        );
+        req.on("error", () => {});
+        req.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 100 + index,
+            method: "tools/call",
+            params: { name: "delay", arguments: { delay: 10_000 } },
+          }),
+        );
+        pending.push(req);
+      }
+      await eventually(
+        async () => (await pids(pidFile)).filter(alive).length === MAX_BACKEND_CALLS,
+      );
+      // Leave one ordinary slot free so releasing the provisional parse allows a fresh ordinary request.
+      for (const session of sessions.slice(0, MAX_ORDINARY_REQUESTS - MAX_BACKEND_CALLS - 1)) {
+        const stream = request(`${address}/mcp/echo`, {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${TOKEN}`,
+            Accept: "text/event-stream",
+            "Mcp-Session-Id": session,
+          },
+        });
+        stream.on("error", () => {});
+        stream.on("response", (response) => response.resume());
+        stream.end();
+        pending.push(stream);
+      }
+      await Bun.sleep(100);
+      // This request reaches session validation through the last ordinary HTTP slot.
+      expect(
+        await raw(address as string, "/mcp/echo", {
+          method: "GET",
+          headers: { "Mcp-Session-Id": "unknown-session" },
+        }),
+      ).toBe(404);
+
+      // A slow body that never finishes holds a provisional slot until deadline.
+      const slow = request(
+        `${address}/mcp/echo`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${TOKEN}`,
+            "Content-Type": "application/json",
+            Accept: "application/json, text/event-stream",
+            "Mcp-Session-Id": sessions[0],
+          },
+        },
+        (response) => response.resume(),
+      );
+      slow.on("error", () => {});
+      slow.write('{"jsonrpc":"2.0","method":"notifications/cancelled","params":');
+      pending.push(slow);
+      await Bun.sleep(100);
+      // The slow provisional request occupies one slot; ordinary is still full.
+      expect(
+        await raw(address as string, "/mcp/echo", {
+          headers: { "Mcp-Session-Id": sessions[1] },
+          body: '{"jsonrpc":"2.0","id":999,"method":"tools/list"}',
+        }),
+      ).toBe(429);
+      // Abort the slow request mid-body.
+      slow.destroy();
+      await Bun.sleep(500);
+      // HTTP admission resumes independently of the still-full backend-work budget.
+      expect(
+        await raw(address as string, "/mcp/echo", {
+          method: "GET",
+          headers: { "Mcp-Session-Id": "unknown-session" },
+        }),
+      ).toBe(404);
+    } finally {
+      for (const req of pending) req.destroy();
+      await context.cleanup();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  test("pure control batches are validated wholly and admitted at ordinary saturation", async () => {
+    const directory = await testDirectory();
+    const pidFile = join(directory, "pids");
+    const context = await setup(await configFor({ echo: stdio({ PID_FILE: pidFile }) }));
+    const pending: ReturnType<typeof request>[] = [];
+    try {
+      const { address } = await context.controller.start();
+      const sessions: string[] = [];
+      // 15 sessions leaves room for a second delay call on sessions[0] within
+      // the 16-slot backend-work budget.
+      for (let index = 0; index < MAX_BACKEND_CALLS - 1; index++)
+        sessions.push(await initializeSession(address as string));
+      for (const [index, session] of sessions.entries()) {
+        const req = request(
+          `${address}/mcp/echo`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${TOKEN}`,
+              "Content-Type": "application/json",
+              Accept: "application/json, text/event-stream",
+              "Mcp-Session-Id": session,
+            },
+          },
+          (response) => response.resume(),
+        );
+        req.on("error", () => {});
+        req.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 100 + index,
+            method: "tools/call",
+            params: { name: "delay", arguments: { delay: 10_000, marker: `held-${index}` } },
+          }),
+        );
+        pending.push(req);
+      }
+      // Give sessions[0] a second pending request so a pure batch has two ids.
+      const second = request(
+        `${address}/mcp/echo`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${TOKEN}`,
+            "Content-Type": "application/json",
+            Accept: "application/json, text/event-stream",
+            "Mcp-Session-Id": sessions[0],
+          },
+        },
+        (response) => response.resume(),
+      );
+      second.on("error", () => {});
+      second.end(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 200,
+          method: "tools/call",
+          params: { name: "delay", arguments: { delay: 10_000, marker: "held-second" } },
+        }),
+      );
+      pending.push(second);
+      await eventually(
+        async () => (await pids(pidFile)).filter(alive).length === MAX_BACKEND_CALLS - 1,
+      );
+      for (const session of sessions.slice(0, MAX_ORDINARY_REQUESTS - MAX_BACKEND_CALLS)) {
+        const stream = request(`${address}/mcp/echo`, {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${TOKEN}`,
+            Accept: "text/event-stream",
+            "Mcp-Session-Id": session,
+          },
+        });
+        stream.on("error", () => {});
+        stream.on("response", (response) => response.resume());
+        stream.end();
+        pending.push(stream);
+      }
+      await Bun.sleep(100);
+      expect(
+        await raw(address as string, "/mcp/echo", {
+          headers: { "Mcp-Session-Id": sessions[0] },
+          body: '{"jsonrpc":"2.0","id":999,"method":"tools/list"}',
+        }),
+      ).toBe(429);
+
+      // A batch of two genuine cancellations for the same session is admitted as control.
+      expect(
+        await raw(address as string, "/mcp/echo", {
+          headers: { "Mcp-Session-Id": sessions[0] },
+          body: JSON.stringify([
+            {
+              jsonrpc: "2.0",
+              method: "notifications/cancelled",
+              params: { requestId: 100 },
+            },
+            {
+              jsonrpc: "2.0",
+              method: "notifications/cancelled",
+              params: { requestId: 200 },
+            },
+          ]),
+        }),
+      ).toBe(202);
+      // Cancelling both calls frees their HTTP slots and backend work, allowing
+      // a new session and ordinary request without using control capacity.
+      const extraSession = await initializeSession(address as string);
+      expect(
+        await raw(address as string, "/mcp/echo", {
+          headers: { "Mcp-Session-Id": extraSession },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 300,
+            method: "tools/list",
+          }),
+        }),
+      ).toBe(200);
+    } finally {
+      for (const req of pending) req.destroy();
+      await context.cleanup();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  test("genuine reverse replies to server-originated requests are admitted as control", async () => {
+    const directory = await testDirectory();
+    const pidFile = join(directory, "pids");
+    const context = await setup(await configFor({ echo: stdio({ PID_FILE: pidFile }) }));
+    const pending: ReturnType<typeof request>[] = [];
+    try {
+      const { address } = await context.controller.start();
+      const serverMessages: unknown[] = [];
+      const serverErrors: Error[] = [];
+      // The pinned session routes reverse requests onto its first pending POST.
+      // Parse each response separately while observing the entire client session.
+      const collect = (response: IncomingMessage) => {
+        const parser = createParser({
+          onEvent: ({ data }) => serverMessages.push(JSON.parse(data)),
+        });
+        response.setEncoding("utf8");
+        response.on("data", (chunk: string) => parser.feed(chunk));
+        response.on("error", (error) => serverErrors.push(error));
+      };
+      // Use 15 delay calls so the server-request call can fit within the 16
+      // backend-work budget.
+      const sessions: string[] = [];
+      for (let index = 0; index < MAX_BACKEND_CALLS - 1; index++)
+        sessions.push(await initializeSession(address as string));
+      for (const [index, session] of sessions.entries()) {
+        const req = request(
+          `${address}/mcp/echo`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${TOKEN}`,
+              "Content-Type": "application/json",
+              Accept: "application/json, text/event-stream",
+              "Mcp-Session-Id": session,
+            },
+          },
+          (response) => (index === 0 ? collect(response) : response.resume()),
+        );
+        req.on("error", () => {});
+        req.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 100 + index,
+            method: "tools/call",
+            params: { name: "delay", arguments: { delay: 10_000 } },
+          }),
+        );
+        pending.push(req);
+      }
+      await eventually(
+        async () => (await pids(pidFile)).filter(alive).length === MAX_BACKEND_CALLS - 1,
+      );
+
+      // Observe the actual reverse request and terminal tool result, not just HTTP 202.
+      // biome-ignore lint/complexity/useLiteralKeys: Observe the owned listener's admission ledgers.
+      const ingress = context.controller["ingress"];
+      if (!ingress) throw new Error("Expected a running test listener");
+      const serverReq = request(
+        `${address}/mcp/echo`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${TOKEN}`,
+            "Content-Type": "application/json",
+            Accept: "application/json, text/event-stream",
+            "Mcp-Session-Id": sessions[0],
+          },
+        },
+        collect,
+      );
+      serverReq.on("error", (error) => serverErrors.push(error));
+      serverReq.end(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 900,
+          method: "tools/call",
+          params: { name: "server-request", arguments: {} },
+        }),
+      );
+      pending.push(serverReq);
+      await eventually(() =>
+        serverMessages.some(
+          (message) =>
+            typeof message === "object" &&
+            message !== null &&
+            "method" in message &&
+            message.method === "roots/list",
+        ),
+      );
+      expect(serverMessages).toContainEqual({ jsonrpc: "2.0", id: 1, method: "roots/list" });
+      expect(ingressCounts(ingress).calls).toBe(MAX_BACKEND_CALLS);
+
+      // Saturate ordinary HTTP slots with GET streams on the remaining sessions.
+      // 15 delay POSTs + 1 server-request POST + 12 GET streams = 28 ordinary.
+      for (const session of sessions.slice(1, MAX_ORDINARY_REQUESTS - MAX_BACKEND_CALLS + 1)) {
+        const stream = request(`${address}/mcp/echo`, {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${TOKEN}`,
+            Accept: "text/event-stream",
+            "Mcp-Session-Id": session,
+          },
+        });
+        stream.on("error", () => {});
+        stream.on("response", (response) => response.resume());
+        stream.end();
+        pending.push(stream);
+      }
+      await eventually(() => ingressCounts(ingress).ordinary === MAX_ORDINARY_REQUESTS);
+      expect(
+        await raw(address as string, "/mcp/echo", {
+          headers: { "Mcp-Session-Id": sessions[0] },
+          body: '{"jsonrpc":"2.0","id":999,"method":"tools/list"}',
+        }),
+      ).toBe(429);
+
+      expect(ingressCounts(ingress).ordinary).toBe(MAX_ORDINARY_REQUESTS);
+      // A reply without an outstanding server request is ordinary and refused.
+      expect(
+        await raw(address as string, "/mcp/echo", {
+          headers: { "Mcp-Session-Id": sessions[1] },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: { roots: [] },
+          }),
+        }),
+      ).toBe(429);
+
+      // JSON-RPC responses are acknowledged with HTTP 202 by the pinned MCP transport.
+      expect(
+        await raw(address as string, "/mcp/echo", {
+          headers: { "Mcp-Session-Id": sessions[0] },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: { roots: [] },
+          }),
+        }),
+      ).toBe(202);
+      await eventually(() =>
+        serverMessages.some(
+          (message) =>
+            typeof message === "object" &&
+            message !== null &&
+            "id" in message &&
+            message.id === 900 &&
+            "result" in message,
+        ),
+      );
+      expect(ingressCounts(ingress).calls).toBe(MAX_BACKEND_CALLS - 1);
+      expect(serverMessages).toContainEqual({
+        jsonrpc: "2.0",
+        id: 900,
+        result: {
+          content: [{ type: "text", text: JSON.stringify({ clientResponse: { roots: [] } }) }],
+        },
+      });
+      expect(serverErrors).toEqual([]);
+      expect(ingressCounts(ingress).resources).toBe(MAX_BACKEND_CALLS - 1);
+    } finally {
+      for (const req of pending) req.destroy();
+      await context.cleanup();
+      await rm(directory, { recursive: true, force: true });
     }
   }, 20_000);
 

@@ -35,7 +35,7 @@ test("admits a faithful single-app ustar archive and extracts the same files", a
     writeTarFixture(archive, appEntries());
     const inspection = await inspectUpdateArchive(archive);
     expect(inspection.bundleName).toBe("MCP Gateway.app");
-    expect(inspection.entries.length).toBe(8);
+    expect(inspection.entries.length).toBe(11);
     expect(inspection.bytes).toBe((await readFile(archive)).byteLength);
     const destination = join(root, "extracted");
     const bundle = await extractAdmittedArchive(inspection, destination);
@@ -43,6 +43,30 @@ test("admits a faithful single-app ustar archive and extracts the same files", a
     expect(await readFile(join(bundle, "Contents/Resources/version.json"), "utf8")).toContain(
       "0.3.1",
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects non-executable pinned runtime/helper modes before extraction", async () => {
+  const root = await directory();
+  try {
+    for (const relative of [
+      "Contents/MacOS/launcher",
+      "Contents/MacOS/bun",
+      "Contents/MacOS/bspatch",
+      "Contents/MacOS/zig-zstd",
+      "Contents/Resources/uninstall",
+    ]) {
+      const entries = appEntries();
+      const name = `MCP Gateway.app/${relative}`;
+      const entry = entries.find((entry) => entry.name === name);
+      if (entry) entry.mode = 0o600;
+      else entries.push({ name, contents: "synthetic helper", mode: 0o600 });
+      const archive = join(root, "mode.tar");
+      writeTarFixture(archive, entries);
+      await expectArchiveCode(inspectUpdateArchive(archive), "unsafeMode");
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -259,19 +283,19 @@ test("keeps explicit header and materialized entry limits distinct", async () =>
     );
     const limits = {
       maxArchiveBytes: 65536,
-      maxEntries: 9,
-      maxMaterializedEntries: 17,
+      maxEntries: 12,
+      maxMaterializedEntries: 20,
       maxEntryBytes: 65536,
       maxTotalBytes: 65536,
       maxPathBytes: 255,
     };
-    expect((await inspectUpdateArchive(path, limits)).entries.length).toBe(9);
+    expect((await inspectUpdateArchive(path, limits)).entries.length).toBe(12);
     await expectArchiveCode(
-      inspectUpdateArchive(path, { ...limits, maxEntries: 8 }),
+      inspectUpdateArchive(path, { ...limits, maxEntries: 11 }),
       "tooManyEntries",
     );
     await expectArchiveCode(
-      inspectUpdateArchive(path, { ...limits, maxMaterializedEntries: 16 }),
+      inspectUpdateArchive(path, { ...limits, maxMaterializedEntries: 19 }),
       "tooManyEntries",
     );
   } finally {

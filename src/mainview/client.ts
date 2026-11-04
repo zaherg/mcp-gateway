@@ -6,6 +6,8 @@ const rpc = Electroview.defineRPC<AppRPC>({
   maxRequestTime: 120_000,
   handlers: {
     requests: {
+      interactiveQuit: () =>
+        !window.dispatchEvent(new Event("mcp-gateway:request-quit", { cancelable: true })),
       smokeQuit: () => {
         const button = document.querySelector<HTMLButtonElement>('button[data-action="quit"]');
         if (!button || button.disabled) return false;

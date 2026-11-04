@@ -189,6 +189,7 @@ function Modal({
   fallbackFocus: RefObject<HTMLElement | null>;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
   useEffect(() => {
     const dialog = ref.current;
     const opener = document.activeElement;
@@ -207,10 +208,10 @@ function Modal({
         event.preventDefault();
         onClose();
       }}
-      aria-labelledby="dialog-title"
+      aria-labelledby={titleId}
     >
       <div className="dialog-heading">
-        <h2 id="dialog-title">{title}</h2>
+        <h2 id={titleId}>{title}</h2>
         <button type="button" className="icon-button" aria-label="Close dialog" onClick={onClose}>
           <X size={18} />
         </button>
@@ -329,6 +330,25 @@ export function App({ client }: { client: AppClient }) {
   const editingRef = useRef(false);
   editingRef.current = editor !== null || deleting !== null;
   const generation = useRef(0);
+  const interactiveQuit = useRef<() => boolean>(() => false);
+  interactiveQuit.current = () => {
+    if (confirmQuit || quitting || quitRequestPending.current) return true;
+    if (busy || (!snapshot && quitStatus.phase !== "failed")) {
+      setError("Quit could not be requested while the window is busy. Try again when it is ready.");
+      return true;
+    }
+    setConfirmUpdate(false);
+    if ((doc?.dirty || editor || deleting) && !shutdownStarted) setConfirmQuit(true);
+    else void requestQuit();
+    return true;
+  };
+  useEffect(() => {
+    const request = (event: Event) => {
+      if (interactiveQuit.current()) event.preventDefault();
+    };
+    window.addEventListener("mcp-gateway:request-quit", request);
+    return () => window.removeEventListener("mcp-gateway:request-quit", request);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -518,6 +538,7 @@ export function App({ client }: { client: AppClient }) {
     }
   }
   async function requestQuit() {
+    if (quitRequestPending.current) return;
     setConfirmQuit(false);
     setRequestingQuit(true);
     setQuitStatusKnown(false);
@@ -779,9 +800,7 @@ export function App({ client }: { client: AppClient }) {
                 !!deleting ||
                 (!snapshot && quitStatus.phase !== "failed")
               }
-              onClick={() =>
-                dirty && !shutdownStarted ? setConfirmQuit(true) : void requestQuit()
-              }
+              onClick={() => interactiveQuit.current()}
             >
               {quitting
                 ? "Quitting…"
@@ -1630,7 +1649,12 @@ export function App({ client }: { client: AppClient }) {
             <button type="button" className="button" onClick={() => setConfirmQuit(false)}>
               Cancel
             </button>
-            <button type="button" className="button danger" onClick={() => void requestQuit()}>
+            <button
+              type="button"
+              className="button danger"
+              disabled={quitting}
+              onClick={() => void requestQuit()}
+            >
               Discard changes and quit
             </button>
           </div>

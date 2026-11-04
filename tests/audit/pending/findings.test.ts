@@ -9,6 +9,7 @@ import {
   type CommandRunner,
   runCommand,
 } from "../../../src/main/updater/verify";
+import { macOSCompatibilityCommand } from "../../fixtures/macos-compatibility";
 import { appEntries, tarBytes, writeBundleFixture } from "../../fixtures/updater";
 
 const nativeTest = test.skipIf(process.platform !== "darwin");
@@ -58,6 +59,11 @@ nativeTest("A7: real plist minimum macOS 99.0 prevents candidate admission", asy
       ),
     );
     const runner: CommandRunner = async (command, args, timeout, signal) => {
+      if (command.endsWith("vtool")) {
+        const result = macOSCompatibilityCommand(command, args);
+        if (!result) throw new Error("Missing executable metadata fixture");
+        return result;
+      }
       if (command.endsWith("lipo")) return { stdout: "arm64\n", stderr: "", exitCode: 0 };
       if (command.endsWith("codesign"))
         return {
@@ -77,7 +83,15 @@ nativeTest("A7: real plist minimum macOS 99.0 prevents candidate admission", asy
         version: "0.3.1",
         hash: "target123456",
       }),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ code: "candidate_macos_incompatible" });
+    await writeFile(plist, (await readFile(plist, "utf8")).replace("99.0", "14.0"));
+    await expect(
+      verifier.verifyCandidate(bundle, {
+        publisher: { identifier: "dev.srvr.mcpgateway", teamId: "ABCDEFGHIJ" },
+        version: "0.3.1",
+        hash: "target123456",
+      }),
+    ).resolves.toMatchObject({ version: "0.3.1" });
   } finally {
     await rm(root, { recursive: true });
   }
@@ -135,7 +149,7 @@ for (const malformed of [false, true]) {
       const path = join(root, "candidate.tar");
       await writeFile(path, bytes);
       if (malformed) await expect(inspectUpdateArchive(path)).rejects.toThrow();
-      else expect((await inspectUpdateArchive(path)).entries.length).toBe(8);
+      else expect((await inspectUpdateArchive(path)).entries.length).toBe(11);
     } finally {
       await rm(root, { recursive: true });
     }

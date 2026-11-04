@@ -7,6 +7,7 @@ import { type BuildIdentity, parseBuildIdentity } from "../../shared/build-ident
 import type { ApplySdk } from "./apply";
 import {
   extractAdmittedArchive,
+  inspectUpdateArchive,
   UpdateArchiveError,
   type UpdateArchiveInspection,
 } from "./archive";
@@ -83,6 +84,7 @@ export type BoundaryErrorCode =
   | "prepared"
   | "archive"
   | "signature"
+  | "compatibility"
   | "recovery"
   | "busy"
   | "state";
@@ -103,6 +105,7 @@ export class UpdateBoundaryError extends Error {
       prepared: "No complete prepared update is available.",
       archive: "The downloaded update archive was rejected.",
       signature: "The downloaded application signature was rejected.",
+      compatibility: "The update's compatibility with this Mac could not be verified.",
       recovery: "The previous application could not be retained.",
       busy: "Another update transaction is active.",
       state: "The local update state is unavailable.",
@@ -592,7 +595,9 @@ export class UpdaterSafetyBoundary {
         await discardFrozenCandidate(this.channelRoot, this.dataDirectory, selection);
         if (controller.signal.aborted) throw new UpdateBoundaryError("cancelled");
         if (error instanceof ApplicationVerificationError)
-          throw new UpdateBoundaryError("signature");
+          throw new UpdateBoundaryError(
+            error.code.startsWith("candidate_macos_") ? "compatibility" : "signature",
+          );
         throw error;
       } finally {
         await rm(extractedRoot, { recursive: true, force: true });
@@ -779,6 +784,60 @@ export class UpdaterSafetyBoundary {
       throw new UpdateBoundaryError("prepared");
     });
     lease.assertCandidate(frozen);
+    // Re-extract the exact frozen bytes so compatibility is authenticated again,
+    // both before shutdown and at final handoff, without a second persisted authority.
+    let runDirectory: string | undefined;
+    try {
+      await assertUpdateStoragePaths({
+        channelRoot: this.channelRoot,
+        dataDirectory: this.dataDirectory,
+      });
+      const budget = {
+        channelRoot: this.channelRoot,
+        dataDirectory: this.dataDirectory,
+        appBundlePath: this.appBundlePath,
+        signal,
+      };
+      await assertStorageBudget(budget);
+      await assertStagingCapacity(
+        this.dataDirectory,
+        MAX_EXPANDED_ARCHIVE_BYTES + MIN_FREE_SPACE_RESERVE_BYTES,
+      );
+      const admission = await inspectUpdateArchive(frozen.retained_tar_path, undefined, signal);
+      if (admission.sha256 !== frozen.archive_sha256 || admission.bytes !== frozen.archive_bytes)
+        throw new UpdateBoundaryError("prepared");
+      runDirectory = await createRunDirectory(this.dataDirectory);
+      const extractedRoot = join(runDirectory, "extracted");
+      const bundle = await extractAdmittedArchive(admission, extractedRoot, signal);
+      await assertStorageBudget({ ...budget, extractedRoot });
+      await this.verifier.verifyCandidate(
+        bundle,
+        {
+          publisher: installed.publisher,
+          version: frozen.version,
+          hash: frozen.hash,
+        },
+        signal,
+      );
+      if (signal?.aborted) throw new UpdateBoundaryError("cancelled");
+    } catch (error) {
+      if (signal?.aborted) throw new UpdateBoundaryError("cancelled");
+      if (error instanceof ApplicationVerificationError)
+        throw new UpdateBoundaryError(
+          error.code.startsWith("candidate_macos_") ? "compatibility" : "signature",
+        );
+      if (error instanceof UpdateArchiveError) throw new UpdateBoundaryError("archive");
+      if (error instanceof UpdaterStateError) throw new UpdateBoundaryError("state");
+      throw error;
+    } finally {
+      if (runDirectory) {
+        await assertUpdateStoragePaths({
+          channelRoot: this.channelRoot,
+          dataDirectory: this.dataDirectory,
+        });
+        await rm(runDirectory, { recursive: true, force: true });
+      }
+    }
     return { candidate: frozen, metadata: installed.metadata };
   }
 

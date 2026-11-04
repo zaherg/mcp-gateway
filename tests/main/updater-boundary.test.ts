@@ -5,6 +5,7 @@ const test = bunTest.skipIf(process.platform !== "darwin");
 
 import { readFileSync } from "node:fs";
 import {
+  chmod,
   mkdir,
   mkdtemp,
   readdir,
@@ -34,6 +35,10 @@ import {
   type CommandRunner,
 } from "../../src/main/updater/verify";
 import { parseBuildIdentity } from "../../src/shared/build-identity";
+import {
+  type MacOSCompatibilityFixture,
+  macOSCompatibilityCommand,
+} from "../fixtures/macos-compatibility";
 import { versionJson, writeBundleFixture } from "../fixtures/updater";
 
 const _TEAM = "ABCDEFGHIJ";
@@ -44,8 +49,12 @@ function success(stdout = "", stderr = ""): CommandResult {
   return { stdout, stderr, exitCode: 0 };
 }
 
-function fakeRunner(options: { failCandidate?: boolean } = {}): CommandRunner {
+function fakeRunner(
+  options: { failCandidate?: boolean; compatibility?: MacOSCompatibilityFixture } = {},
+): CommandRunner {
   return async (command, args) => {
+    const compatibility = macOSCompatibilityCommand(command, args, options.compatibility);
+    if (compatibility) return compatibility;
     if (command.endsWith("plutil")) {
       if (args.includes("CFBundleIdentifier")) return success("dev.srvr.mcpgateway\n");
       if (args.includes("CFBundleVersion")) {
@@ -110,6 +119,71 @@ async function setup(
     verifier: verifier ?? new ApplicationVerifier(fakeRunner()),
   });
   return { root, data, home, channel, app, boundary };
+}
+
+test("incompatible candidates never publish prepared ownership", async () => {
+  const fixture = await setup(
+    "success",
+    new ApplicationVerifier(
+      fakeRunner({ compatibility: { plist: { LSMinimumSystemVersion: "99" } } }),
+    ),
+  );
+  try {
+    const before = await readFile(join(fixture.app, "Contents/Resources/version.json"));
+    await expect(fixture.boundary.prepareUpdateAttempt()).rejects.toMatchObject({
+      code: "compatibility",
+    });
+    expect(await readLease(fixture.channel)).toBeUndefined();
+    expect(await readFile(join(fixture.app, "Contents/Resources/version.json"))).toEqual(before);
+  } finally {
+    await fixture.boundary.abandonPrepared();
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+for (const phase of ["revalidate", "handoff"] as const) {
+  test(`host compatibility is checked again at ${phase} against the frozen candidate`, async () => {
+    const compatibility = { hostVersion: "14.0" };
+    const fixture = await setup("success", new ApplicationVerifier(fakeRunner({ compatibility })));
+    try {
+      const prepared = await fixture.boundary.prepareUpdateAttempt();
+      compatibility.hostVersion = "13.0";
+      let sdkCalls = 0;
+      const result =
+        phase === "revalidate"
+          ? fixture.boundary.revalidate(prepared.candidate)
+          : fixture.boundary.prepareHandoff(
+              { id: 1, candidate: prepared.candidate, signal: new AbortController().signal },
+              {
+                applyUpdate: async () => {
+                  sdkCalls++;
+                },
+                onStatusChange: () => {
+                  sdkCalls++;
+                },
+                getLocalInfo: async () => {
+                  sdkCalls++;
+                  throw new Error("SDK must not run");
+                },
+                appDataFolder: async () => {
+                  sdkCalls++;
+                  throw new Error("SDK must not run");
+                },
+              },
+            );
+      await expect(result).rejects.toMatchObject({ code: "compatibility" });
+      expect(sdkCalls).toBe(0);
+      expect((await readLease(fixture.channel))?.phase).toBe("prepared");
+      expect(await readdir(join(fixture.data, "updates/tmp"))).toEqual([]);
+      compatibility.hostVersion = "14.0";
+      await expect(fixture.boundary.revalidate(prepared.candidate)).resolves.toMatchObject({
+        candidate: prepared.candidate,
+      });
+    } finally {
+      await fixture.boundary.abandonPrepared();
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
 }
 
 for (const method of ["checkForUpdate", "prepareUpdateAttempt"] as const) {
@@ -1020,6 +1094,67 @@ async function until(check: () => boolean | Promise<boolean>) {
     if (Date.now() > deadline) throw new Error("Integration boundary timed out");
     await Bun.sleep(5);
   }
+}
+
+for (const refusal of ["incompatible host", "non-executable candidate"] as const) {
+  test(`${refusal} restart preflight preserves a live gateway and configuration through AppService`, async () => {
+    const compatibility = { hostVersion: "14.0" };
+    let revokeExecution = false;
+    const runner = fakeRunner({ compatibility });
+    const verifier = new ApplicationVerifier(async (command, args, timeout, signal) => {
+      if (revokeExecution && command.endsWith("plutil") && args.includes("CFBundleExecutable")) {
+        const bundle = dirname(dirname(args.at(-1) ?? ""));
+        if (
+          JSON.parse(readFileSync(join(bundle, "Contents/Resources/version.json"), "utf8")).hash ===
+          HASH
+        )
+          await chmod(join(bundle, "Contents/MacOS/launcher"), 0o600);
+      }
+      return runner(command, args, timeout, signal);
+    });
+    const fixture = await setup("success", verifier);
+    const { setup: controllerFixture } = await import("../core/helpers");
+    const { AppService } = await import("../../src/main/service");
+    const context = await controllerFixture();
+    const rig = await integrated(fixture, { cleanup: () => context.controller.close() });
+    try {
+      await context.controller.start();
+      const before = await readFile(context.path);
+      const service = new AppService(
+        context.controller,
+        {
+          status: () => ({ enabled: false, supported: false, error: null }),
+          setEnabled: () => ({ enabled: false, supported: false, error: null }),
+        },
+        () => {},
+        {
+          platform: "macos",
+          requestQuit: () => {
+            rig.ordinaryQuit();
+            return rig.quit.status();
+          },
+          quitStatus: () => rig.quit.status(),
+        },
+        rig.updates,
+      );
+      if (refusal === "incompatible host") compatibility.hostVersion = "13.0";
+      else revokeExecution = true;
+      const result = await service.handlers.updatesRestart({ version: "0.3.1", hash: HASH });
+      expect(result.ok).toBe(false);
+      expect(rig.counts.cleanup).toBe(0);
+      expect(rig.counts.dispatch).toBe(0);
+      expect(context.controller.snapshot().running).toBe(true);
+      expect(await readFile(context.path)).toEqual(before);
+      expect(rig.updates.statusValue().error).toContain(
+        refusal === "incompatible host" ? "compatibility with this Mac" : "signature was rejected",
+      );
+    } finally {
+      rig.updates.stop();
+      await rig.updates.abandonPrepared();
+      await context.cleanup();
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
 }
 
 test("queued duplicate failure cannot become a new retry without fresh service admission", async () => {

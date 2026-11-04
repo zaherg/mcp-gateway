@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { constants } from "node:os";
 import type { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
+  CancelledNotificationSchema,
   isJSONRPCRequest,
   JSONRPCErrorResponseSchema,
   type JSONRPCMessage,
@@ -53,6 +54,7 @@ import {
   type BackendCalls,
   BackendWireIds,
   DUPLICATE_REQUEST_ERROR,
+  MAX_BACKEND_CALLS,
   releaseAfterCleanup,
   type WorkOwner,
 } from "./backend-work";
@@ -61,9 +63,23 @@ import { UpstreamDiscovery } from "./discovery";
 import { failure } from "./errors";
 import { installLegacyCancellation } from "./legacy-cancellation";
 import { LogBuffer } from "./logs";
+import { requestMessages } from "./request-body";
 import type { ResourceAdmission, ResourceLease } from "./resource-admission";
 
+export interface GatewayMount extends StatefulMount {
+  claimControl(
+    req: GatewayRequest,
+    messages: readonly JSONRPCMessage[] | undefined,
+  ): (() => void) | undefined;
+}
+
 export const SESSION_IDLE_MS = 60_000;
+
+// Tracks server-originated request ids per legacy session so that client
+// replies admitted as control traffic are provably answering an outstanding
+// request the gateway forwarded. The WeakMap is keyed by the session transport
+// object owned by Supergateway; entries are discarded with the transport.
+const serverRequestIds = new WeakMap<StreamableHTTPServerTransport, Set<string | number>>();
 export const SHUTDOWN_MS = 8_000;
 
 class CapacityError extends Error {}
@@ -136,6 +152,10 @@ function admitPeer(
         return;
       }
       if ("method" in message) {
+        if (!JSONRPCMessageSchema.safeParse(raw).success) {
+          localFailure(MALFORMED_LEGACY_RESPONSE);
+          return;
+        }
         owner.message(message, line);
         return;
       }
@@ -159,7 +179,6 @@ function admitPeer(
   return {
     write: (message) => {
       if (!("method" in message)) {
-        // A client's response to a server-originated request.
         peer.write(message);
         return;
       }
@@ -274,7 +293,9 @@ export function createMount(
   admission: ResourceAdmission,
   calls: BackendCalls,
   logs = new LogBuffer(),
-): StatefulMount {
+): GatewayMount {
+  const reservedControls = new WeakSet<GatewayRequest>();
+  const controlClaims = new WeakMap<StreamableHTTPServerTransport, Set<string>>();
   const discard = (..._args: unknown[]) => {};
   let closing = false;
   const capture = (level: LogLevel, args: unknown[], expectedExit = false) => {
@@ -400,6 +421,30 @@ export function createMount(
           },
         );
         transport = session.transport;
+        const reverseIds = new Set<string | number>();
+        serverRequestIds.set(transport, reverseIds);
+        const send = transport.send.bind(transport);
+        transport.send = async (message, options) => {
+          if (!isJSONRPCRequest(message)) return send(message, options);
+          if (reverseIds.has(message.id) || reverseIds.size >= MAX_BACKEND_CALLS)
+            throw failure("BackendFailure", "Too many pending server requests.");
+          reverseIds.add(message.id);
+          try {
+            await send(message, options);
+          } catch (error) {
+            reverseIds.delete(message.id);
+            throw error;
+          }
+        };
+        const receive = transport.onmessage;
+        transport.onmessage = (message, extra) => {
+          receive?.(message, extra);
+          if (
+            !("method" in message) &&
+            (typeof message.id === "string" || typeof message.id === "number")
+          )
+            reverseIds.delete(message.id);
+        };
         const cancel = installLegacyCancellation(session);
         settleCancelled = (id) => {
           cancel(id);
@@ -409,6 +454,7 @@ export function createMount(
         transport.onclose = () => {
           // Mark before the session stops its child, not during exit-triggered owner cleanup.
           transportClosed = true;
+          reverseIds.clear();
           onclose?.();
         };
         if (ended) end();
@@ -532,6 +578,12 @@ export function createMount(
           res.status(503).end();
           return;
         }
+        // A reserved request already owns an existing legacy control operation.
+        // It must never enter modern discovery or create a per-request backend.
+        if (reservedControls.has(req)) {
+          await sessions.post(req, res);
+          return;
+        }
         const value = headerValue(req);
         const route = await admit(req, res, value, speaks);
         if (res.destroyed || res.writableEnded || children.closing) return;
@@ -542,7 +594,7 @@ export function createMount(
               typeof sessionId === "string" ? sessions.transports.get(sessionId) : undefined;
             const sessionWires = session ? sessions.wireIdsOf(session) : undefined;
             if (session && sessionWires) {
-              const messages = legacyMessages(req.body);
+              const messages = requestMessages(req) ?? legacyMessages(req.body);
               const ids = messages ? legacyRequestIds(messages) : undefined;
               if (ids) {
                 // All checks and claims are synchronous: no await sits between
@@ -696,6 +748,56 @@ export function createMount(
           ...[...active].map((stop) => stop()),
           children.close(),
         ]);
+      },
+      claimControl: (req, messages) => {
+        const sessionId = req.headers["mcp-session-id"];
+        if (
+          children.closing ||
+          typeof sessionId !== "string" ||
+          req.headers["mcp-protocol-version"] === "2026-07-28"
+        )
+          return undefined;
+        const session = sessions.transports.get(sessionId);
+        if (!session) return undefined;
+        const keys: string[] = [];
+        if (req.method === "DELETE") keys.push("delete");
+        else if (req.method === "POST" && messages?.length) {
+          const wires = sessions.wireIdsOf(session);
+          const pending = serverRequestIds.get(session);
+          for (const message of messages) {
+            if ("method" in message) {
+              if ("id" in message) return undefined;
+              const parsed = CancelledNotificationSchema.safeParse(message);
+              if (!parsed.success) return undefined;
+              const id = parsed.data.params.requestId;
+              if ((typeof id !== "string" && typeof id !== "number") || !wires?.holds(id))
+                return undefined;
+              keys.push(JSON.stringify(["cancel", id]));
+            } else {
+              if (
+                (typeof message.id !== "string" && typeof message.id !== "number") ||
+                !pending?.has(message.id)
+              )
+                return undefined;
+              keys.push(JSON.stringify(["reply", message.id]));
+            }
+          }
+        } else return undefined;
+        const claims = controlClaims.get(session) ?? new Set<string>();
+        if (
+          claims.has("delete") ||
+          (req.method === "DELETE" && claims.size) ||
+          new Set(keys).size !== keys.length ||
+          keys.some((key) => claims.has(key))
+        )
+          return undefined;
+        controlClaims.set(session, claims);
+        for (const key of keys) claims.add(key);
+        reservedControls.add(req);
+        return () => {
+          for (const key of keys) claims.delete(key);
+          reservedControls.delete(req);
+        };
       },
     };
   } catch (error) {

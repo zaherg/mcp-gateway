@@ -85,10 +85,10 @@ export class QuitCoordinator {
   }
 
   cancelUpdate(attemptId: number): void {
+    if (this.intent?.kind !== "update" || this.intent.attempt.id !== attemptId) return;
     this.controllers.get(attemptId)?.abort();
     this.controllers.delete(attemptId);
-    if (this.intent?.kind === "update" && this.intent.attempt.id === attemptId)
-      this.intent = undefined;
+    this.intent = undefined;
     if (this.handoff?.attemptId === attemptId) this.handoff = undefined;
     this.approved = false;
     this.cleanupDone = false;
@@ -134,12 +134,10 @@ export class QuitCoordinator {
   /** A normal user quit must never inherit a previously selected update. */
   armQuit(): boolean {
     if (this.approved || this.state.phase === "ready") return false;
-    if (this.intent?.kind === "update") {
-      this.abortAttempt(this.intent.attempt.id);
-      this.intent = { kind: "quit" };
-    } else {
-      this.intent = { kind: "quit" };
-    }
+    if (this.intent?.kind === "quit" && this.state.phase === "pending") return true;
+    if (this.intent?.kind === "update") this.abortAttempt(this.intent.attempt.id);
+    this.intent = { kind: "quit" };
+    this.state = { attempt: ++this.sequence, phase: "pending", error: null };
     return true;
   }
 
@@ -178,27 +176,17 @@ export class QuitCoordinator {
   }
 
   private ordinaryIntent(): void {
-    if (this.intent?.kind === "update") {
-      this.abortAttempt(this.intent.attempt.id);
-      this.intent = { kind: "quit" };
-    } else {
-      this.intent = { kind: "quit" };
-    }
+    if (!this.armQuit()) return;
     if (this.cleanupDone) {
       if (!this.dispatchInFlight) void this.finishAfterAbandon();
       return;
     }
-    if (this.cleanupInFlight) return;
-    const attempt =
-      this.state.phase === "idle"
-        ? Math.max(this.state.attempt, this.sequence) + 1
-        : this.state.attempt + 1;
-    this.state = { attempt, phase: "pending", error: null };
-    this.ensureCleanup(attempt);
+    this.ensureCleanup(this.state.attempt);
   }
 
   private abortAttempt(attemptId: number): void {
     this.controllers.get(attemptId)?.abort();
+    this.controllers.delete(attemptId);
   }
 
   private ensureCleanup(attemptId: number): void {

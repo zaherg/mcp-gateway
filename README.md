@@ -29,6 +29,8 @@ Use `127.0.0.1` for access from this Mac only.
 **Mounted** means the route is ready; backends connect when clients use them.
 
 **Cmd+W** closes the window without stopping the gateway; **Cmd+Q** stops the listener and owned backends, then exits.
+Interactive Quit requests share the window's confirmation for unsaved configuration and open server dialogs.
+Cancelling preserves those drafts; process signals retain noninteractive graceful shutdown.
 On Linux, closing minimizes to a reachable taskbar entry and keeps the gateway and Logs running without a tray extension.
 Use the visible **Quit MCP Gateway** button to stop the app; Linux application-menu shortcuts are unavailable.
 The macOS-only Bear preset permits all accessible notes and tools, including writes; encrypted notes remain subject to Bear's restrictions.
@@ -46,6 +48,11 @@ Logs are not saved automatically or exposed over the LAN.
 Dismissing a banner does not resolve the underlying failure; a new occurrence can appear again.
 
 ### Automatic updates
+
+The A7-A11/A13 review was reopened after direct review found native-signal and executable-access gaps.
+Both corrections are locally verified with focused self-review, not a new independent review.
+New signed packaged acceptance remains pending; the earlier signed acceptance below does not certify this source.
+See [current acceptance criteria](IMPLEMENTATION-PLAN.md#current-acceptance-criteria).
 
 The local `0.3.1` build passed independent source and acceptance reviews, signing, notarization, stapling, and isolated signed two-version update and failure/recovery tests.
 Verification is recorded in [the final acceptance run](IMPLEMENTATION-PLAN.md#final-acceptance-run).
@@ -65,6 +72,9 @@ A missing file means enabled.
 Use **Settings → Updates**, the macOS application menu **Check for Updates…**, or the tray menu for a manual check.
 Manual checking never installs an update.
 A discovered higher stable version can be downloaded without stopping the gateway or discarding a draft.
+Preparation and restart checks reject candidates whose plist or bundled Mach-O requirements exceed this Mac's macOS version.
+The launcher, Bun runtime and pinned update helpers must be regular files with executable access; a valid signature alone is insufficient.
+Missing required native inspection tools or invalid metadata also refuse the update; retained manual-recovery verification remains available.
 Automatic updates off requires an explicit **Download Update** action after a manual check.
 The download and preparation status is shown in Settings; a background discovery also appears as a nonmodal notice when the window is open.
 
@@ -89,6 +99,18 @@ Development and isolated builds have no update network activity or actionable up
 - Copied client configuration contains the token; Logs can contain credentials and note data.
 
 Keep the Mac awake and connected; DHCP can change its address.
+
+### Request limits
+
+The gateway allows 32 concurrent HTTP requests, with 4 slots reserved for validated controls and an ordinary-request peak of 28.
+Within the 240-admission-per-minute limit, at most 224 admissions are ordinary requests, leaving 16 for controls.
+Reserved capacity accepts cancellation of outstanding calls, DELETE for an existing stateful session, and replies to outstanding server-originated requests.
+New calls and batches containing new work cannot use it.
+
+Incomplete POST bodies count toward the HTTP limit while being classified.
+Bodies are limited to 4 MiB and requests to 30 seconds; backend resources and outstanding client calls each have a separate limit of 16.
+An authenticated client occupying the reserved slots can still delay control traffic.
+Protocol cancellation does not guarantee that arbitrary upstream work physically stops.
 
 ## Configuration
 

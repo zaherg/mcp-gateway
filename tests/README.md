@@ -23,14 +23,103 @@ bun test tests/audit/a1-login-lifetime.test.ts tests/audit/a12-bounded-inspectio
 bun test tests/audit/pending -t 'A[23456]:'
 ```
 
-A7-A11 and A13 remain outside this source scope and have intentionally failing reproductions.
+Source and packaged acceptance statuses are tracked individually in `IMPLEMENTATION-PLAN.md`; the audit directory retains its original names after corrections.
 Do not use an unfiltered `bun test` run as the green-suite command.
-Final checks passed with 504 unit/integration tests, 54 component tests, 20 browser tests, four isolated development-native scenarios, five pinned SDK helper tests, and eight private-hook tests.
+The A2-A6/A12 source checks passed with 504 unit/integration tests, 54 component tests, 20 browser tests, four isolated development-native scenarios, five pinned SDK helper tests, and eight private-hook tests.
 Evidence is under `.cache/src-audit-a2-a6/20261104T085208Z/`.
 The development bundle is `build/a2-a6-accepted/dev-macos-arm64/MCP Gateway-dev.app`.
 Its compiled identity and generated/copied resource match, including the final rollback-race correction.
 These checks do not constitute signed packaged replacement acceptance.
 Earlier signed `0.3.1` evidence below predates this remediation and does not certify the changed source.
+
+### Direct-review boundary corrections
+
+The later direct review reopened source closure for native signal provenance and executable access.
+The corrections have local verification and focused self-review only; no Kimi, subagents, workflows, or new independent review were used.
+Current acceptance and evidence are recorded in [the current ledger](../IMPLEMENTATION-PLAN.md#current-acceptance-criteria) and `.cache/review-boundary-fixes/20261104T184453Z/`.
+
+Two explicit macOS suites require project-local inputs and fail if prerequisites are missing:
+
+```sh
+MCP_GATEWAY_NATIVE_BUNDLE="$PWD/.cache/review-boundary-fixes/20261104T184453Z/development-final/dev-macos-arm64/MCP Gateway-dev.app" \
+  bun test ./tests/native/native-quit.native.ts
+MCP_GATEWAY_SIGNED_PAYLOAD="$PWD/.cache/src-audit-a2-a6/20261104T104310Z/packaged-acceptance/extracted-payload/MCP Gateway.app" \
+  bun test ./tests/native/updater-executability.native.ts
+```
+
+The native Quit suite copies the supplied development bundle and adds exact-match private hooks to main-process source; production gate/lifecycle code, SDK and renderer remain real.
+It creates an unsaved server draft through WKWebView, verifies Cocoa Cmd+Q opens the discard prompt without cleanup, and sends actual SIGTERM/SIGINT to the runtime with a live synthetic MCP session.
+Two cases block the renderer and require an unanswered RPC before signalling.
+All four cases require native signal intent, exactly one cleanup, no extra renderer decision, backend absence and unchanged saved bytes.
+`MCP_GATEWAY_TEST_IGNORE_SIGNAL=1` is a test-only negative control that disables the gate's intent read and causes the dirty SIGTERM case to time out.
+The pinned SDK's second SIGINT remains a forced process-group kill and is not used as a graceful-cleanup test.
+
+The executable suite copies a retained signed payload, changes each required executable to 0600, verifies codesign still passes and file bytes remain identical, then requires both candidate and recovery verification to refuse it.
+Restored-permission controls pass full verification.
+Archive admission rejects a signed payload's 0600 launcher, while the restored archive extracts with exact modes and passes verification.
+These six checks do not sign, launch, install or replace the signed input.
+The default suite also covers the shared pinned layout, owner-execute archive policy, and AppService preflight refusal with a live gateway and unchanged saved configuration.
+
+### Combined-source review checkpoint
+
+The earlier independent combined-source review of A7-A11/A13 and connected ownership/lifecycle behavior reported no remaining findings.
+That blanket conclusion is superseded by the direct-review corrections above.
+Evidence is under `.cache/src-audit-combined-review/20261104T173332Z/` and [the source-closure record](../IMPLEMENTATION-PLAN.md#independent-combined-source-closure).
+One suspected A13 cancellation race was withdrawn after pinned-source tracing and 40 natural runtime cases; no production correction was needed.
+Two new same-write pipelined tests in `control-admission.test.ts` assert single-call cancellation, exact batch sibling output, backend notification delivery and reserved-rate accounting.
+They pass without SDK spies or pauses and fail under a test-only reserved-control refusal.
+The final unit suite passes 591 tests with 4,704 assertions; 62 components, 22 browser tests, 32 audit tests, five SDK helper tests, eight private-hook tests and four development-native scenarios passed on unchanged production bytes in the same run.
+Type checking, lint and scoped LSP diagnostics pass.
+Signed packaged acceptance on this source remains separately gated.
+
+### A7-A11 source verification
+
+At this checkpoint A7-A11 were implemented, locally verified and independently source-reviewed; the later native-signal finding and direct correction are recorded above.
+New signed packaged acceptance remains pending.
+The final local run passed 589 unit/integration tests with 4,695 assertions, 62 components, 22 browser tests, 32 audit tests, type checking, lint and scoped LSP diagnostics.
+A separately rooted development build passed fresh, synthetic MCP, JSONC and SIGTERM native smoke scenarios.
+Five unchanged-SDK helper tests and eight private acceptance-hook tests also passed.
+Evidence is under `.cache/src-audit-a7-a11/20261104T163458Z/`.
+
+`updater-verify.test.ts` covers generic and architecture-specific plist requirements, host versions, every detected Mach-O runtime/helper, malformed evidence, unavailable commands and cancellation.
+Boundary regressions repeat authenticated compatibility checks at preparation, restart preflight and handoff; an AppService test preserves a running listener and saved bytes after refusal.
+Retained signed-bundle admission uses native metadata tools, while an unchanged 277,858,816-byte release TAR verifies archive compatibility without installing it.
+`interactive-quit.test.ts`, renderer tests and native-event audit fixtures separate delivery acknowledgement from discard consent, cover unavailable/lost acknowledgement and preserve signal/SDK paths.
+Desktop and narrow browser tests inspect nested confirmation, Escape, focus, retained dialog values and unchanged saved configuration.
+`terminal-order.component.tsx` feeds real lifecycle and service attempts through the renderer after two failed Quits.
+Discovery tests cover matching IDs, notification-first SSE, invalid UTF-8, timeout and cancellation; archive numeric tests preserve exact refusal codes and valid output bytes.
+The earlier A11 boundary fixture failure is corrected by using a valid file path, without changing the expected size refusal.
+
+```sh
+bun test tests/main/updater-verify.test.ts tests/main/updater-boundary.test.ts
+bun test tests/main/interactive-quit.test.ts tests/main/lifecycle.test.ts
+bun test tests/core/discovery.test.ts tests/main/updater-archive-numbers.test.ts
+bun test tests/audit/a9-attempt-numbering.test.ts tests/audit/pending
+```
+
+These earlier checks received focused self-review, followed by the historical combined-source review above.
+They did not establish the native signal path: the audit fixture manually invokes JavaScript listeners.
+The later native Quit suite above verifies actual signals with dirty and blocked WKWebView windows.
+New signed incompatible-candidate and malformed-archive replacement fixtures require separate authorization.
+
+### A13 control admission
+
+A13 is implemented, locally verified and independently source-reviewed; signed packaged acceptance remains pending.
+The current request ceiling is 28 ordinary plus 4 reserved HTTP slots, with at most 224 ordinary admissions within the 240-per-minute total.
+`tests/core/control-admission.test.ts` and the ingress regressions cover complete-body validation, parser ownership, exact rate accounting, duplicate controls, reverse replies, batch cancellation, and delayed backend cleanup.
+The original audit case and parsed-body capability remain explicit checks:
+
+```sh
+bun test tests/core/control-admission.test.ts tests/core/ingress.test.ts
+bun test tests/audit/pending/protocol.test.ts -t 'A13:'
+bun test tests/audit/gates.test.ts -t 'A13 capability'
+```
+
+The A13 continuation passed 28 admission/ingress tests, 54 components, 20 browser tests, type checking, lint, scoped LSP, a development build, and four isolated macOS native scenarios.
+Its full unit run had 547 passes and one unchanged A11 fixture failure: `updater-archive-numbers.test.ts` expects `entryTooLarge` but receives `unsafePath`.
+At that checkpoint the failure also reproduced alone; neither the A11 fixture nor archive implementation was changed by the A13 task.
+The later A7-A11 work corrected the fixture and passed the full suite as recorded above.
+Evidence and verification limits are recorded in [the A13 source record](../IMPLEMENTATION-PLAN.md#a13-local-source-verification) and `.cache/src-audit-a13/20261104T155056Z/`.
 
 ## GitHub Actions
 

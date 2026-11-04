@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 
 // The native SDK is unavailable in the unit runner. Guard the actual menu wiring;
 // physical Cmd+Q and native accelerator delivery require the rebuilt macOS app.
-test("native Cmd+Q uses the same asynchronous QuitCoordinator path as menu Quit", async () => {
+test("native Cmd+Q and menu Quit share draft confirmation before asynchronous cleanup", async () => {
   const source = await readFile(new URL("../../src/main/index.ts", import.meta.url), "utf8");
   expect(source).toContain('{ label: "Quit MCP Gateway", action: "quit", accelerator: "Cmd+Q" }');
   expect(source).toContain('{ label: "Check for Updates…", action: "updates" }');
@@ -11,8 +11,13 @@ test("native Cmd+Q uses the same asynchronous QuitCoordinator path as menu Quit"
   expect(source).toContain('window.dispatchEvent(new Event("mcp-gateway:show-updates"))');
   expect(source).toMatch(/const updateLabel =[\s\S]*?action: "updates"/);
   expect(source).toMatch(/pendingShowUpdates/);
-  expect(source).toMatch(/case "quit":\s*quit\?\.armQuit\(\);\s*Utils\.quit\(\);/);
-  expect(source).toMatch(/Electrobun\.events\.on\("before-quit",[\s\S]*?quit\.handle/);
+  expect(source).toMatch(/case "quit":\s*Utils\.quit\(\);/);
+  expect(source).not.toMatch(/case "quit":\s*quit\?\.armQuit/);
+  expect(source).toMatch(/Electrobun\.events\.on\("before-quit",[\s\S]*?interactiveQuit\.handle/);
+  expect(source).toMatch(/new InteractiveQuitGate\(\s*quit,/);
+  expect(source).toContain("rpc.request.interactiveQuit(undefined, { maxRequestTime: 5_000 })");
+  expect(source).toMatch(/requestQuit: \(\) => \{[\s\S]*?asOrdinaryQuit\(\(\) => \{/);
+  expect(source).toMatch(/process.on\(signal,[\s\S]*?asOrdinaryQuit\(\(\) => \{/);
   expect(source).toMatch(/new QuitCoordinator\([\s\S]*?await controller\.close\(\)/);
   expect(source).toMatch(
     /\(error, kind, settlement\) => \{[\s\S]*?controller\.recordLocalError\(error\);[\s\S]*?updateMenu\(\);[\s\S]*?openWindow\(\);/,

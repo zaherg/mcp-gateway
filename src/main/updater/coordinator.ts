@@ -640,6 +640,8 @@ function sanitizedUpdateError(error: unknown): string {
         return "The downloaded update archive was rejected.";
       case "signature":
         return "The downloaded application signature was rejected.";
+      case "compatibility":
+        return "The update's compatibility with this Mac could not be verified.";
       case "recovery":
         return "The previous application could not be retained. The update was not installed.";
       case "feed":

@@ -1,9 +1,10 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { createServer } from "node:http";
+import { createServer, request } from "node:http";
 import { join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { type ControllerOptions, type McpGatewayController, open } from "../../src/core/controller";
+import type { GatewayIngress } from "../../src/core/ingress";
 import type { SelfProxyResolver } from "../../src/core/network";
 import type { ConfigFormat } from "../../src/shared/config-document";
 import type { GatewayConfig, StdioServerConfig } from "../../src/shared/types";
@@ -127,6 +128,64 @@ export async function within<A>(promise: Promise<A>, timeout = 2_000): Promise<A
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+/** Raw initialization does not open the SDK client's implicit GET stream. */
+export async function initializeSession(address: string): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const req = request(
+      `${address}/mcp/echo`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${TOKEN}`,
+          "Content-Type": "application/json",
+          Accept: "application/json, text/event-stream",
+        },
+      },
+      (res) => {
+        const sessionId = res.headers["mcp-session-id"];
+        res.once("error", reject);
+        res.resume();
+        res.once("end", () => {
+          if (res.statusCode === 200 && typeof sessionId === "string") resolve(sessionId);
+          else reject(new Error(`Initialize failed: ${res.statusCode}`));
+        });
+      },
+    );
+    req.setTimeout(5_000, () => req.destroy(new Error("initialize timeout")));
+    req.once("error", reject);
+    req.end(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-03-26",
+          capabilities: {},
+          clientInfo: { name: "ingress-saturation", version: "1" },
+        },
+      }),
+    );
+  });
+}
+
+/** Observe the real ledgers without adding a production diagnostics API. */
+export function ingressCounts(ingress: GatewayIngress) {
+  return {
+    // biome-ignore lint/complexity/useLiteralKeys: Typed test access to owned admission state.
+    ordinary: ingress["ordinaryActive"],
+    // biome-ignore lint/complexity/useLiteralKeys: Typed test access to owned admission state.
+    reserved: ingress["reservedActive"],
+    // biome-ignore lint/complexity/useLiteralKeys: Typed test access to owned admission state.
+    rate: ingress["rateCount"],
+    // biome-ignore lint/complexity/useLiteralKeys: Typed test access to owned admission state.
+    ordinaryRate: ingress["ordinaryRate"],
+    // biome-ignore lint/complexity/useLiteralKeys: Typed test access to owned admission state.
+    resources: ingress["admission"]["used"],
+    // biome-ignore lint/complexity/useLiteralKeys: Typed test access to owned admission state.
+    calls: ingress["work"].outstanding,
+  };
 }
 
 export async function connect(

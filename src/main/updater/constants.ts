@@ -8,6 +8,17 @@ export const UPDATER_HASH_PATTERN = /^[a-z0-9]{1,13}$/;
 export const UPDATER_STABLE_VERSION_PATTERN = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
 export const PREPARED_UPDATE_FILE = ".electrobun-prepared-update.json";
 
+// Pinned Electrobun 2.0.5 Bun layout. Dylibs are loaded, not executed.
+export function requiredBundleExecutables(executable = "launcher"): string[] {
+  return [
+    `Contents/MacOS/${executable}`,
+    "Contents/MacOS/bun",
+    "Contents/MacOS/bspatch",
+    "Contents/MacOS/zig-zstd",
+    "Contents/Resources/uninstall",
+  ];
+}
+
 export function isSafeRelativeComponent(value: string): boolean {
   if (value.length === 0 || value.length > 256 || value === "." || value === "..") return false;
   for (const character of value) {
