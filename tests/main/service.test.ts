@@ -321,64 +321,6 @@ describe("native application boundary", () => {
       "Approve",
     );
   });
-
-  test("native quit vetoes synchronously, waits once, then permits the second quit event", async () => {
-    let finish = () => {};
-    let cleaned = 0;
-    let quits = 0;
-    let vetoes = 0;
-    const coordinator = new QuitCoordinator(
-      async () => {
-        cleaned++;
-        await new Promise<void>((resolve) => {
-          finish = resolve;
-        });
-      },
-      () => {
-        quits++;
-      },
-      () => {
-        throw new Error("Unexpected cleanup failure");
-      },
-    );
-    coordinator.handle(() => {
-      vetoes++;
-    });
-    coordinator.handle(() => {
-      vetoes++;
-    });
-    expect(vetoes).toBe(2);
-    await Bun.sleep(0);
-    expect(cleaned).toBe(1);
-    expect(quits).toBe(0);
-    finish();
-    await Bun.sleep(0);
-    expect(quits).toBe(1);
-    coordinator.handle(() => {
-      vetoes++;
-    });
-    expect(vetoes).toBe(2);
-  });
-
-  test("cleanup failures are reported without approving native quit", async () => {
-    let failed = 0;
-    let quits = 0;
-    const coordinator = new QuitCoordinator(
-      async () => {
-        throw new Error("failure");
-      },
-      () => {
-        quits++;
-      },
-      () => {
-        failed++;
-      },
-    );
-    coordinator.handle(() => {});
-    await Bun.sleep(0);
-    expect(failed).toBe(1);
-    expect(quits).toBe(0);
-  });
 });
 
 test("JSONC service saves/copies with explicit mode and retains source environment references", async () => {

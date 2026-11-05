@@ -20,7 +20,7 @@ These tests use synthetic output and do not attempt process memory exhaustion.
 ## Updater documentation validation
 
 The 2026-11-05 run validates Electrobun `2.0.5`, not the newer `2.0.6` recipe/streaming contract.
-Current results are in [the validation record](../IMPLEMENTATION-PLAN.md#validation-results-2026-11-05), with the full matrix under `.cache/updater-documentation-validation/20261105T052930Z/`.
+Results and limits from that run are in [the validation record](UPDATER-VALIDATION.md), with the full matrix under `.cache/updater-documentation-validation/20261105T052930Z/`.
 The audit checkpoints below are historical snapshots, not the current source's acceptance status.
 
 `tests/native/updater-sdk-contract.native.ts` adds unchanged-SDK patch, fallback, metadata, status-history, veto, cancellation, and failure cases.
@@ -37,14 +37,16 @@ Private failure evidence now records the initial app inventory/configuration dig
 
 A2-A6 and prerequisite A12 are locally verified and independently source-reviewed.
 The default suite includes the shared command owner, confirmed backend-process cleanup, pinned batch cancellation, compiled build identity, guarded startup cancellation, and crash-residue tests.
-The original user-facing audit cases remain explicit supplements:
+The remaining audit supplements cover native login-library lifetime, stalled process inspection, update identity refusal, Quit attempt ordering, native plist compatibility and main-entrypoint Quit wiring:
 
 ```sh
-bun test tests/audit/a1-login-lifetime.test.ts tests/audit/a12-bounded-inspection.test.ts
-bun test tests/audit/pending -t 'A[23456]:'
+bun test tests/audit
 ```
 
-Source and packaged acceptance statuses are tracked individually in `IMPLEMENTATION-PLAN.md`; the audit directory retains its original names after corrections.
+The default suites cover compiled build identity, startup cancellation, crash residue, discovery framing and archive numbers.
+Duplicate audit reproductions for those behaviors are omitted; [the audit guide](audit/README.md) maps them to their maintained tests.
+
+The checkpoints below record historical source and packaged acceptance separately; the audit directory retains its original names after corrections.
 Do not use an unfiltered `bun test` run as the green-suite command.
 The A2-A6/A12 source checks passed with 504 unit/integration tests, 54 component tests, 20 browser tests, four isolated development-native scenarios, five pinned SDK helper tests, and eight private-hook tests.
 Evidence is under `.cache/src-audit-a2-a6/20261104T085208Z/`.
@@ -57,7 +59,7 @@ Earlier signed `0.3.1` evidence below predates this remediation and does not cer
 
 The later direct review reopened source closure for native signal provenance and executable access.
 The corrections have local verification and focused self-review only; no Kimi, subagents, workflows, or new independent review were used.
-Current acceptance and evidence are recorded in [the current ledger](../IMPLEMENTATION-PLAN.md#current-acceptance-criteria) and `.cache/review-boundary-fixes/20261104T184453Z/`.
+Evidence for these corrections is under `.cache/review-boundary-fixes/20261104T184453Z/`; the later [validation record](UPDATER-VALIDATION.md) reports the unresolved packaged acceptance failures.
 
 Two explicit macOS suites require project-local inputs and fail if prerequisites are missing:
 
@@ -85,7 +87,7 @@ The default suite also covers the shared pinned layout, owner-execute archive po
 
 The earlier independent combined-source review of A7-A11/A13 and connected ownership/lifecycle behavior reported no remaining findings.
 That blanket conclusion is superseded by the direct-review corrections above.
-Evidence is under `.cache/src-audit-combined-review/20261104T173332Z/` and [the source-closure record](../IMPLEMENTATION-PLAN.md#independent-combined-source-closure).
+Evidence for this historical checkpoint is under `.cache/src-audit-combined-review/20261104T173332Z/`.
 One suspected A13 cancellation race was withdrawn after pinned-source tracing and 40 natural runtime cases; no production correction was needed.
 The final unit suite passes 591 tests with 4,704 assertions; 62 components, 22 browser tests, 32 audit tests, five SDK helper tests, eight private-hook tests and four development-native scenarios passed on unchanged production bytes in the same run.
 Type checking, lint and scoped LSP diagnostics pass.
@@ -246,5 +248,5 @@ Current evidence is under `.cache/auto-update-0.3.1/final-acceptance/`; the earl
 
 Core, main, and dedicated regression suites are included in the default unit command.
 Audit reproductions and native helper acceptance retain the explicit commands above.
-Current results and limits are recorded in [A2-A6 and A12 source completion](../IMPLEMENTATION-PLAN.md#a2-a6-and-a12-source-completion).
+The [audit remediation checkpoint](#current-audit-remediation) records A2-A6 and A12 source verification; the later [validation record](UPDATER-VALIDATION.md) reports the unresolved packaged acceptance failures.
 The earlier signed acceptance and F1-F5 records remain historical.

@@ -54,7 +54,7 @@ Dismissing a banner does not resolve the underlying failure; a new occurrence ca
 The 2026-11-05 validation passed source/SDK checks and fresh signed `0.3.1` build verification, but packaged acceptance remains incomplete.
 The required delayed-renderer case failed twice before its completed-startup marker and update-trigger receipt; attribution to the application or fixture remains unresolved.
 The HTTP-503 case also had two failures before three passing diagnostic-fixture runs.
-See [validation results](IMPLEMENTATION-PLAN.md#validation-results-2026-11-05) for evidence, passing cases, and limits.
+See [validation results](tests/UPDATER-VALIDATION.md) for evidence, passing cases, and limits.
 No release was published or installed.
 The public latest release remains `0.3.0`, which has no updater, and the required updater assets are not published.
 

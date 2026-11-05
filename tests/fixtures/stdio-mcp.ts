@@ -11,9 +11,7 @@ if (process.env.DESCENDANT_PID_FILE) {
 if (process.env.PRIVATE_DIAGNOSTIC) process.stderr.write(process.env.PRIVATE_DIAGNOSTIC);
 if (process.env.SYNTHETIC_EXIT_CODE) process.exit(Number(process.env.SYNTHETIC_EXIT_CODE));
 const pending = new Map<string | number, ReturnType<typeof setTimeout>>();
-const clientResponses = new Map<string | number, string | number>();
 let count = 0;
-let serverRequestCount = 0;
 const send = (message: unknown) => process.stdout.write(`${JSON.stringify(message)}\n`);
 // Tests can hold real process-group cleanup until admission has been checked.
 if (process.env.CLEANUP_GATE_FILE) {
@@ -32,31 +30,10 @@ if (process.env.CLEANUP_GATE_FILE) {
 const input = createInterface({ input: process.stdin });
 input.on("line", (line) => {
   const message: JSONRPCMessage = JSON.parse(line);
-  if (!("method" in message)) {
-    // A client response to a server-originated request completes its tool call.
-    if ("id" in message && (typeof message.id === "string" || typeof message.id === "number")) {
-      const callId = clientResponses.get(message.id);
-      if (callId !== undefined) {
-        clientResponses.delete(message.id);
-        const payload = "result" in message ? message.result : message.error;
-        send({
-          jsonrpc: "2.0",
-          id: callId,
-          result: {
-            content: [{ type: "text", text: JSON.stringify({ clientResponse: payload }) }],
-          },
-        });
-      }
-    }
-    return;
-  }
+  if (!("method" in message)) return;
   if (!("id" in message)) {
-    if (process.env.NOTIFICATION_LOG)
-      appendFileSync(process.env.NOTIFICATION_LOG, `${message.method}\n`);
     if (message.method === "notifications/cancelled") {
       const id = message.params?.requestId;
-      // Tests can keep a cancelled call running so its late reply races newer work.
-      if (process.env.LATE_REPLY_ON_CANCEL) return;
       if (typeof id === "string" || typeof id === "number") {
         clearTimeout(pending.get(id));
         pending.delete(id);
@@ -66,15 +43,6 @@ input.on("line", (line) => {
   }
   const respond = (result: unknown) => send({ jsonrpc: "2.0", id: message.id, result });
   if (message.method === "initialize") {
-    const clientInfo = message.params?.clientInfo;
-    if (
-      process.env.HANG_INITIALIZE ||
-      (typeof clientInfo === "object" &&
-        clientInfo !== null &&
-        "name" in clientInfo &&
-        clientInfo.name === process.env.HANG_INITIALIZE_CLIENT)
-    )
-      return;
     respond({
       protocolVersion: "2025-03-26",
       capabilities: { tools: {} },
@@ -92,30 +60,8 @@ input.on("line", (line) => {
     const args = params?.arguments as
       | { value?: string; delay?: number; marker?: string }
       | undefined;
-    // Record the backend-facing id separately from the test's marker so
-    // legacy wire-id remapping is asserted rather than hidden.
     if (process.env.CALL_LOG)
       appendFileSync(process.env.CALL_LOG, `${message.id}\t${args?.marker ?? ""}\n`);
-    if (params?.name === "server-request") {
-      // A backend server-originated request plus progress/log traffic, sent
-      // while this call is pending so session routing is exercised.
-      const requestId = ++serverRequestCount;
-      clientResponses.set(requestId, message.id);
-      const meta = (message.params as { _meta?: { progressToken?: unknown } } | undefined)?._meta;
-      if (typeof meta?.progressToken === "string" || typeof meta?.progressToken === "number")
-        send({
-          jsonrpc: "2.0",
-          method: "notifications/progress",
-          params: { progressToken: meta.progressToken, progress: 1, total: 2 },
-        });
-      send({
-        jsonrpc: "2.0",
-        method: "notifications/message",
-        params: { level: "info", data: "synthetic-backend-notification" },
-      });
-      send({ jsonrpc: "2.0", id: requestId, method: "roots/list" });
-      return;
-    }
     if (params?.name === "ask" && !params.requestState) {
       respond({
         resultType: "input_required",
@@ -140,34 +86,6 @@ input.on("line", (line) => {
         },
       ],
     };
-    if (
-      process.env.MALFORMED_RESPONSE_MARKER &&
-      args?.marker === process.env.MALFORMED_RESPONSE_MARKER
-    ) {
-      // Emit a malformed terminal envelope first, then a valid reply later.
-      const shape = process.env.MALFORMED_RESPONSE_SHAPE ?? "no-result";
-      if (shape === "no-result") send({ jsonrpc: "2.0", id: message.id });
-      else if (shape === "both")
-        send({
-          jsonrpc: "2.0",
-          id: message.id,
-          result: {},
-          error: { code: -32603, message: "synthetic both" },
-        });
-      else if (shape === "null") send(null);
-      else send(7);
-      if (process.env.MALFORMED_SIGNAL_FILE)
-        appendFileSync(process.env.MALFORMED_SIGNAL_FILE, "malformed\n");
-      const id = message.id;
-      pending.set(
-        id,
-        setTimeout(() => {
-          pending.delete(id);
-          respond(result);
-        }, 200),
-      );
-      return;
-    }
     if (params?.name === "delay") {
       const id = message.id;
       pending.set(

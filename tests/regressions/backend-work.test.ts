@@ -2,7 +2,17 @@ import { expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { BACKEND_CAPACITY_ERROR, MAX_BACKEND_CALLS } from "../../src/core/backend-work";
-import { alive, configFor, eventually, pids, setup, stdio, TOKEN } from "../core/helpers";
+import { MAX_CONCURRENT_REQUESTS } from "../../src/core/ingress";
+import {
+  alive,
+  configFor,
+  eventually,
+  ingressCounts,
+  pids,
+  setup,
+  stdio,
+  TOKEN,
+} from "../core/helpers";
 
 // Ordinary regression tests: admission regressions must fail the unit command.
 interface Dispatch {
@@ -126,6 +136,9 @@ test("regression: disconnected modern requests are bounded by one shared backend
       context.controller.snapshot().revision,
     );
     const { address } = await context.controller.start();
+    // biome-ignore lint/complexity/useLiteralKeys: Observe the real listener's shared admission ledgers.
+    const ingress = context.controller["ingress"];
+    if (!ingress) throw new Error("Missing ingress");
     // The shared budget is held by in-flight requests on one endpoint.
     for (let index = 0; index < MAX_BACKEND_CALLS; index++) {
       const marker = `fill-${index}`;
@@ -137,17 +150,28 @@ test("regression: disconnected modern requests are bounded by one shared backend
       );
       await eventually(async () => dispatched(await started(callLog), marker));
     }
+    expect((await pids(pidFile)).filter(alive)).toHaveLength(MAX_BACKEND_CALLS);
+    expect(ingressCounts(ingress)).toMatchObject({
+      resources: MAX_BACKEND_CALLS,
+      calls: MAX_BACKEND_CALLS,
+    });
+    expect(ingressCounts(ingress).active).toBeLessThanOrEqual(MAX_CONCURRENT_REQUESTS);
     // A second endpoint shares the same budget and is refused at capacity.
     const refused = await modern(address as string, "other", 900, "delay", {
       delay: 20,
       marker: "cap-probe",
     });
+    expect(refused.status).toBe(429);
     expect(refused.messages[0]).toMatchObject({ error: BACKEND_CAPACITY_ERROR });
     expect(dispatched(await started(callLog), "cap-probe")).toBe(false);
     expect((await pids(pidFile)).filter(alive).length).toBeLessThanOrEqual(MAX_BACKEND_CALLS);
 
     // Disconnecting every request lets each child's confirmed cleanup free its work.
     for (const abort of aborts.splice(0)) abort.abort();
+    await eventually(async () => (await pids(pidFile)).every((pid) => !alive(pid)));
+    await eventually(
+      () => ingressCounts(ingress).resources === 0 && ingressCounts(ingress).calls === 0,
+    );
     await eventually(
       async () =>
         (

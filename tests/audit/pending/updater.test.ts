@@ -16,7 +16,6 @@ import {
   type CommandRunner,
   runCommand,
 } from "../../../src/main/updater/verify";
-import { eventually } from "../../core/helpers";
 import { infoPlist, versionJson, writeBundleFixture } from "../../fixtures/updater";
 
 const nativeTest = test.skipIf(process.platform !== "darwin");
@@ -32,7 +31,7 @@ const runner: CommandRunner = async (command, args, timeout, signal) => {
     };
   return runCommand(command, args, timeout, signal);
 };
-async function fixture(verifier = new ApplicationVerifier(runner)) {
+async function fixture() {
   await mkdir(resolve(".cache"), { recursive: true });
   const root = await mkdtemp(resolve(".cache/audit-updater-"));
   const home = join(root, "home");
@@ -52,7 +51,7 @@ async function fixture(verifier = new ApplicationVerifier(runner)) {
     home,
     appDataDirectory: join(home, "Library/Application Support"),
     startupReconcileWaitMs: 0,
-    verifier,
+    verifier: new ApplicationVerifier(runner),
   });
   return { root, home, data, channel, temporary, app, boundary };
 }
@@ -146,51 +145,3 @@ nativeTest(
     }
   },
 );
-
-nativeTest("A5: abandonment cancels and joins the actual pending startup verifier", async () => {
-  let entered = false;
-  let finished = false;
-  let signalSeen: AbortSignal | undefined;
-  let release = () => {};
-  const gate = new Promise<void>((done) => {
-    release = done;
-  });
-  class PausedVerifier extends ApplicationVerifier {
-    override async inspect(path: string, signal?: AbortSignal) {
-      entered = true;
-      signalSeen = signal;
-      await gate;
-      try {
-        return await super.inspect(path, signal);
-      } finally {
-        finished = true;
-      }
-    }
-  }
-  const f = await fixture(new PausedVerifier(runner));
-  let abandoned = false;
-  const reconcile = f.boundary.reconcile().then(
-    (value) => ({ value }),
-    (error: unknown) => ({ error }),
-  );
-  let abandonment: Promise<void> | undefined;
-  try {
-    await eventually(() => entered);
-    abandonment = f.boundary.abandonPrepared().then(() => {
-      abandoned = true;
-    });
-    await Bun.sleep(40);
-    expect({ cancelled: signalSeen?.aborted === true, abandoned, finished }).toEqual({
-      cancelled: true,
-      abandoned: false,
-      finished: false,
-    });
-  } finally {
-    release();
-    await reconcile;
-    await abandonment;
-    await f.boundary.abandonPrepared();
-    expect(finished).toBe(true);
-    await rm(f.root, { recursive: true });
-  }
-});

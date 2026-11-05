@@ -220,7 +220,6 @@ test("real App CRUD, gateway, MCP transports, login preferences and close cleanu
   expect(await bridge.control("close")).toEqual({
     closed: true,
     livePids: [],
-    upstreamSessions: 0,
   });
   expect(errors).toEqual([]);
   console.log(

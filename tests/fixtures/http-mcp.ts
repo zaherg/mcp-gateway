@@ -22,7 +22,6 @@ export async function httpFixture(
   token: string;
   receivedAuthorization: string[];
   receivedHeaders: IncomingHttpHeaders[];
-  sessionCount(): number;
   activeReplyCount(): number;
   close(): Promise<void>;
 }> {
@@ -156,7 +155,6 @@ export async function httpFixture(
     token,
     receivedAuthorization,
     receivedHeaders,
-    sessionCount: () => 0,
     activeReplyCount: () => replies.size,
     close: async () => {
       for (const socket of sockets) socket.destroy();

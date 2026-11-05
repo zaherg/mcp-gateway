@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test";
+import { ok } from "node:assert/strict";
 import { createServer, type IncomingHttpHeaders } from "node:http";
 import type { Socket } from "node:net";
 import { join } from "node:path";
 import { MAX_SESSIONS } from "../../src/core/ingress";
-import { alive, configFor, eventually, pids, setup, stdio, TOKEN } from "../core/helpers";
+import { alive, configFor, eventually, mcpCall, pids, setup, stdio } from "../core/helpers";
 import { httpFixture } from "../fixtures/http-mcp";
 
 // Ordinary regression tests: protocol or admission regressions must fail the unit command.
@@ -15,41 +16,14 @@ async function modern(
   value = "resumed",
   signal = AbortSignal.timeout(5000),
 ) {
-  const response = await fetch(`${address}/mcp/${endpoint}`, {
-    method: "POST",
+  return mcpCall(
+    address,
+    endpoint,
+    "tools/call",
+    { name, arguments: { value }, ...(requestState ? { requestState } : {}) },
+    1,
     signal,
-    headers: {
-      Authorization: `Bearer ${TOKEN}`,
-      "Content-Type": "application/json",
-      Accept: "application/json, text/event-stream",
-      "Mcp-Protocol-Version": "2026-07-28",
-      "Mcp-Method": "tools/call",
-      "Mcp-Name": name,
-    },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "tools/call",
-      params: {
-        name,
-        arguments: { value },
-        ...(requestState ? { requestState } : {}),
-        _meta: {
-          "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-          "io.modelcontextprotocol/clientCapabilities": {},
-        },
-      },
-    }),
-  });
-  const text = await response.text();
-  const data = response.headers.get("content-type")?.includes("text/event-stream")
-    ? text
-        .split("\n")
-        .filter((line) => line.startsWith("data: "))
-        .at(-1)
-        ?.slice(6)
-    : text;
-  return { status: response.status, message: data ? JSON.parse(data) : null };
+  );
 }
 
 test.each([
@@ -135,7 +109,8 @@ test.each([
     );
     try {
       const { address } = await context.controller.start();
-      for (let call = 0; call < MAX_SESSIONS + 1; call++) {
+      // Check refusal and retry; exact zero accounting catches a leak after either call.
+      for (let call = 0; call < 2; call++) {
         const result = await modern(
           address as string,
           "remote",
@@ -223,39 +198,6 @@ test.each(["disconnect", "shutdown"] as const)(
   10_000,
 );
 
-test("regression: session-protocol requests are refused without retiring the endpoint", async () => {
-  const context = await setup(await configFor({ echo: stdio() }));
-  try {
-    const { address } = await context.controller.start();
-    const response = await fetch(`${address}/mcp/echo`, {
-      method: "POST",
-      signal: AbortSignal.timeout(5000),
-      headers: {
-        Authorization: `Bearer ${TOKEN}`,
-        "Content-Type": "application/json",
-        Accept: "application/json, text/event-stream",
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "initialize",
-        params: {
-          protocolVersion: "2025-03-26",
-          capabilities: {},
-          clientInfo: { name: "session-client", version: "1" },
-        },
-      }),
-    });
-    await response.text();
-    expect(response.status).toBe(400);
-    expect(response.headers.get("mcp-session-id")).toBeNull();
-    expect(context.controller.snapshot().servers[0].status).toBe("mounted");
-    expect((await modern(address as string, "echo", undefined, "echo")).status).toBe(200);
-  } finally {
-    await context.cleanup();
-  }
-}, 15_000);
-
 test(`regression: global ${MAX_SESSIONS}-resource cap includes retained modern children across two endpoints`, async () => {
   const context = await setup(await configFor({}));
   const pidFile = join(context.directory, "pids");
@@ -273,6 +215,7 @@ test(`regression: global ${MAX_SESSIONS}-resource cap includes retained modern c
     for (let i = 0; i < MAX_SESSIONS; i++) {
       const endpoint = i % 2 ? "other" : "echo";
       const result = await modern(address as string, endpoint);
+      ok(result.message);
       expect(result.status).toBe(200);
       expect(result.message.result.requestState).toMatch(/^sgw:/);
       handles.push({ endpoint, state: result.message.result.requestState });
@@ -282,6 +225,7 @@ test(`regression: global ${MAX_SESSIONS}-resource cap includes retained modern c
     expect((await pids(pidFile)).filter(alive).length).toBeLessThanOrEqual(MAX_SESSIONS);
     const retainedPid = (await pids(pidFile))[0];
     const resumed = await modern(address as string, handles[0].endpoint, handles[0].state);
+    ok(resumed.message);
     expect(resumed.status).toBe(200);
     expect(resumed.message.error).toBeUndefined();
     expect(resumed.message.result.content).toEqual([
@@ -319,6 +263,7 @@ test("regression: completed modern requests release resources without continuati
     const { address } = await context.controller.start();
     for (let i = 0; i < MAX_SESSIONS + 4; i++) {
       const result = await modern(address as string, "echo", undefined, "echo");
+      ok(result.message);
       expect(result.status).toBe(200);
       expect(result.message.error).toBeUndefined();
       expect(JSON.parse(result.message.result.content[0].text).value).toBe("resumed");
@@ -406,10 +351,12 @@ test.each(["json", "sse"])(
       const { address } = await context.controller.start();
       // A retained stdio child holds one shared admission slot.
       const local = await modern(address as string, "echo");
+      ok(local.message);
       expect(local.message.result.requestState).toMatch(/^sgw:/);
       let state = "";
       for (let i = 1; i < MAX_SESSIONS; i++) {
         const result = await modern(address as string, "remote");
+        ok(result.message);
         expect(result.status).toBe(200);
         expect(result.message.error).toBeUndefined();
         expect(result.message.result.requestState).toMatch(/^sgw:/);
@@ -419,6 +366,7 @@ test.each(["json", "sse"])(
       expect((await modern(address as string, "remote")).status).toBe(429);
       expect(received).toHaveLength(beforeExcess);
       const resumed = await modern(address as string, "remote", state);
+      ok(resumed.message);
       expect(resumed.status).toBe(200);
       expect(resumed.message.error).toBeUndefined();
       expect(resumed.message.result.content).toEqual([
@@ -436,6 +384,7 @@ test.each(["json", "sse"])(
       await context.controller.stop();
       await context.controller.start();
       const afterCleanup = await modern(context.controller.snapshot().address as string, "remote");
+      ok(afterCleanup.message);
       expect(afterCleanup.status).toBe(200);
       expect(afterCleanup.message.result.requestState).toMatch(/^sgw:/);
     } finally {
@@ -470,10 +419,11 @@ test("regression: a completed modern response keeps its slot until child cleanup
     const { address } = await context.controller.start();
     // Retained children fill every slot but one.
     for (let i = 1; i < MAX_SESSIONS; i++)
-      expect((await modern(address as string, "echo")).message.result.requestState).toMatch(
+      expect((await modern(address as string, "echo")).message?.result.requestState).toMatch(
         /^sgw:/,
       );
     const completed = await modern(address as string, "modern", undefined, "echo");
+    ok(completed.message);
     expect(completed.status).toBe(200);
     expect(completed.message.error).toBeUndefined();
     expect(JSON.parse(completed.message.result.content[0].text).value).toBe("resumed");

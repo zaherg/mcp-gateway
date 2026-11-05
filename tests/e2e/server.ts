@@ -98,9 +98,7 @@ async function closeController() {
     await context.controller.close();
   }
   for (const held of heldClients.splice(0)) await held.client.close();
-  await eventually(
-    async () => (await pids(pidFile)).every((pid) => !alive(pid)) && upstream.sessionCount() === 0,
-  );
+  await eventually(async () => (await pids(pidFile)).every((pid) => !alive(pid)));
 }
 try {
   await build({
@@ -239,7 +237,6 @@ try {
             return Response.json({
               closed: true,
               livePids: (await pids(pidFile)).filter(alive),
-              upstreamSessions: upstream.sessionCount(),
             });
           } else if (
             params !== "external" &&

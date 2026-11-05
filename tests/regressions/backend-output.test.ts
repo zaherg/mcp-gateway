@@ -1,46 +1,10 @@
 import { expect, test } from "bun:test";
+import { ok } from "node:assert/strict";
 import { join, resolve } from "node:path";
-import { alive, configFor, eventually, ingressCounts, pids, setup, TOKEN } from "../core/helpers";
+import { alive, configFor, eventually, ingressCounts, mcpCall, pids, setup } from "../core/helpers";
 import { type OutputOptions, outputServer } from "../fixtures/backend-output";
 
 const LIMIT = 4 * 1024 * 1024;
-
-async function call(address: string) {
-  const response = await fetch(`${address}/mcp/echo`, {
-    method: "POST",
-    signal: AbortSignal.timeout(3000),
-    headers: {
-      Authorization: `Bearer ${TOKEN}`,
-      "Content-Type": "application/json",
-      Accept: "application/json, text/event-stream",
-      "Mcp-Protocol-Version": "2026-07-28",
-      "Mcp-Method": "tools/call",
-      "Mcp-Name": "large",
-    },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 7,
-      method: "tools/call",
-      params: {
-        name: "large",
-        arguments: {},
-        _meta: {
-          "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-          "io.modelcontextprotocol/clientCapabilities": {},
-        },
-      },
-    }),
-  });
-  const text = await response.text();
-  const data = response.headers.get("content-type")?.includes("text/event-stream")
-    ? text
-        .split("\n")
-        .filter((line) => line.startsWith("data: "))
-        .at(-1)
-        ?.slice(6)
-    : text;
-  return data ? JSON.parse(data) : undefined;
-}
 
 for (const format of ["line", "sse", "json"] as const) {
   const scenarios = [
@@ -86,7 +50,15 @@ for (const format of ["line", "sse", "json"] as const) {
         // biome-ignore lint/complexity/useLiteralKeys: Observe shared admission through the real gateway.
         const ingress = context.controller["ingress"];
         if (!ingress) throw new Error("Missing ingress");
-        const message = await call(address);
+        const { message } = await mcpCall(
+          address,
+          "echo",
+          "tools/call",
+          { name: "large", arguments: {} },
+          7,
+          AbortSignal.timeout(3000),
+        );
+        ok(message, "Expected an MCP response envelope");
         expect(message.id).toBe(7);
         const succeeds = scenario === "exact" || scenario === "many-events";
         if (succeeds) {

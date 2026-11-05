@@ -2,14 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { access, readFile, rm } from "node:fs/promises";
 import { request } from "node:http";
 import { join } from "node:path";
-import { MAX_BACKEND_CALLS } from "../../src/core/backend-work";
-import {
-  GatewayIngress,
-  MAX_BODY_BYTES,
-  MAX_CONCURRENT_REQUESTS,
-  MAX_REQUESTS_PER_MINUTE,
-  MAX_SESSIONS,
-} from "../../src/core/ingress";
+import { GatewayIngress, MAX_BODY_BYTES, MAX_REQUESTS_PER_MINUTE } from "../../src/core/ingress";
 import { httpFixture } from "../fixtures/http-mcp";
 import {
   alive,
@@ -17,6 +10,7 @@ import {
   connect,
   eventually,
   ingressCounts,
+  mcpCall,
   pids,
   setup,
   stdio,
@@ -81,42 +75,15 @@ async function modernCall(
   name = "echo",
   args: Record<string, unknown> = {},
   signal?: AbortSignal,
-  // biome-ignore lint/suspicious/noExplicitAny: Parsed JSON-RPC envelope from the loopback gateway.
-): Promise<{ status: number; message: Record<string, any> | null }> {
-  const response = await fetch(`${address}/mcp/echo`, {
-    method: "POST",
-    signal: signal ?? AbortSignal.timeout(5_000),
-    headers: {
-      Authorization: `Bearer ${TOKEN}`,
-      "Content-Type": "application/json",
-      Accept: "application/json, text/event-stream",
-      "Mcp-Protocol-Version": "2026-07-28",
-      "Mcp-Method": "tools/call",
-      "Mcp-Name": name,
-    },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "tools/call",
-      params: {
-        name,
-        arguments: args,
-        _meta: {
-          "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-          "io.modelcontextprotocol/clientCapabilities": {},
-        },
-      },
-    }),
-  });
-  const text = await response.text();
-  const data = response.headers.get("content-type")?.includes("text/event-stream")
-    ? text
-        .split("\n")
-        .filter((line) => line.startsWith("data: "))
-        .at(-1)
-        ?.slice(6)
-    : text;
-  return { status: response.status, message: data ? JSON.parse(data) : null };
+) {
+  return mcpCall(
+    address,
+    "echo",
+    "tools/call",
+    { name, arguments: args },
+    1,
+    signal ?? AbortSignal.timeout(5_000),
+  );
 }
 
 describe("shared MCP ingress", () => {
@@ -129,58 +96,19 @@ describe("shared MCP ingress", () => {
     try {
       const { address } = await context.controller.start();
       let id = 0;
-      const modern = async (name: string, method: string, params: Record<string, unknown> = {}) => {
-        const response = await fetch(`${address}/mcp/${name}`, {
-          method: "POST",
-          signal: AbortSignal.timeout(5_000),
-          headers: {
-            Authorization: `Bearer ${TOKEN}`,
-            "Content-Type": "application/json",
-            Accept: "application/json, text/event-stream",
-            "Mcp-Protocol-Version": "2026-07-28",
-            "Mcp-Method": method,
-            ...(typeof params.name === "string" ? { "Mcp-Name": params.name } : {}),
-          },
-          body: JSON.stringify({
-            jsonrpc: "2.0",
-            id: ++id,
-            method,
-            params: {
-              ...params,
-              _meta: {
-                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-                "io.modelcontextprotocol/clientCapabilities": {},
-              },
-            },
-          }),
-        });
-        const text = await response.text();
-        const data = response.headers.get("content-type")?.includes("text/event-stream")
-          ? text
-              .split("\n")
-              .filter((line) => line.startsWith("data: "))
-              .at(-1)
-              ?.slice(6)
-          : text;
-        return {
-          status: response.status,
-          message: JSON.parse(data ?? "null") as {
-            result?: Record<string, unknown>;
-            error?: unknown;
-          },
-        };
-      };
+      const modern = (name: string, method: string, params: Record<string, unknown> = {}) =>
+        mcpCall(address as string, name, method, params, ++id, AbortSignal.timeout(5_000));
       const listed = await modern("echo", "tools/list");
       expect(listed.status).toBe(200);
-      expect(listed.message.result?.tools).toBeArray();
+      expect(listed.message?.result?.tools).toBeArray();
       const echoed = await modern("echo", "tools/call", {
         name: "echo",
         arguments: { value: "modern-value" },
       });
       expect(echoed.status).toBe(200);
-      expect(textValue(echoed.message.result ?? {}).value).toBe("modern-value");
+      expect(textValue(echoed.message?.result ?? {}).value).toBe("modern-value");
       const asking = await modern("echo", "tools/call", { name: "ask", arguments: {} });
-      const handle = asking.message.result?.requestState;
+      const handle = asking.message?.result?.requestState;
       expect(handle).toMatch(/^sgw:/);
       const crossEndpoint = await modern("other", "tools/call", {
         name: "ask",
@@ -197,7 +125,7 @@ describe("shared MCP ingress", () => {
         arguments: { value: "resumed" },
       });
       expect(resumed.status).toBe(200);
-      expect(textValue(resumed.message.result ?? {}).value).toBe("resumed");
+      expect(textValue(resumed.message?.result ?? {}).value).toBe("resumed");
       await context.controller.stop();
       await eventually(async () => (await pids(pidFile)).every((pid) => !alive(pid)));
     } finally {
@@ -297,7 +225,6 @@ describe("shared MCP ingress", () => {
         upstream.receivedAuthorization.every((header) => header === `Bearer ${upstream.token}`),
       ).toBe(true);
       for (const client of clients.splice(0)) await client.close();
-      await eventually(() => upstream.sessionCount() === 0);
     } finally {
       for (const client of clients) await client.close().catch(() => {});
       await context.cleanup();
@@ -621,51 +548,6 @@ describe("shared MCP ingress", () => {
     }
   }, 20_000);
 
-  test(`disconnected modern requests are bounded by one shared ${MAX_BACKEND_CALLS}-call backend work budget`, async () => {
-    const directory = await testDirectory();
-    const pidFile = join(directory, "pids");
-    const context = await setup(await configFor({ echo: stdio({ PID_FILE: pidFile }) }));
-    const aborts: AbortController[] = [];
-    try {
-      const { address } = await context.controller.start();
-      // biome-ignore lint/complexity/useLiteralKeys: Observe shared admission through the real gateway.
-      const ingress = context.controller["ingress"];
-      if (!ingress) throw new Error("Missing ingress");
-      const fills: Array<Promise<unknown>> = [];
-      for (let index = 0; index < MAX_BACKEND_CALLS; index++) {
-        const abort = new AbortController();
-        aborts.push(abort);
-        fills.push(
-          modernCall(address as string, "delay", { delay: 10_000 }, abort.signal).then(
-            () => null,
-            () => null,
-          ),
-        );
-      }
-      await eventually(
-        async () => (await pids(pidFile)).filter(alive).length === MAX_BACKEND_CALLS,
-      );
-      await eventually(() => ingressCounts(ingress).calls === MAX_BACKEND_CALLS);
-      // The next request is admitted at the HTTP boundary but refused the backend work.
-      const refused = await modernCall(address as string, "echo", { value: "probe" });
-      expect(refused.status).toBe(429);
-      expect(refused.message?.error?.code).toBe(1001);
-      expect((await pids(pidFile)).filter(alive).length).toBeLessThanOrEqual(MAX_BACKEND_CALLS);
-      for (const abort of aborts.splice(0)) abort.abort();
-      await fills;
-      await eventually(async () => (await pids(pidFile)).every((pid) => !alive(pid)));
-      await eventually(
-        async () =>
-          (await modernCall(address as string, "echo", { value: "after" })).status === 200,
-      );
-    } finally {
-      for (const abort of aborts) abort.abort();
-      const owned = await pids(pidFile);
-      await context.cleanup();
-      await eventually(() => owned.every((pid) => !alive(pid)));
-    }
-  }, 30_000);
-
   test("an incomplete body holds one HTTP slot until disconnect", async () => {
     const context = await setup(await configFor({ echo: stdio() }));
     const slow: ReturnType<typeof request>[] = [];
@@ -711,40 +593,6 @@ describe("shared MCP ingress", () => {
       expect(await raw(address as string, "/mcp/echo")).toBe(429);
     } finally {
       await context.cleanup();
-    }
-  }, 30_000);
-
-  test("in-flight calls charge resource and backend-work ledgers together under the HTTP concurrency cap", async () => {
-    const directory = await testDirectory();
-    const pidFile = join(directory, "pids");
-    const context = await setup(await configFor({ echo: stdio({ PID_FILE: pidFile }) }));
-    const aborts: AbortController[] = [];
-    try {
-      const { address } = await context.controller.start();
-      // biome-ignore lint/complexity/useLiteralKeys: Observe the owned listener's admission ledgers.
-      const ingress = context.controller["ingress"];
-      if (!ingress) throw new Error("Missing ingress");
-      for (let index = 0; index < MAX_SESSIONS; index++) {
-        const abort = new AbortController();
-        aborts.push(abort);
-        void modernCall(address as string, "delay", { delay: 20_000 }, abort.signal).catch(
-          () => {},
-        );
-      }
-      await eventually(async () => (await pids(pidFile)).filter(alive).length === MAX_SESSIONS);
-      await eventually(() => ingressCounts(ingress).resources === MAX_SESSIONS);
-      expect(ingressCounts(ingress).calls).toBe(MAX_SESSIONS);
-      expect(ingressCounts(ingress).active).toBeLessThanOrEqual(MAX_CONCURRENT_REQUESTS);
-      for (const abort of aborts.splice(0)) abort.abort();
-      await eventually(async () => (await pids(pidFile)).every((pid) => !alive(pid)));
-      await eventually(
-        () => ingressCounts(ingress).resources === 0 && ingressCounts(ingress).calls === 0,
-      );
-    } finally {
-      for (const abort of aborts) abort.abort();
-      const owned = await pids(pidFile);
-      await context.cleanup();
-      await eventually(() => owned.every((pid) => !alive(pid)));
     }
   }, 30_000);
 });
