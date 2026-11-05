@@ -4,7 +4,9 @@ A macOS menu-bar app that exposes local stdio and remote Streamable HTTP MCP ser
 Built with Electrobun, Bun, React, TypeScript, Effect, and Tailwind CSS v4.
 
 > [!IMPORTANT]
-> Built with Codex (GPT 6 Astra) so Linux-hosted Hermes agents could access [Bear](https://bear.app/?src=https://github.com/zaherg/mcp-gateway).
+> 
+> Current version was built with Codex (GPT 6 Astra) so that my linux-hosted Hermes agents could access [Bear](https://bear.app/?src=https://github.com/zaherg/mcp-gateway).
+> 
 > For a gateway with more capabilities, see [Executor](https://executor.sh/?src=https://github.com/zaherg/mcp-gateway).
 
 ## Platform status
