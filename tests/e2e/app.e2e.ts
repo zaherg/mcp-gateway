@@ -194,12 +194,8 @@ test("real App CRUD, gateway, MCP transports, login preferences and close cleanu
   await page.getByRole("button", { name: "Start gateway", exact: true }).click();
   await expect(page.getByText("Running", { exact: true })).toBeVisible();
   const probes =
-    await bridge.control<
-      Array<{ name: string; tools: string[]; result: { content: Array<{ text: string }> } }>
-    >("probe");
-  expect(
-    probes.map((probe) => [probe.name, JSON.parse(probe.result.content[0].text).value]),
-  ).toEqual([
+    await bridge.control<Array<{ name: string; tools: string[]; value: string }>>("probe");
+  expect(probes.map((probe) => [probe.name, probe.value])).toEqual([
     ["local", "e2e-local"],
     ["remote", "e2e-remote"],
   ]);
@@ -601,7 +597,8 @@ test("local Logs retain raw synthetic backend values, filter and clear without c
   await page.getByRole("button", { name: "Logs", exact: true }).click();
   const entries = page.getByLabel("Diagnostic entries");
   await expect(entries).toContainText("synthetic-local-password=fixture-only");
-  await expect(entries).toContainText("<script>synthetic-note</script>");
+  // Modern 2026-07-28 protocol bodies are never logged; only fixture stderr is.
+  await expect(entries).not.toContainText("<script>synthetic-note</script>");
   await expect(page.getByText("Sensitive data:", { exact: true })).toBeVisible();
   await page.getByLabel("Level", { exact: true }).selectOption("error");
   await page.getByLabel("Server", { exact: true }).selectOption("echo");

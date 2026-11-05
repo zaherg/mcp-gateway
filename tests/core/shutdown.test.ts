@@ -104,6 +104,8 @@ test("controller Quit retry retains outstanding ingress cleanup until raw comple
   try {
     const started = await controller.start();
     client = await connect(started.address as string);
+    // Retain a backend child so the live-process lifecycle assertion holds.
+    await client.client.callTool({ name: "ask", arguments: {} });
     expect((await pids(pidFile)).some(alive)).toBe(true);
     quit.handle(() => {
       vetoes++;
@@ -293,6 +295,8 @@ test("terminal unconfirmed raw cleanup rejection remains refused on every Quit r
   try {
     const started = await controller.start();
     client = await connect(started.address as string);
+    // Retain a backend child so the live-process lifecycle assertion holds.
+    await client.client.callTool({ name: "ask", arguments: {} });
     expect((await pids(pidFile)).some(alive)).toBe(true);
     mounts.release();
     for (let attempt = 1; attempt <= 3; attempt++) {

@@ -12,6 +12,7 @@ import {
   connect,
   eventually,
   freePort,
+  mcpCall,
   pids,
   setup,
   stdio,
@@ -165,9 +166,9 @@ try {
             };
             await context.controller.saveConfig(JSON.stringify(next), before.revision);
             const started = await context.controller.start();
-            const held = await connect(started.address as string);
-            heldClients.push(held);
-            await held.client.callTool({
+            // Exactly one stateless child so the diagnostic count stays
+            // deterministic; modern 2026-07-28 bodies are never logged.
+            await mcpCall(started.address as string, "echo", "tools/call", {
               name: "echo",
               arguments: { value: "<script>synthetic-note</script>" },
             });
@@ -209,7 +210,16 @@ try {
                   name: "echo",
                   arguments: { value: `e2e-${name}` },
                 });
-                results.push({ name, tools: tools.tools.map((tool) => tool.name), result });
+                // The stdio fixture returns JSON text; the synthetic HTTP
+                // upstream returns the plain value. Normalize both to the value.
+                const text = (result.content as Array<{ text?: string }>)[0]?.text ?? "";
+                let value = text;
+                try {
+                  value = JSON.parse(text).value ?? text;
+                } catch {
+                  /* plain text */
+                }
+                results.push({ name, tools: tools.tools.map((tool) => tool.name), value });
               } finally {
                 await client.close();
               }
@@ -218,7 +228,11 @@ try {
           } else if (params === "hold") {
             const address = context.controller.snapshot().address;
             if (!address) throw new Error("Gateway not running");
-            heldClients.push(await connect(address, "local"));
+            const held = await connect(address, "local");
+            heldClients.push(held);
+            // Retain one backend child so the e2e can observe a live process
+            // while the hold is outstanding and its cleanup on close.
+            await held.client.callTool({ name: "ask", arguments: {} });
             return Response.json({ livePids: (await pids(pidFile)).filter(alive).length });
           } else if (params === "close") {
             await closeController();

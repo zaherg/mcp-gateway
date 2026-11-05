@@ -1,8 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { createServer, request } from "node:http";
+import { createServer } from "node:http";
 import { join, resolve } from "node:path";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { type ControllerOptions, type McpGatewayController, open } from "../../src/core/controller";
 import type { GatewayIngress } from "../../src/core/ingress";
 import type { SelfProxyResolver } from "../../src/core/network";
@@ -130,57 +128,60 @@ export async function within<A>(promise: Promise<A>, timeout = 2_000): Promise<A
   }
 }
 
-/** Raw initialization does not open the SDK client's implicit GET stream. */
-export async function initializeSession(address: string): Promise<string> {
-  return new Promise<string>((resolve, reject) => {
-    const req = request(
-      `${address}/mcp/echo`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${TOKEN}`,
-          "Content-Type": "application/json",
-          Accept: "application/json, text/event-stream",
+export const MODERN_PROTOCOL = "2026-07-28";
+
+/** One stateless MCP 2026-07-28 call through the gateway. */
+export async function mcpCall(
+  address: string,
+  name: string,
+  method: string,
+  params: Record<string, unknown> = {},
+  id: string | number = 1,
+  signal?: AbortSignal,
+  // biome-ignore lint/suspicious/noExplicitAny: Parsed JSON-RPC envelope from the loopback gateway.
+): Promise<{ status: number; message: Record<string, any> | null }> {
+  const response = await fetch(`${address}/mcp/${name}`, {
+    method: "POST",
+    signal: signal ?? AbortSignal.timeout(8_000),
+    headers: {
+      Authorization: `Bearer ${TOKEN}`,
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+      "Mcp-Protocol-Version": MODERN_PROTOCOL,
+      "Mcp-Method": method,
+      ...(typeof params.name === "string" ? { "Mcp-Name": params.name } : {}),
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id,
+      method,
+      params: {
+        ...params,
+        _meta: {
+          "io.modelcontextprotocol/protocolVersion": MODERN_PROTOCOL,
+          "io.modelcontextprotocol/clientCapabilities": {},
         },
       },
-      (res) => {
-        const sessionId = res.headers["mcp-session-id"];
-        res.once("error", reject);
-        res.resume();
-        res.once("end", () => {
-          if (res.statusCode === 200 && typeof sessionId === "string") resolve(sessionId);
-          else reject(new Error(`Initialize failed: ${res.statusCode}`));
-        });
-      },
-    );
-    req.setTimeout(5_000, () => req.destroy(new Error("initialize timeout")));
-    req.once("error", reject);
-    req.end(
-      JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "initialize",
-        params: {
-          protocolVersion: "2025-03-26",
-          capabilities: {},
-          clientInfo: { name: "ingress-saturation", version: "1" },
-        },
-      }),
-    );
+    }),
   });
+  const text = await response.text();
+  const data = response.headers.get("content-type")?.includes("text/event-stream")
+    ? text
+        .split("\n")
+        .filter((line) => line.startsWith("data: "))
+        .at(-1)
+        ?.slice(6)
+    : text;
+  return { status: response.status, message: data ? JSON.parse(data) : null };
 }
 
 /** Observe the real ledgers without adding a production diagnostics API. */
 export function ingressCounts(ingress: GatewayIngress) {
   return {
     // biome-ignore lint/complexity/useLiteralKeys: Typed test access to owned admission state.
-    ordinary: ingress["ordinaryActive"],
-    // biome-ignore lint/complexity/useLiteralKeys: Typed test access to owned admission state.
-    reserved: ingress["reservedActive"],
+    active: ingress["active"],
     // biome-ignore lint/complexity/useLiteralKeys: Typed test access to owned admission state.
     rate: ingress["rateCount"],
-    // biome-ignore lint/complexity/useLiteralKeys: Typed test access to owned admission state.
-    ordinaryRate: ingress["ordinaryRate"],
     // biome-ignore lint/complexity/useLiteralKeys: Typed test access to owned admission state.
     resources: ingress["admission"]["used"],
     // biome-ignore lint/complexity/useLiteralKeys: Typed test access to owned admission state.
@@ -188,35 +189,32 @@ export function ingressCounts(ingress: GatewayIngress) {
   };
 }
 
-export async function connect(
-  address: string,
-  name = "echo",
-): Promise<{
-  client: Client;
-  transport: StreamableHTTPClientTransport;
-  close(): Promise<void>;
-}> {
-  const client = new Client({ name: "synthetic-client", version: "1.0.0" });
-  const transport = new StreamableHTTPClientTransport(new URL(`${address}/mcp/${name}`), {
-    requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } },
-  });
-  try {
-    await client.connect(transport, { timeout: 8_000 });
-  } catch (error) {
-    await client.close();
-    throw error;
-  }
-  return {
-    client,
-    transport,
-    close: async () => {
-      try {
-        await transport.terminateSession();
-      } finally {
-        await client.close();
-      }
-    },
+/** A minimal stateless client; rejects up front when the endpoint is unusable. */
+export async function connect(address: string, name = "echo") {
+  const result = async (method: string, params?: Record<string, unknown>, signal?: AbortSignal) => {
+    const { status, message } = await mcpCall(address, name, method, params, 1, signal);
+    if (status !== 200 || !message || message.error)
+      throw new Error(`MCP ${method} failed: ${status}`);
+    return message.result;
   };
+  await result("tools/list");
+  const client = {
+    listTools: () => result("tools/list") as Promise<{ tools: Array<{ name: string }> }>,
+    callTool: (
+      params: { name: string; arguments?: Record<string, unknown> },
+      _options?: unknown,
+      extra?: { signal?: AbortSignal; timeout?: number },
+    ) =>
+      result("tools/call", params, extra?.signal) as Promise<
+        {
+          content?: Array<{ type: string; text: string }>;
+          isError?: boolean;
+          requestState?: string;
+        } & Record<string, unknown>
+      >,
+    close: async () => {},
+  };
+  return { client, close: async () => {} };
 }
 export async function eventually(
   check: () => boolean | Promise<boolean>,

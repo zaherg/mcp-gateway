@@ -8,9 +8,6 @@ export class RequestBodyError extends Error {
   }
 }
 
-const messagesByRequest = new WeakMap<IncomingMessage, readonly JSONRPCMessage[]>();
-export const requestMessages = (request: IncomingMessage) => messagesByRequest.get(request);
-
 /** One bounded read. The caller owns the deadline and aborts on response/endpoint closure. */
 export async function readRequestBody(
   request: IncomingMessage,
@@ -80,6 +77,5 @@ export async function readRequestBody(
   // Pinned body-parser 1.x checks _body before reading. Keep its exact checked
   // value and skip only its second byte read, never the transport's validation.
   Object.assign(request, { body: Array.isArray(body) ? messages : messages[0], _body: true });
-  messagesByRequest.set(request, messages);
   return messages;
 }

@@ -118,8 +118,10 @@ for (const mode of ["dirty", "unresponsive"] as const) {
           expect(ready.signal).toBe(false);
           expect(ready.lifecycle.phase).toBe("idle");
           client = await connect(`http://127.0.0.1:${config.gateway.port}`);
+          // An ask call retains its backend child so it is alive and observable
+          // until the native signal cleans the gateway up.
           const result = await client.client.callTool({
-            name: "echo",
+            name: "ask",
             arguments: { value: "native-signal" },
           });
           expect(result.isError).not.toBe(true);

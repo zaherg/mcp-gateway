@@ -114,6 +114,9 @@ for (const scenario of ["fresh", "synthetic", "jsonc", "sigterm"] as const) {
       });
       if (reply.isError || !JSON.stringify(reply).includes("native-bundle"))
         throw new Error("Packaged MCP protocol verification failed.");
+      // Stateless echo discards its own child; retain one so the lifecycle
+      // assertions observe a live backend until Quit cleans it up.
+      await client.client.callTool({ name: "ask", arguments: { value: "retained" } });
       if (!(await pids(pidFile)).some(alive))
         throw new Error("No live synthetic child before window lifecycle.");
     }
@@ -136,7 +139,7 @@ for (const scenario of ["fresh", "synthetic", "jsonc", "sigterm"] as const) {
         arguments: { value: "after-window-recreation" },
       });
       if (reply.isError || !JSON.stringify(reply).includes("after-window-recreation"))
-        throw new Error("Live MCP session did not survive the window lifecycle.");
+        throw new Error("Live MCP client did not survive the window lifecycle.");
       if (!(await pids(pidFile)).some(alive))
         throw new Error("No live synthetic child before Quit.");
     }

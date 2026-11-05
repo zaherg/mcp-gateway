@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { mkdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
-import { createServer, request } from "node:http";
+import { createServer } from "node:http";
 import { join } from "node:path";
 import { open } from "../../src/core/controller";
 import {
@@ -140,7 +140,6 @@ describe("McpGatewayController", () => {
           context.controller.saveConfig(snapshot.configText, snapshot.revision),
         ).rejects.toMatchObject({ code: "StaleRevision" });
         expect(changed.revision).not.toBe(snapshot.revision);
-        const sessionId = client.transport.sessionId;
         const reordered = {
           ...context.config,
           mcpServers: {
@@ -149,7 +148,6 @@ describe("McpGatewayController", () => {
         };
         await context.controller.saveConfig(JSON.stringify(reordered), changed.revision);
         expect((await call(client.client, "still-live")).isError).not.toBe(true);
-        expect(client.transport.sessionId).toBe(sessionId);
       } finally {
         await client.close();
       }
@@ -167,13 +165,11 @@ describe("McpGatewayController", () => {
         await connect(address as string, "alpha"),
         await connect(address as string, "beta"),
       );
-      const betaId = clients[1].transport.sessionId;
       const snapshot = context.controller.snapshot();
       const next = structuredClone(context.config);
       next.mcpServers.alpha = stdio({ SYNTHETIC_ENV: "updated" });
       await context.controller.saveConfig(JSON.stringify(next), snapshot.revision);
       expect((await call(clients[1].client, "beta-still-live")).isError).not.toBe(true);
-      expect(clients[1].transport.sessionId).toBe(betaId);
       const freshAlpha = await connect(address as string, "alpha");
       clients.push(freshAlpha);
       await context.controller.restartServer("alpha");
@@ -185,8 +181,12 @@ describe("McpGatewayController", () => {
       );
       expect(disabled.servers.find((entry) => entry.name === "alpha")?.status).toBe("disabled");
       expect(
-        (await fetch(`${address}/mcp/alpha`, { headers: { Authorization: `Bearer ${TOKEN}` } }))
-          .status,
+        (
+          await fetch(`${address}/mcp/alpha`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${TOKEN}` },
+          })
+        ).status,
       ).toBe(404);
       delete next.mcpServers.alpha;
       const removed = await context.controller.saveConfig(JSON.stringify(next), disabled.revision);
@@ -360,63 +360,6 @@ describe("McpGatewayController", () => {
     }
   }, 20_000);
 
-  test("disconnect during initialization cleans only its child and preserves an established sibling session", async () => {
-    const directory = await testDirectory();
-    const pidFile = join(directory, "pids");
-    const context = await setup(
-      await configFor({ echo: stdio({ PID_FILE: pidFile, HANG_INITIALIZE_CLIENT: "disconnect" }) }),
-    );
-    let sibling: Awaited<ReturnType<typeof connect>> | undefined;
-    try {
-      const { address } = await context.controller.start();
-      sibling = await connect(address as string);
-      const [siblingPid] = await pids(pidFile);
-      const req = request(`${address}/mcp/echo`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${TOKEN}`,
-          "Content-Type": "application/json",
-          Accept: "application/json, text/event-stream",
-        },
-      });
-      req.on("error", () => {});
-      req.on("response", (response) => response.resume());
-      req.end(
-        JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "initialize",
-          params: {
-            protocolVersion: "2025-03-26",
-            capabilities: {},
-            clientInfo: { name: "disconnect", version: "1" },
-          },
-        }),
-      );
-      await eventually(async () => (await pids(pidFile)).length === 2);
-      req.destroy();
-      await eventually(async () =>
-        (await pids(pidFile)).filter((pid) => pid !== siblingPid).every((pid) => !alive(pid)),
-      );
-      expect(alive(siblingPid)).toBe(true);
-      expect(context.controller.snapshot().servers[0].status).toBe("mounted");
-      const result = await call(sibling.client, "sibling-survived");
-      expect(result.isError).toBeUndefined();
-      expect(result.content).toEqual([
-        {
-          type: "text",
-          text: JSON.stringify({ value: "sibling-survived", count: 1, pid: siblingPid, argv: [] }),
-        },
-      ]);
-    } finally {
-      await sibling?.close();
-      const ownedPids = await pids(pidFile);
-      await context.cleanup();
-      await eventually(() => ownedPids.every((pid) => !alive(pid)));
-      await rm(directory, { recursive: true, force: true });
-    }
-  }, 15_000);
-
   test("self-closed listener snapshots follow saved settings without losing cleanup ownership", async () => {
     const context = await setup(await configFor({ kept: stdio(), removed: stdio() }));
     try {
@@ -461,6 +404,7 @@ describe("McpGatewayController", () => {
         [next.gateway.token, 404],
       ] as const) {
         const response = await fetch(`${restarted.address}/mcp/removed`, {
+          method: "POST",
           headers: { Authorization: `Bearer ${token}` },
         });
         expect(response.status).toBe(status);
@@ -527,20 +471,10 @@ describe("McpGatewayController", () => {
       expect(context.controller.snapshot().address).not.toBe(first.address);
       const current = context.controller.snapshot();
       const client = await connect(current.address as string);
-      const oldSessionId = client.transport.sessionId as string;
       next.gateway.token = "changed-synthetic-token-0123456789abcdef";
       await context.controller.saveConfig(JSON.stringify(next), current.revision);
       await client.client.close();
-      expect(
-        (
-          await fetch(`${context.controller.snapshot().address}/mcp/echo`, {
-            headers: {
-              Authorization: `Bearer ${next.gateway.token}`,
-              "Mcp-Session-Id": oldSessionId,
-            },
-          })
-        ).status,
-      ).toBe(404);
+      // The old token is rejected after the change; the new token serves modern calls.
       expect(
         (
           await fetch(`${context.controller.snapshot().address}/mcp/echo`, {
@@ -548,6 +482,31 @@ describe("McpGatewayController", () => {
           })
         ).status,
       ).toBe(401);
+      expect(
+        (
+          await fetch(`${context.controller.snapshot().address}/mcp/echo`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${next.gateway.token}`,
+              "Content-Type": "application/json",
+              Accept: "application/json, text/event-stream",
+              "Mcp-Protocol-Version": "2026-07-28",
+              "Mcp-Method": "tools/list",
+            },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              method: "tools/list",
+              params: {
+                _meta: {
+                  "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                  "io.modelcontextprotocol/clientCapabilities": {},
+                },
+              },
+            }),
+          })
+        ).status,
+      ).toBe(200);
     } finally {
       await context.cleanup();
     }
@@ -820,39 +779,42 @@ test("a cancelled external refresh is revalidated by the next Start instead of r
     const noop = await context.controller.saveConfig(text, restarted.revision);
     expect(noop.revision).toBe(restarted.revision);
 
-    const initialize = JSON.stringify({
+    const request = JSON.stringify({
       jsonrpc: "2.0",
       id: 1,
-      method: "initialize",
+      method: "tools/list",
       params: {
-        protocolVersion: "2025-03-26",
-        capabilities: {},
-        clientInfo: { name: "external-refresh", version: "1" },
+        _meta: {
+          "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+          "io.modelcontextprotocol/clientCapabilities": {},
+        },
       },
     });
     const headers = {
       Authorization: `Bearer ${next.gateway.token}`,
       "Content-Type": "application/json",
       Accept: "application/json, text/event-stream",
+      "Mcp-Protocol-Version": "2026-07-28",
+      "Mcp-Method": "tools/list",
     };
     const active = await fetch(`${restarted.address}/mcp/other`, {
       method: "POST",
       headers,
-      body: initialize,
+      body: request,
     });
     expect(active.status).toBe(200);
     await active.text();
     const staleToken = await fetch(`${restarted.address}/mcp/other`, {
       method: "POST",
       headers: { ...headers, Authorization: `Bearer ${TOKEN}` },
-      body: initialize,
+      body: request,
     });
     expect(staleToken.status).toBe(401);
     await staleToken.text();
     const staleRoute = await fetch(`${restarted.address}/mcp/echo`, {
       method: "POST",
       headers,
-      body: initialize,
+      body: request,
     });
     expect(staleRoute.status).toBe(404);
     await staleRoute.text();

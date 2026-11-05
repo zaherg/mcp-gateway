@@ -14,15 +14,10 @@ import { ResourceAdmission } from "./resource-admission";
 
 export const MAX_BODY_BYTES = 4 * 1024 * 1024;
 export const MAX_CONCURRENT_REQUESTS = 32;
-export const MAX_CONTROL_REQUESTS = 4;
-export const MAX_ORDINARY_REQUESTS = MAX_CONCURRENT_REQUESTS - MAX_CONTROL_REQUESTS;
 export const MAX_SESSIONS = 16;
 export const REQUEST_DEADLINE_MS = 30_000;
 const MAX_CONNECTIONS = 64;
-const MAX_REQUESTS_PER_MINUTE = 240;
-export const MAX_CONTROL_REQUESTS_PER_MINUTE = 16;
-export const MAX_ORDINARY_REQUESTS_PER_MINUTE =
-  MAX_REQUESTS_PER_MINUTE - MAX_CONTROL_REQUESTS_PER_MINUTE;
+export const MAX_REQUESTS_PER_MINUTE = 240;
 interface Endpoint {
   mount: GatewayMount;
   fingerprint: string;
@@ -40,10 +35,8 @@ export class GatewayIngress {
   // One backend-work budget shared by every endpoint and session.
   private readonly work = new BackendCalls(MAX_BACKEND_CALLS);
   private selected: InterfaceChoice;
-  private ordinaryActive = 0;
-  private reservedActive = 0;
+  private active = 0;
   private rateStart = Date.now();
-  private ordinaryRate = 0;
   private rateCount = 0;
   private closed = false;
   private closePromise: Promise<void> | undefined;
@@ -252,7 +245,9 @@ export class GatewayIngress {
       reject(403);
       return;
     }
-    if (!["POST", "GET", "DELETE"].includes(req.method ?? "")) {
+    // MCP 2026-07-28 is stateless: every message is a POST.
+    if (req.method !== "POST") {
+      res.setHeader("Allow", "POST");
       reject(405);
       return;
     }
@@ -272,41 +267,22 @@ export class GatewayIngress {
       reject(413);
       return;
     }
-    if (
-      req.method !== "POST" &&
-      (req.headers["transfer-encoding"] !== undefined || Number(length ?? 0) > 0)
-    ) {
-      reject(400);
-      return;
-    }
     if (req.headers["content-encoding"] && req.headers["content-encoding"] !== "identity") {
       reject(415);
       return;
     }
     if (Date.now() - this.rateStart >= 60_000) {
       this.rateStart = Date.now();
-      this.ordinaryRate = 0;
       this.rateCount = 0;
     }
-    const reserved =
-      this.ordinaryActive >= MAX_ORDINARY_REQUESTS ||
-      this.ordinaryRate >= MAX_ORDINARY_REQUESTS_PER_MINUTE;
-    if (
-      this.ordinaryActive + this.reservedActive >= MAX_CONCURRENT_REQUESTS ||
-      this.rateCount >= MAX_REQUESTS_PER_MINUTE ||
-      (reserved && this.reservedActive >= MAX_CONTROL_REQUESTS)
-    ) {
+    if (this.active >= MAX_CONCURRENT_REQUESTS || this.rateCount >= MAX_REQUESTS_PER_MINUTE) {
       reject(429);
       return;
     }
     // Charge once before reading. Refused and disconnected parsers never refund
     // tokens, and settlement in a later minute cannot corrupt that window.
     this.rateCount++;
-    if (reserved) this.reservedActive++;
-    else {
-      this.ordinaryActive++;
-      this.ordinaryRate++;
-    }
+    this.active++;
     const controller = new AbortController();
     const requestError = () => {
       controller.abort();
@@ -315,7 +291,6 @@ export class GatewayIngress {
     req.once("error", requestError);
     req.once("close", () => req.off("error", requestError));
     let finished = false;
-    let releaseControl: (() => void) | undefined;
     const timeout = setTimeout(() => {
       if (!res.headersSent) reject(504);
       else res.destroy();
@@ -327,9 +302,7 @@ export class GatewayIngress {
       finished = true;
       clearTimeout(timeout);
       controller.abort();
-      releaseControl?.();
-      if (reserved) this.reservedActive--;
-      else this.ordinaryActive--;
+      this.active--;
       endpoint.responses.delete(res);
     };
     endpoint.responses.add(res);
@@ -337,10 +310,7 @@ export class GatewayIngress {
     res.once("close", done);
     void (async () => {
       try {
-        const messages =
-          req.method === "POST"
-            ? await readRequestBody(req, MAX_BODY_BYTES, controller.signal)
-            : undefined;
+        await readRequestBody(req, MAX_BODY_BYTES, controller.signal);
         if (
           finished ||
           controller.signal.aborted ||
@@ -348,13 +318,6 @@ export class GatewayIngress {
           this.endpoints.get(name) !== endpoint
         )
           return;
-        if (reserved) {
-          releaseControl = endpoint.mount.claimControl(req, messages);
-          if (!releaseControl) {
-            reject(429);
-            return;
-          }
-        }
         endpoint.mount.app(req, res);
       } catch (error) {
         if (finished || controller.signal.aborted) return;

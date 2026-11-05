@@ -123,7 +123,7 @@ test("private failure evidence identifies the last attempted verification bounda
   for (const [stage, operation] of [
     ["failure-state", "if (updates.statusValue().readyVersion"],
     ["failure-renderer", "const responsive = await inspectViewport();"],
-    ["failure-mcp", "const aliveReply = await client.callTool"],
+    ["failure-mcp", "const aliveReply = await modernCall("],
     ["failure-record", "await record({ phase: scenario"],
   ]) {
     const marker = `stage = "${stage}";`;

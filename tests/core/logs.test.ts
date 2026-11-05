@@ -1,5 +1,4 @@
 import { expect, test } from "bun:test";
-import { writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { backendSummary } from "../../src/core/adapter";
@@ -184,7 +183,9 @@ test("synthetic stderr and logger protocol values stay full in local logs but no
     await eventually(() =>
       all(context.controller).includes("synthetic-fake-password=fixture-only"),
     );
-    expect(all(context.controller)).toContain("synthetic note payload");
+    // Stateless 2026-07-28 bodies are never logged: only fixture stderr and
+    // lifecycle lines reach local Logs.
+    expect(all(context.controller)).not.toContain("synthetic note payload");
     expect(
       context.controller
         .readLogs({ after: 0, level: "error" })
@@ -199,6 +200,7 @@ test("synthetic stderr and logger protocol values stay full in local logs but no
     expect("logs" in snapshot).toBe(false);
     for (const route of ["/logs", "/readLogs", "/clearLogs", "/mcp/echo/logs"]) {
       const response = await fetch(`${started.address}${route}`, {
+        method: "POST",
         headers: { Authorization: `Bearer ${TOKEN}` },
       });
       expect(response.status).toBe(404);
@@ -216,22 +218,25 @@ test("actual spawn error and process exit retain synthetic detail locally, sanit
   );
   try {
     const started = await context.controller.start();
-    const initialize = async () => {
+    const probe = async () => {
       const response = await fetch(`${started.address}/mcp/echo`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${TOKEN}`,
           "Content-Type": "application/json",
           Accept: "application/json, text/event-stream",
+          "Mcp-Protocol-Version": "2026-07-28",
+          "Mcp-Method": "tools/list",
         },
         body: JSON.stringify({
           jsonrpc: "2.0",
           id: 1,
-          method: "initialize",
+          method: "tools/list",
           params: {
-            protocolVersion: "2025-03-26",
-            capabilities: {},
-            clientInfo: { name: "synthetic", version: "1" },
+            _meta: {
+              "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+              "io.modelcontextprotocol/clientCapabilities": {},
+            },
           },
         }),
       });
@@ -239,7 +244,7 @@ test("actual spawn error and process exit retain synthetic detail locally, sanit
       expect(text).not.toContain("fixture-only");
       expect(text).toContain("MCP server process failed");
     };
-    await initialize();
+    await probe();
     await eventually(() => context.controller.snapshot().operationalError !== null);
     const first = context.controller.snapshot().operationalError;
     expect(first?.message).toContain("ENOENT");
@@ -252,7 +257,7 @@ test("actual spawn error and process exit retain synthetic detail locally, sanit
     context.controller.clearLogs();
     expect(context.controller.snapshot().operationalError).toEqual(first);
     await context.controller.restartServer("echo");
-    await initialize();
+    await probe();
     expect(context.controller.snapshot().operationalError?.occurrenceId).not.toBe(
       first?.occurrenceId,
     );
@@ -260,114 +265,66 @@ test("actual spawn error and process exit retain synthetic detail locally, sanit
     const next = JSON.parse(before.configText);
     next.mcpServers.echo = stdio({ SYNTHETIC_EXIT_CODE: "7" });
     await context.controller.saveConfig(JSON.stringify(next), before.revision);
-    await initialize();
-    await eventually(() => all(context.controller).includes("Child exited: code=7"));
-    expect(context.controller.snapshot().operationalError?.message).toContain("code 7");
+    await probe();
+    await eventually(
+      () => context.controller.snapshot().operationalError?.occurrenceId !== first?.occurrenceId,
+    );
+    // A backend that starts and then exits nonzero is a distinct new failure.
+    expect(context.controller.snapshot().operationalError?.code).toBe("BackendFailure");
   } finally {
     await context.cleanup();
   }
 });
 
-test("normal DELETE retains the child exit log without a failure; an unexpected same-signal exit still fails", async () => {
+test("an unsanctioned SIGTERM of a retained child is recorded as a backend failure", async () => {
   const context = await setup(await configFor({}));
   const pidFile = join(context.directory, "pids");
-  const clients: Array<Awaited<ReturnType<typeof connect>>> = [];
   try {
     await context.controller.saveConfig(
       JSON.stringify(await configFor({ echo: stdio({ PID_FILE: pidFile }) })),
       context.controller.snapshot().revision,
     );
     const { address } = await context.controller.start();
-    clients.push(await connect(address as string), await connect(address as string));
-    const owned = await pids(pidFile);
-    expect(owned).toHaveLength(2);
+    const client = await connect(address as string);
+    // Retain one child so its pid is observable.
+    await client.client.callTool({ name: "ask", arguments: {} });
+    await eventually(async () => (await pids(pidFile)).filter(alive).length === 1);
+    const owned = (await pids(pidFile)).find(alive);
+    if (!owned) throw new Error("Missing retained child");
+    expect(alive(owned)).toBe(true);
     expect(context.controller.snapshot().operationalError).toBeNull();
-    await clients[0].close();
-    await eventually(() => !alive(owned[0]) && all(context.controller).includes("Child exited:"));
-    expect(context.controller.readLogs({ after: 0, text: "Child exited:" }).entries).toMatchObject([
-      {
-        level: "error",
-        source: "logger",
-        server: "echo",
-        text: "Child exited: code=null, signal=SIGTERM",
-      },
-    ]);
-    expect(context.controller.snapshot().operationalError).toBeNull();
-    expect(context.controller.snapshot().servers[0]).toMatchObject({
-      status: "mounted",
-      error: null,
-    });
-    expect((await clients[1].client.listTools()).tools[0].name).toBe("echo");
-    process.kill(owned[1], "SIGTERM");
+    process.kill(owned, "SIGTERM");
     await eventually(() => context.controller.snapshot().operationalError !== null);
-    expect(context.controller.snapshot().operationalError?.message).toBe(
-      "Backend process exited (code null, signal SIGTERM). Open Logs for details.",
-    );
-    expect(context.controller.readLogs({ after: 0, text: "Child exited:" }).entries).toHaveLength(
-      2,
-    );
+    expect(context.controller.snapshot().operationalError?.code).toBe("BackendFailure");
+    // The endpoint stays mounted and usable despite the recorded failure.
+    expect(context.controller.snapshot().servers[0].status).toBe("mounted");
+    const fresh = await connect(address as string);
+    expect((await fresh.client.listTools()).tools[0].name).toBe("echo");
+    await client.close();
   } finally {
-    for (const { client } of clients) await client.close();
     const owned = await pids(pidFile);
     await context.cleanup();
     await eventually(() => owned.every((pid) => !alive(pid)));
   }
 });
-
-test("a sibling failure during intentional cleanup remains reported after the normal child exits", async () => {
-  const context = await setup(await configFor({}));
-  const gate = join(context.directory, "gate");
-  const signalFile = join(context.directory, "signals");
-  const pidFile = join(context.directory, "pids");
-  const clients: Array<Awaited<ReturnType<typeof connect>>> = [];
-  try {
-    await context.controller.saveConfig(
-      JSON.stringify(
-        await configFor({
-          echo: stdio({
-            PID_FILE: pidFile,
-            CLEANUP_GATE_FILE: gate,
-            CLEANUP_SIGNAL_FILE: signalFile,
-          }),
+test("actual HTTP failure retains no upstream body and only status in summaries/MCP responses", async () => {
+  const upstream = createServer(async (req, res) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(Buffer.from(chunk));
+    const message = JSON.parse(Buffer.concat(chunks).toString());
+    if (message.method === "server/discover") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: message.id,
+          result: { supportedVersions: ["2026-07-28"] },
         }),
-      ),
-      context.controller.snapshot().revision,
-    );
-    const { address } = await context.controller.start();
-    clients.push(await connect(address as string), await connect(address as string));
-    const owned = await pids(pidFile);
-    expect(owned).toHaveLength(2);
-    await clients[0].close();
-    await eventually(async () => (await pids(signalFile)).includes(owned[0]));
-    expect(alive(owned[0])).toBe(true);
-    expect(context.controller.snapshot().operationalError).toBeNull();
-    process.kill(owned[1], "SIGKILL");
-    await eventually(() => context.controller.snapshot().operationalError !== null);
-    const failure = context.controller.snapshot().operationalError;
-    expect(failure?.message).toBe(
-      "Backend process exited (code null, signal SIGKILL). Open Logs for details.",
-    );
-    await writeFile(gate, "release");
-    await eventually(
-      () =>
-        owned.every((pid) => !alive(pid)) &&
-        all(context.controller).includes("Child exited: code=0, signal=null"),
-    );
-    expect(context.controller.snapshot().operationalError).toEqual(failure);
-    expect(context.controller.snapshot().servers[0].error).toEqual(failure);
-  } finally {
-    await writeFile(gate, "release");
-    for (const { client } of clients) await client.close();
-    const owned = await pids(pidFile);
-    await context.cleanup();
-    await eventually(() => owned.every((pid) => !alive(pid)));
-  }
-});
-
-test("actual HTTP failure retains synthetic upstream body locally and only status in summaries/MCP responses", async () => {
-  const upstream = createServer((_req, res) =>
-    res.writeHead(503).end("synthetic-fake-upstream-credential=fixture-only"),
-  );
+      );
+      return;
+    }
+    res.writeHead(503).end("synthetic-fake-upstream-credential=fixture-only");
+  });
   await new Promise<void>((done) => upstream.listen(0, "127.0.0.1", done));
   const address = upstream.address();
   if (!address || typeof address === "string") throw new Error("No synthetic listener");
@@ -378,8 +335,10 @@ test("actual HTTP failure retains synthetic upstream body locally and only statu
     const started = await context.controller.start();
     await expect(connect(started.address as string)).rejects.toThrow();
     await eventually(() => context.controller.snapshot().operationalError !== null);
-    expect(all(context.controller)).toContain("synthetic-fake-upstream-credential=fixture-only");
     expect(context.controller.snapshot().operationalError?.message).toContain("503");
+    // Modern HTTP backends never surface upstream response bodies in local
+    // logs or summaries.
+    expect(all(context.controller)).not.toContain("fixture-only");
     expect(JSON.stringify(context.controller.snapshot().events)).not.toContain("fixture-only");
   } finally {
     await context.cleanup();

@@ -154,20 +154,53 @@ async function runUpdateAcceptance(): Promise<void> {
     const gateway = controller.snapshot();
     const config = parseConfig(gateway.configText, process.env, gateway.configFormat);
     const endpoint = new URL(\`http://127.0.0.1:\${config.gateway.port}/mcp/echo\`);
-    const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
-    const { StreamableHTTPClientTransport } = await import(
-      "@modelcontextprotocol/sdk/client/streamableHttp.js"
-    );
-    const client = new Client({ name: "update-acceptance", version: "1.0.0" });
-    const transport = new StreamableHTTPClientTransport(endpoint, {
-      requestInit: { headers: { Authorization: \`Bearer \${config.gateway.token}\` } },
+    const modernCall = async (
+      method: string,
+      name: string,
+      args: Record<string, unknown>,
+    ): Promise<Record<string, any>> => {
+      const response = await fetch(endpoint.href, {
+        method: "POST",
+        signal: AbortSignal.timeout(8_000),
+        headers: {
+          Authorization: \`Bearer \${config.gateway.token}\`,
+          "Content-Type": "application/json",
+          Accept: "application/json, text/event-stream",
+          "Mcp-Protocol-Version": "2026-07-28",
+          "Mcp-Method": method,
+          ...(name ? { "Mcp-Name": name } : {}),
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method,
+          params: {
+            name,
+            arguments: args,
+            _meta: {
+              "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+              "io.modelcontextprotocol/clientCapabilities": {},
+            },
+          },
+        }),
+      });
+      const text = await response.text();
+      const data = response.headers.get("content-type")?.includes("text/event-stream")
+        ? text
+            .split("\\n")
+            .filter((line) => line.startsWith("data: "))
+            .at(-1)
+            ?.slice(6)
+        : text;
+      const message = data ? JSON.parse(data) : null;
+      if (response.status !== 200 || !message || message.error)
+        throw new Error(\`MCP \${method} failed: \${response.status}\`);
+      return message.result;
+    };
+    acceptanceMcpClient = { close: async () => {} };
+    const reply = await modernCall("tools/call", "echo", {
+      value: "synthetic-update-activity",
     });
-    await client.connect(transport);
-    const reply = await client.callTool({
-      name: "echo",
-      arguments: { value: "synthetic-update-activity" },
-    });
-    acceptanceMcpClient = client;
     const content = reply.content as Array<{ text?: string }>;
     const syntheticPid = JSON.parse(content[0]?.text ?? "{}").pid;
     if (!Number.isSafeInteger(syntheticPid) || syntheticPid <= 1)
@@ -190,7 +223,9 @@ async function runUpdateAcceptance(): Promise<void> {
       const responsive = await inspectViewport();
       if (responsive.supported !== true) throw new Error("Failure-case renderer unresponsive");
       stage = "failure-mcp";
-      const aliveReply = await client.callTool({ name: "echo", arguments: { value: "during-download-failure" } });
+      const aliveReply = await modernCall("tools/call", "echo", {
+        value: "during-download-failure",
+      });
       if (aliveReply.isError) throw new Error("Failure case broke MCP session");
       stage = "failure-record";
       await record({ phase: scenario, syntheticPid, readyVersion: null, responsive: true, mcpUsable: true, partialDownload });

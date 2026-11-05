@@ -3,12 +3,12 @@ import { resolve } from "node:path";
 import { buildPlan, validateBuildHost } from "../../scripts/build-platform";
 import { createToolchainEnvironment } from "../../scripts/toolchain";
 
-for (const [mode, platform] of [
-  ["linux", "linux"],
-  ["windows", "win32"],
-] as const) {
-  for (const architecture of ["x64", "arm64"]) {
-    test(`${mode}/${architecture} selects unsigned native packaging without macOS overrides`, () => {
+test("linux and windows builds select unsigned native packaging without macOS overrides", () => {
+  for (const [mode, platform] of [
+    ["linux", "linux"],
+    ["windows", "win32"],
+  ] as const) {
+    for (const architecture of ["x64", "arm64"]) {
       expect(buildPlan(mode, platform, architecture)).toEqual({
         macNative: false,
         signed: false,
@@ -22,9 +22,9 @@ for (const [mode, platform] of [
       expect(environment.TMPDIR).toBe(resolve(".cache/tmp"));
       expect(environment.TMP).toBe(environment.TMPDIR);
       expect(environment.TEMP).toBe(environment.TMPDIR);
-    });
+    }
   }
-}
+});
 
 test("macOS development and signed-release routing stays unchanged", () => {
   expect(buildPlan("dev", "darwin", "arm64")).toEqual({

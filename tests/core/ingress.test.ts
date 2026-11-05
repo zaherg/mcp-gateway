@@ -1,15 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { access, readFile, rm, writeFile } from "node:fs/promises";
-import { type IncomingMessage, request } from "node:http";
+import { access, readFile, rm } from "node:fs/promises";
+import { request } from "node:http";
 import { join } from "node:path";
-import { createParser } from "eventsource-parser";
 import { MAX_BACKEND_CALLS } from "../../src/core/backend-work";
 import {
   GatewayIngress,
   MAX_BODY_BYTES,
-  MAX_CONTROL_REQUESTS_PER_MINUTE,
-  MAX_ORDINARY_REQUESTS,
-  MAX_ORDINARY_REQUESTS_PER_MINUTE,
+  MAX_CONCURRENT_REQUESTS,
+  MAX_REQUESTS_PER_MINUTE,
   MAX_SESSIONS,
 } from "../../src/core/ingress";
 import { httpFixture } from "../fixtures/http-mcp";
@@ -19,7 +17,6 @@ import {
   connect,
   eventually,
   ingressCounts,
-  initializeSession,
   pids,
   setup,
   stdio,
@@ -27,26 +24,12 @@ import {
   testDirectory,
 } from "./helpers";
 
-async function callMarkers(path: string): Promise<string[]> {
-  try {
-    return (await readFile(path, "utf8"))
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => line.split("\t")[1] ?? "");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-    throw error;
-  }
-}
-
 function textValue(result: Record<string, unknown>): {
   value: string;
   count: number;
   pid: number;
   argv?: string[];
   env?: string;
-  sessionMarker?: string;
 } {
   const content = result.content as Array<{ type: string; text: string }>;
   return JSON.parse(content[0].text);
@@ -90,6 +73,50 @@ async function raw(
       req.end(options.body.slice(options.body.length / 2));
     } else req.end(options.body);
   });
+}
+
+/** One stateless 2026-07-28 tools/call through the gateway, with its id fixed. */
+async function modernCall(
+  address: string,
+  name = "echo",
+  args: Record<string, unknown> = {},
+  signal?: AbortSignal,
+  // biome-ignore lint/suspicious/noExplicitAny: Parsed JSON-RPC envelope from the loopback gateway.
+): Promise<{ status: number; message: Record<string, any> | null }> {
+  const response = await fetch(`${address}/mcp/echo`, {
+    method: "POST",
+    signal: signal ?? AbortSignal.timeout(5_000),
+    headers: {
+      Authorization: `Bearer ${TOKEN}`,
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+      "Mcp-Protocol-Version": "2026-07-28",
+      "Mcp-Method": "tools/call",
+      "Mcp-Name": name,
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: {
+        name,
+        arguments: args,
+        _meta: {
+          "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+          "io.modelcontextprotocol/clientCapabilities": {},
+        },
+      },
+    }),
+  });
+  const text = await response.text();
+  const data = response.headers.get("content-type")?.includes("text/event-stream")
+    ? text
+        .split("\n")
+        .filter((line) => line.startsWith("data: "))
+        .at(-1)
+        ?.slice(6)
+    : text;
+  return { status: response.status, message: data ? JSON.parse(data) : null };
 }
 
 describe("shared MCP ingress", () => {
@@ -179,7 +206,7 @@ describe("shared MCP ingress", () => {
     }
   }, 20_000);
 
-  test("real stdio initialize/list/call/write and concurrent isolated sessions; argument arrays are not shell strings", async () => {
+  test("real stdio list/call/write with stateless calls; argument arrays are not shell strings", async () => {
     const directory = await testDirectory();
     const pidFile = join(directory, "pids");
     const output = join(directory, "synthetic-output");
@@ -230,13 +257,6 @@ describe("shared MCP ingress", () => {
       expect(
         JSON.stringify({ events: snapshot.events, errors: snapshot.operationalError }),
       ).not.toContain("SECRET-fixture");
-      const sessionId = clients[0].transport.sessionId as string;
-      expect(
-        await raw(address, "/mcp/other", {
-          headers: { "Mcp-Session-Id": sessionId },
-          body: '{"jsonrpc":"2.0","id":7,"method":"tools/list"}',
-        }),
-      ).toBe(404);
       for (const client of clients.splice(0)) await client.close();
       await eventually(async () => (await pids(pidFile)).every((pid) => !alive(pid)));
     } finally {
@@ -246,7 +266,7 @@ describe("shared MCP ingress", () => {
     }
   }, 20_000);
 
-  test("real HTTP upstream handshake/list/call isolates upstream sessions and never forwards the gateway token", async () => {
+  test("real HTTP upstream handshake/list/call never forwards the gateway token", async () => {
     const upstream = await httpFixture();
     const context = await setup(
       await configFor({
@@ -268,9 +288,10 @@ describe("shared MCP ingress", () => {
           client.callTool({ name: "echo", arguments: { value: `remote-${index}` } }),
         ),
       );
-      expect(results.map((result) => textValue(result).value)).toEqual(["remote-0", "remote-1"]);
-      expect(results.map((result) => textValue(result).count)).toEqual([1, 1]);
-      expect(textValue(results[0]).sessionMarker).not.toBe(textValue(results[1]).sessionMarker);
+      expect(results.map((result) => (result.content as Array<{ text: string }>)[0].text)).toEqual([
+        "remote-0",
+        "remote-1",
+      ]);
       expect(upstream.receivedAuthorization.length).toBeGreaterThan(0);
       expect(
         upstream.receivedAuthorization.every((header) => header === `Bearer ${upstream.token}`),
@@ -290,7 +311,7 @@ describe("shared MCP ingress", () => {
     ["Content-Type", "sse"],
     ["content-type", "sse"],
   ] as const) {
-    test(`HTTP ${contentType}/${modernDiscovery} sends one transport-owned value for discovery, modern calls and legacy sessions`, async () => {
+    test(`HTTP ${contentType}/${modernDiscovery} sends one transport-owned value for discovery and modern calls`, async () => {
       const upstream = await httpFixture({ modernDiscovery });
       const config = await configFor({
         remote: {
@@ -303,7 +324,6 @@ describe("shared MCP ingress", () => {
       });
       const source = `// Preserve configured header spelling.\n${JSON.stringify(config, null, 2)}\n`;
       const context = await setup(config, "jsonc", source);
-      let legacy: Awaited<ReturnType<typeof connect>> | undefined;
       try {
         const { address } = await context.controller.start();
         const response = await fetch(`${address}/mcp/remote`, {
@@ -345,18 +365,6 @@ describe("shared MCP ingress", () => {
           id: 1,
           result: { content: [{ type: "text", text: "synthetic-modern-value" }] },
         });
-        legacy = await connect(address as string, "remote");
-        expect(
-          textValue(
-            await legacy.client.callTool({
-              name: "echo",
-              arguments: { value: "synthetic-legacy-value" },
-            }),
-          ).value,
-        ).toBe("synthetic-legacy-value");
-        await legacy.close();
-        legacy = undefined;
-        await eventually(() => upstream.sessionCount() === 0);
         expect(
           upstream.receivedHeaders
             .filter((headers) => headers["content-type"])
@@ -371,7 +379,6 @@ describe("shared MCP ingress", () => {
         expect(await readFile(context.path, "utf8")).toBe(source);
         expect(context.controller.snapshot().revision).toBe(snapshot.revision);
       } finally {
-        await legacy?.close();
         await context.cleanup();
         await upstream.close();
       }
@@ -383,23 +390,30 @@ describe("shared MCP ingress", () => {
     const errors: unknown[] = [];
     const ingress = await GatewayIngress.open(config, (error) => errors.push(error));
     const address = ingress.address;
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/list",
+      params: {
+        _meta: {
+          "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+          "io.modelcontextprotocol/clientCapabilities": {},
+        },
+      },
+    });
     try {
       // Exercise the real dispatch policy on an ephemeral socket, never the occupied port 80.
       await ingress.reconcile({ ...config, gateway: { ...config.gateway, port: 80 } });
       for (const host of ["127.0.0.1", "127.0.0.1:80"]) {
         expect(
           await raw(address, "/mcp/echo", {
-            headers: { Host: host, Origin: "http://127.0.0.1" },
-            body: JSON.stringify({
-              jsonrpc: "2.0",
-              id: 1,
-              method: "initialize",
-              params: {
-                protocolVersion: "2025-03-26",
-                capabilities: {},
-                clientInfo: { name: "default-port-test", version: "1" },
-              },
-            }),
+            headers: {
+              Host: host,
+              Origin: "http://127.0.0.1",
+              "Mcp-Protocol-Version": "2026-07-28",
+              "Mcp-Method": "tools/list",
+            },
+            body,
           }),
         ).toBe(200);
         for (const authorization of ["", "Bearer incorrect"])
@@ -470,13 +484,14 @@ describe("shared MCP ingress", () => {
         expect(await raw(address as string, "/mcp/echo", { headers: { Origin: origin } })).toBe(
           403,
         );
-      expect(
-        await raw(address as string, "/mcp/echo", {
-          method: "OPTIONS",
-          headers: { Origin: address as string },
-        }),
-      ).toBe(405);
-      expect(await raw(address as string, "/mcp/echo", { method: "PUT" })).toBe(405);
+      // Only POST is served; every other method is refused.
+      for (const method of ["OPTIONS", "PUT", "PATCH", "GET", "DELETE", "HEAD"])
+        expect(
+          await raw(address as string, "/mcp/echo", {
+            method,
+            headers: { Origin: address as string },
+          }),
+        ).toBe(405);
       for (const path of [
         "/",
         "/health",
@@ -503,25 +518,13 @@ describe("shared MCP ingress", () => {
     }
   }, 15_000);
 
-  test("abandoned initialization and endpoint stop clean children without false backend failures", async () => {
-    const context = await setup(await configFor({}));
-    const pidFile = join(context.directory, "pids");
-    const abort = new AbortController();
-    let sibling: Awaited<ReturnType<typeof connect>> | undefined;
+  test("session-protocol POSTs are refused with 400 and do not retire the endpoint", async () => {
+    const context = await setup(await configFor({ echo: stdio() }));
     try {
-      await context.controller.saveConfig(
-        JSON.stringify(
-          await configFor({
-            echo: stdio({ PID_FILE: pidFile, HANG_INITIALIZE_CLIENT: "abandoned" }),
-          }),
-        ),
-        context.controller.snapshot().revision,
-      );
       const { address } = await context.controller.start();
-      sibling = await connect(address as string);
-      const abandoned = fetch(`${address}/mcp/echo`, {
+      const response = await fetch(`${address}/mcp/echo`, {
         method: "POST",
-        signal: abort.signal,
+        signal: AbortSignal.timeout(5_000),
         headers: {
           Authorization: `Bearer ${TOKEN}`,
           "Content-Type": "application/json",
@@ -534,37 +537,17 @@ describe("shared MCP ingress", () => {
           params: {
             protocolVersion: "2025-03-26",
             capabilities: {},
-            clientInfo: { name: "abandoned", version: "1" },
+            clientInfo: { name: "session-client", version: "1" },
           },
         }),
-      })
-        .then(async (response) => {
-          await response.text();
-          return null;
-        })
-        .catch((error: unknown) => error);
-      await eventually(async () => (await pids(pidFile)).length === 2);
-      const owned = await pids(pidFile);
-      abort.abort();
-      expect(await abandoned).toMatchObject({ name: "AbortError" });
-      await eventually(
-        () =>
-          !alive(owned[1]) &&
-          context.controller.readLogs({ after: 0, text: "Child exited:" }).entries.length === 1,
-      );
-      expect(context.controller.snapshot().operationalError).toBeNull();
-      expect(context.controller.snapshot().servers[0].error).toBeNull();
-      expect((await sibling.client.listTools()).tools[0].name).toBe("echo");
-      await context.controller.stop();
-      await eventually(() => owned.every((pid) => !alive(pid)));
-      expect(context.controller.snapshot().operationalError).toBeNull();
-      expect(context.controller.snapshot().running).toBe(false);
+      });
+      await response.text();
+      expect(response.status).toBe(400);
+      expect(response.headers.get("mcp-session-id")).toBeNull();
+      expect(context.controller.snapshot().servers[0].status).toBe("mounted");
+      expect((await modernCall(address as string, "echo", { value: "after" })).status).toBe(200);
     } finally {
-      abort.abort();
-      await sibling?.client.close();
-      const owned = await pids(pidFile);
       await context.cleanup();
-      await eventually(() => owned.every((pid) => !alive(pid)));
     }
   }, 15_000);
 
@@ -589,320 +572,108 @@ describe("shared MCP ingress", () => {
     }
   }, 15_000);
 
-  test("28 ordinary HTTP requests are bounded independently of the backend-work cap", async () => {
-    const directory = await testDirectory();
-    const context = await setup(
-      await configFor({ echo: stdio({ PID_FILE: join(directory, "pids") }) }),
-    );
-    const pending: ReturnType<typeof request>[] = [];
-    const streams: ReturnType<typeof request>[] = [];
-    const sessions: string[] = [];
-    const getStatuses: number[] = [];
-    try {
-      const { address } = await context.controller.start();
-      // Sixteen sessions each keep one backend call open; twelve additional GET
-      // streams fit into the 28 ordinary HTTP slots. The hard total of 32 leaves
-      // four reserved slots for control traffic.
-      for (let index = 0; index < MAX_BACKEND_CALLS; index++)
-        sessions.push(await initializeSession(address as string));
-      for (const [index, session] of sessions.entries()) {
-        const req = request(
-          `${address}/mcp/echo`,
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${TOKEN}`,
-              "Content-Type": "application/json",
-              Accept: "application/json, text/event-stream",
-              "Mcp-Session-Id": session,
-            },
-          },
-          (response) => response.resume(),
-        );
-        req.on("error", () => {});
-        req.end(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            id: 100 + index,
-            method: "tools/call",
-            params: { name: "delay", arguments: { delay: 10_000 } },
-          }),
-        );
-        pending.push(req);
-      }
-      await eventually(
-        async () =>
-          (await pids(join(directory, "pids"))).filter(alive).length === MAX_BACKEND_CALLS,
-      );
-      for (const session of sessions) {
-        const stream = request(`${address}/mcp/echo`, {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${TOKEN}`,
-            Accept: "text/event-stream",
-            "Mcp-Session-Id": session,
-          },
-        });
-        stream.on("error", () => {});
-        stream.on("response", (response) => {
-          getStatuses.push(response.statusCode ?? 0);
-          response.resume();
-        });
-        stream.end();
-        streams.push(stream);
-      }
-      await eventually(() => getStatuses.length === MAX_BACKEND_CALLS);
-      expect(getStatuses.filter((s) => s === 200).length).toBe(
-        MAX_ORDINARY_REQUESTS - MAX_BACKEND_CALLS,
-      );
-      expect(getStatuses.filter((s) => s === 429).length).toBe(
-        MAX_BACKEND_CALLS - (MAX_ORDINARY_REQUESTS - MAX_BACKEND_CALLS),
-      );
-      expect(
-        await raw(address as string, "/mcp/echo", {
-          headers: { "Mcp-Session-Id": sessions[0] },
-          body: '{"jsonrpc":"2.0","id":999,"method":"tools/list"}',
-        }),
-      ).toBe(429);
-    } finally {
-      for (const req of pending) req.destroy();
-      for (const stream of streams) stream.destroy();
-      await context.cleanup();
-      await rm(directory, { recursive: true, force: true });
-    }
-  }, 20_000);
-
-  test("control cancellation and DELETE are admitted through reserved slots and free ordinary capacity", async () => {
-    const directory = await testDirectory();
-    const callLog = join(directory, "calls");
-    const pidFile = join(directory, "pids");
-    const context = await setup(
-      await configFor({ echo: stdio({ CALL_LOG: callLog, PID_FILE: pidFile }) }),
-    );
-    const pending: ReturnType<typeof request>[] = [];
-    const streams: ReturnType<typeof request>[] = [];
-    const sessions: string[] = [];
-    const getStatuses: number[] = [];
-    try {
-      const { address } = await context.controller.start();
-      for (let index = 0; index < MAX_BACKEND_CALLS; index++)
-        sessions.push(await initializeSession(address as string));
-      for (const [index, session] of sessions.entries()) {
-        const req = request(
-          `${address}/mcp/echo`,
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${TOKEN}`,
-              "Content-Type": "application/json",
-              Accept: "application/json, text/event-stream",
-              "Mcp-Session-Id": session,
-            },
-          },
-          (response) => response.resume(),
-        );
-        req.on("error", () => {});
-        req.end(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            id: 100 + index,
-            method: "tools/call",
-            params: { name: "delay", arguments: { delay: 10_000 } },
-          }),
-        );
-        pending.push(req);
-      }
-      await eventually(
-        async () => (await pids(pidFile)).filter(alive).length === MAX_BACKEND_CALLS,
-      );
-      for (const session of sessions.slice(0, MAX_ORDINARY_REQUESTS - MAX_BACKEND_CALLS)) {
-        const stream = request(`${address}/mcp/echo`, {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${TOKEN}`,
-            Accept: "text/event-stream",
-            "Mcp-Session-Id": session,
-          },
-        });
-        stream.on("error", () => {});
-        stream.on("response", (response) => {
-          getStatuses.push(response.statusCode ?? 0);
-          response.resume();
-        });
-        stream.end();
-        streams.push(stream);
-      }
-      await eventually(() => getStatuses.length === MAX_ORDINARY_REQUESTS - MAX_BACKEND_CALLS);
-      expect(
-        await raw(address as string, "/mcp/echo", {
-          headers: { "Mcp-Session-Id": sessions[0] },
-          body: '{"jsonrpc":"2.0","id":999,"method":"tools/list"}',
-        }),
-      ).toBe(429);
-
-      // A valid cancellation uses a reserved control slot and releases its target work.
-      expect(
-        await raw(address as string, "/mcp/echo", {
-          headers: { "Mcp-Session-Id": sessions[0] },
-          body: JSON.stringify({
-            jsonrpc: "2.0",
-            method: "notifications/cancelled",
-            params: { requestId: 100 },
-          }),
-        }),
-      ).toBe(202);
-      await eventually(async () => (await callMarkers(callLog)).length === MAX_BACKEND_CALLS);
-      const callsAfterCancel = await callMarkers(callLog);
-      expect(callsAfterCancel).not.toContain("held-100");
-      expect(
-        await raw(address as string, "/mcp/echo", {
-          headers: { "Mcp-Session-Id": sessions[0] },
-          body: '{"jsonrpc":"2.0","id":999,"method":"tools/list"}',
-        }),
-      ).toBe(200);
-
-      // DELETE uses a reserved control slot and frees the session's resources.
-      expect(
-        await raw(address as string, "/mcp/echo", {
-          method: "DELETE",
-          headers: { "Mcp-Session-Id": sessions[1] },
-        }),
-      ).toBe(200);
-      await eventually(
-        async () => (await pids(pidFile)).filter(alive).length === MAX_BACKEND_CALLS - 1,
-      );
-      expect(
-        await raw(address as string, "/mcp/echo", {
-          headers: { "Mcp-Session-Id": sessions[2] },
-          body: '{"jsonrpc":"2.0","id":998,"method":"tools/list"}',
-        }),
-      ).toBe(200);
-    } finally {
-      for (const req of pending) req.destroy();
-      for (const stream of streams) stream.destroy();
-      await context.cleanup();
-      await rm(directory, { recursive: true, force: true });
-    }
-  }, 20_000);
-
-  test("forged or mixed control payloads cannot steal reserved slots at ordinary saturation", async () => {
-    const directory = await testDirectory();
-    const callLog = join(directory, "calls");
-    const pidFile = join(directory, "pids");
-    const context = await setup(
-      await configFor({ echo: stdio({ CALL_LOG: callLog, PID_FILE: pidFile }) }),
-    );
-    const pending: ReturnType<typeof request>[] = [];
-    const streams: ReturnType<typeof request>[] = [];
-    const sessions: string[] = [];
-    const getStatuses: number[] = [];
-    try {
-      const { address } = await context.controller.start();
-      for (let index = 0; index < MAX_BACKEND_CALLS; index++)
-        sessions.push(await initializeSession(address as string));
-      for (const [index, session] of sessions.entries()) {
-        const req = request(
-          `${address}/mcp/echo`,
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${TOKEN}`,
-              "Content-Type": "application/json",
-              Accept: "application/json, text/event-stream",
-              "Mcp-Session-Id": session,
-            },
-          },
-          (response) => response.resume(),
-        );
-        req.on("error", () => {});
-        req.end(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            id: 100 + index,
-            method: "tools/call",
-            params: { name: "delay", arguments: { delay: 10_000 } },
-          }),
-        );
-        pending.push(req);
-      }
-      await eventually(
-        async () => (await pids(pidFile)).filter(alive).length === MAX_BACKEND_CALLS,
-      );
-      for (const session of sessions.slice(0, MAX_ORDINARY_REQUESTS - MAX_BACKEND_CALLS)) {
-        const stream = request(`${address}/mcp/echo`, {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${TOKEN}`,
-            Accept: "text/event-stream",
-            "Mcp-Session-Id": session,
-          },
-        });
-        stream.on("error", () => {});
-        stream.on("response", (response) => {
-          getStatuses.push(response.statusCode ?? 0);
-          response.resume();
-        });
-        stream.end();
-        streams.push(stream);
-      }
-      await eventually(() => getStatuses.length === MAX_ORDINARY_REQUESTS - MAX_BACKEND_CALLS);
-      // Confirm ordinary saturation is still in effect before testing forged controls.
-      expect(
-        await raw(address as string, "/mcp/echo", {
-          headers: { "Mcp-Session-Id": sessions[0] },
-          body: '{"jsonrpc":"2.0","id":999,"method":"tools/list"}',
-        }),
-      ).toBe(429);
-
-      // Unknown session, unknown request id, and mixed batches stay ordinary and are refused.
-      expect(
-        await raw(address as string, "/mcp/echo", {
-          method: "DELETE",
-          headers: { "Mcp-Session-Id": "unknown-synthetic-session" },
-        }),
-      ).toBe(429);
-      expect(
-        await raw(address as string, "/mcp/echo", {
-          headers: { "Mcp-Session-Id": sessions[0] },
-          body: JSON.stringify({
-            jsonrpc: "2.0",
-            method: "notifications/cancelled",
-            params: { requestId: 9999 },
-          }),
-        }),
-      ).toBe(429);
-      expect(
-        await raw(address as string, "/mcp/echo", {
-          headers: { "Mcp-Session-Id": sessions[0] },
-          body: JSON.stringify([
-            {
-              jsonrpc: "2.0",
-              method: "notifications/cancelled",
-              params: { requestId: 100 },
-            },
-            { jsonrpc: "2.0", id: 200, method: "tools/list" },
-          ]),
-        }),
-      ).toBe(429);
-      // No new backend work was dispatched for any refused payload.
-      expect((await callMarkers(callLog)).length).toBe(MAX_BACKEND_CALLS);
-    } finally {
-      for (const req of pending) req.destroy();
-      for (const stream of streams) stream.destroy();
-      await context.cleanup();
-      await rm(directory, { recursive: true, force: true });
-    }
-  }, 20_000);
-
-  test("rate budget reserves 16 control admissions after 224 ordinary", async () => {
+  test("an abandoned in-flight call cleans its child without false backend failures", async () => {
     const directory = await testDirectory();
     const pidFile = join(directory, "pids");
     const context = await setup(await configFor({ echo: stdio({ PID_FILE: pidFile }) }));
-    let pending: ReturnType<typeof request> | undefined;
+    const abort = new AbortController();
+    let sibling: Awaited<ReturnType<typeof connect>> | undefined;
     try {
       const { address } = await context.controller.start();
-      const session = await initializeSession(address as string);
-      // Establish one pending request before exhausting the ordinary rate.
+      sibling = await connect(address as string);
+      // Retain the sibling's child so it stays alive while the abandoned call clears.
+      const kept = await modernCall(address as string, "ask");
+      expect(kept.message?.result?.requestState).toMatch(/^sgw:/);
+      await eventually(async () => (await pids(pidFile)).filter(alive).length === 1);
+      const keptPid = (await pids(pidFile)).find(alive);
+      if (keptPid === undefined) throw new Error("Missing retained child");
+      const abandoned = modernCall(
+        address as string,
+        "delay",
+        { delay: 10_000 },
+        abort.signal,
+      ).then(
+        () => null,
+        (error: unknown) => error,
+      );
+      await eventually(
+        async () =>
+          (await pids(pidFile)).filter((pid) => pid !== keptPid && alive(pid)).length === 1,
+      );
+      abort.abort();
+      expect(await abandoned).toMatchObject({ name: "AbortError" });
+      await eventually(async () =>
+        (await pids(pidFile)).filter((pid) => pid !== keptPid).every((pid) => !alive(pid)),
+      );
+      expect(alive(keptPid)).toBe(true);
+      // The reaped child leaves a recorded generic backend failure, but the
+      // endpoint stays mounted and its retained sibling keeps working.
+      expect(context.controller.snapshot().servers[0].status).toBe("mounted");
+      await context.controller.stop();
+      await eventually(async () => (await pids(pidFile)).every((pid) => !alive(pid)));
+      expect(context.controller.snapshot().running).toBe(false);
+    } finally {
+      abort.abort();
+      await sibling?.close();
+      const owned = await pids(pidFile);
+      await context.cleanup();
+      await eventually(() => owned.every((pid) => !alive(pid)));
+    }
+  }, 20_000);
+
+  test(`disconnected modern requests are bounded by one shared ${MAX_BACKEND_CALLS}-call backend work budget`, async () => {
+    const directory = await testDirectory();
+    const pidFile = join(directory, "pids");
+    const context = await setup(await configFor({ echo: stdio({ PID_FILE: pidFile }) }));
+    const aborts: AbortController[] = [];
+    try {
+      const { address } = await context.controller.start();
+      // biome-ignore lint/complexity/useLiteralKeys: Observe shared admission through the real gateway.
+      const ingress = context.controller["ingress"];
+      if (!ingress) throw new Error("Missing ingress");
+      const fills: Array<Promise<unknown>> = [];
+      for (let index = 0; index < MAX_BACKEND_CALLS; index++) {
+        const abort = new AbortController();
+        aborts.push(abort);
+        fills.push(
+          modernCall(address as string, "delay", { delay: 10_000 }, abort.signal).then(
+            () => null,
+            () => null,
+          ),
+        );
+      }
+      await eventually(
+        async () => (await pids(pidFile)).filter(alive).length === MAX_BACKEND_CALLS,
+      );
+      await eventually(() => ingressCounts(ingress).calls === MAX_BACKEND_CALLS);
+      // The next request is admitted at the HTTP boundary but refused the backend work.
+      const refused = await modernCall(address as string, "echo", { value: "probe" });
+      expect(refused.status).toBe(429);
+      expect(refused.message?.error?.code).toBe(1001);
+      expect((await pids(pidFile)).filter(alive).length).toBeLessThanOrEqual(MAX_BACKEND_CALLS);
+      for (const abort of aborts.splice(0)) abort.abort();
+      await fills;
+      await eventually(async () => (await pids(pidFile)).every((pid) => !alive(pid)));
+      await eventually(
+        async () =>
+          (await modernCall(address as string, "echo", { value: "after" })).status === 200,
+      );
+    } finally {
+      for (const abort of aborts) abort.abort();
+      const owned = await pids(pidFile);
+      await context.cleanup();
+      await eventually(() => owned.every((pid) => !alive(pid)));
+    }
+  }, 30_000);
+
+  test("an incomplete body holds one HTTP slot until disconnect", async () => {
+    const context = await setup(await configFor({ echo: stdio() }));
+    const slow: ReturnType<typeof request>[] = [];
+    try {
+      const { address } = await context.controller.start();
+      // biome-ignore lint/complexity/useLiteralKeys: Observe the owned listener's admission ledgers.
+      const ingress = context.controller["ingress"];
+      if (!ingress) throw new Error("Missing ingress");
       const req = request(
         `${address}/mcp/echo`,
         {
@@ -911,640 +682,69 @@ describe("shared MCP ingress", () => {
             Authorization: `Bearer ${TOKEN}`,
             "Content-Type": "application/json",
             Accept: "application/json, text/event-stream",
-            "Mcp-Session-Id": session,
           },
         },
         (response) => response.resume(),
       );
       req.on("error", () => {});
-      req.end(
-        JSON.stringify({
-          jsonrpc: "2.0",
-          id: 100,
-          method: "tools/call",
-          params: { name: "delay", arguments: { delay: 10_000 } },
-        }),
-      );
-      pending = req;
-      await eventually(async () => (await pids(pidFile)).filter(alive).length === 1);
-      for (let index = 0; index < MAX_ORDINARY_REQUESTS_PER_MINUTE - 2; index++) {
-        expect(
-          await raw(address as string, "/mcp/echo", {
-            method: "GET",
-            headers: { "Mcp-Session-Id": "unknown-rate-session" },
-          }),
-        ).toBe(404);
-      }
-      // Ordinary rate is now exhausted (initialize + delay + 222 GETs = 224); control still has its reserved budget.
-      expect(
-        await raw(address as string, "/mcp/echo", {
-          headers: { "Mcp-Session-Id": session },
-          body: JSON.stringify({
-            jsonrpc: "2.0",
-            method: "notifications/cancelled",
-            params: { requestId: 100 },
-          }),
-        }),
-      ).toBe(202);
-      // A fresh ordinary request is refused without refunding capacity.
-      expect(await raw(address as string, "/mcp/echo", { method: "GET" })).toBe(429);
+      req.write('{"jsonrpc":"2.0","id":9,"method":"tools/call","params":');
+      slow.push(req);
+      await eventually(() => ingressCounts(ingress).active === 1);
+      expect(ingressCounts(ingress).active).toBe(1);
+      // More requests are still admitted until the 32-slot concurrency cap.
+      expect((await modernCall(address as string, "echo", { value: "parallel" })).status).toBe(200);
+      req.destroy();
+      await eventually(() => ingressCounts(ingress).active === 0);
     } finally {
-      pending?.destroy();
+      for (const client of slow) client.destroy();
       await context.cleanup();
-      await rm(directory, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, 15_000);
 
-  test("rejected provisional parses consume rate budget and prevent unbounded abuse", async () => {
+  test(`the shared per-minute budget admits exactly ${MAX_REQUESTS_PER_MINUTE} and refuses the next`, async () => {
     const context = await setup();
     try {
       const { address } = await context.controller.start();
-      for (let index = 0; index < MAX_ORDINARY_REQUESTS_PER_MINUTE; index++) {
-        expect(
-          await raw(address as string, "/mcp/echo", {
-            method: "GET",
-            headers: { "Mcp-Session-Id": "unknown-rate-session" },
-          }),
-        ).toBe(404);
-      }
-      // Each rejected provisional parse consumes one total-rate slot.
-      for (let index = 0; index < MAX_CONTROL_REQUESTS_PER_MINUTE; index++) {
-        expect(
-          await raw(address as string, "/mcp/echo", {
-            method: "GET",
-            headers: { "Mcp-Session-Id": "unknown-rate-session" },
-          }),
-        ).toBe(429);
-      }
-      // The hard total of 240 is now exhausted; no further traffic is admitted.
-      expect(await raw(address as string, "/mcp/echo", { method: "GET" })).toBe(429);
-      expect(
-        await raw(address as string, "/mcp/echo", {
-          method: "GET",
-          headers: { "Mcp-Session-Id": "unknown-rate-session" },
-        }),
-      ).toBe(429);
+      // Each bodyless POST is a rejected provisional parse that still consumes one rate slot.
+      for (let index = 0; index < MAX_REQUESTS_PER_MINUTE; index++)
+        expect(await raw(address as string, "/mcp/echo")).toBe(400);
+      expect(await raw(address as string, "/mcp/echo")).toBe(429);
     } finally {
       await context.cleanup();
     }
   }, 30_000);
 
-  test("repeated saturation cycles keep stable ordinary and control accounting", async () => {
+  test("in-flight calls charge resource and backend-work ledgers together under the HTTP concurrency cap", async () => {
     const directory = await testDirectory();
     const pidFile = join(directory, "pids");
     const context = await setup(await configFor({ echo: stdio({ PID_FILE: pidFile }) }));
-    const pending: ReturnType<typeof request>[] = [];
+    const aborts: AbortController[] = [];
     try {
       const { address } = await context.controller.start();
-      for (let cycle = 0; cycle < 3; cycle++) {
-        const sessions: string[] = [];
-        for (let index = 0; index < MAX_BACKEND_CALLS; index++)
-          sessions.push(await initializeSession(address as string));
-        for (const [index, session] of sessions.entries()) {
-          const req = request(
-            `${address}/mcp/echo`,
-            {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${TOKEN}`,
-                "Content-Type": "application/json",
-                Accept: "application/json, text/event-stream",
-                "Mcp-Session-Id": session,
-              },
-            },
-            (response) => response.resume(),
-          );
-          req.on("error", () => {});
-          req.end(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              id: cycle * 1000 + index,
-              method: "tools/call",
-              params: { name: "delay", arguments: { delay: 10_000 } },
-            }),
-          );
-          pending.push(req);
-        }
-        await eventually(
-          async () => (await pids(pidFile)).filter(alive).length === MAX_BACKEND_CALLS,
-        );
-        for (const session of sessions.slice(0, MAX_ORDINARY_REQUESTS - MAX_BACKEND_CALLS)) {
-          const stream = request(`${address}/mcp/echo`, {
-            method: "GET",
-            headers: {
-              Authorization: `Bearer ${TOKEN}`,
-              Accept: "text/event-stream",
-              "Mcp-Session-Id": session,
-            },
-          });
-          stream.on("error", () => {});
-          stream.on("response", (response) => response.resume());
-          stream.end();
-          pending.push(stream);
-        }
-        expect(
-          await raw(address as string, "/mcp/echo", {
-            headers: { "Mcp-Session-Id": sessions[0] },
-            body: '{"jsonrpc":"2.0","id":999,"method":"tools/list"}',
-          }),
-        ).toBe(429);
-        // A control cancellation still succeeds at ordinary saturation and
-        // releases the target backend work.
-        expect(
-          await raw(address as string, "/mcp/echo", {
-            headers: { "Mcp-Session-Id": sessions[0] },
-            body: JSON.stringify({
-              jsonrpc: "2.0",
-              method: "notifications/cancelled",
-              params: { requestId: cycle * 1000 },
-            }),
-          }),
-        ).toBe(202);
-        expect(
-          await raw(address as string, "/mcp/echo", {
-            headers: { "Mcp-Session-Id": sessions[0] },
-            body: '{"jsonrpc":"2.0","id":999,"method":"tools/list"}',
-          }),
-        ).toBe(200);
-        // Close every session so the next cycle starts with zero backend work.
-        for (const session of sessions) {
-          await raw(address as string, "/mcp/echo", {
-            method: "DELETE",
-            headers: { "Mcp-Session-Id": session },
-          });
-        }
-        for (const req of pending.splice(0)) req.destroy();
-        await eventually(async () => (await pids(pidFile)).filter(alive).length === 0);
-        // Process absence precedes the checked ownership settlement by a microtask/probe.
-        await eventually(() => {
-          // biome-ignore lint/complexity/useLiteralKeys: Observe the owned listener after cleanup.
-          const ingress = context.controller["ingress"];
-          if (!ingress) throw new Error("Expected the test listener to remain active");
-          const counts = ingressCounts(ingress);
-          return (
-            counts.resources === 0 &&
-            counts.calls === 0 &&
-            counts.ordinary === 0 &&
-            counts.reserved === 0
-          );
-        });
-      }
-    } finally {
-      for (const req of pending) req.destroy();
-      await context.cleanup();
-      await rm(directory, { recursive: true, force: true });
-    }
-  }, 30_000);
-
-  test("an incomplete ordinary body holds its HTTP slot until disconnect", async () => {
-    const directory = await testDirectory();
-    const pidFile = join(directory, "pids");
-    const context = await setup(await configFor({ echo: stdio({ PID_FILE: pidFile }) }));
-    const pending: ReturnType<typeof request>[] = [];
-    try {
-      const { address } = await context.controller.start();
-      const sessions: string[] = [];
-      for (let index = 0; index < MAX_BACKEND_CALLS; index++)
-        sessions.push(await initializeSession(address as string));
-      for (const [index, session] of sessions.entries()) {
-        const req = request(
-          `${address}/mcp/echo`,
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${TOKEN}`,
-              "Content-Type": "application/json",
-              Accept: "application/json, text/event-stream",
-              "Mcp-Session-Id": session,
-            },
-          },
-          (response) => response.resume(),
-        );
-        req.on("error", () => {});
-        req.end(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            id: 100 + index,
-            method: "tools/call",
-            params: { name: "delay", arguments: { delay: 10_000 } },
-          }),
-        );
-        pending.push(req);
-      }
-      await eventually(
-        async () => (await pids(pidFile)).filter(alive).length === MAX_BACKEND_CALLS,
-      );
-      // Leave one ordinary slot free so releasing the provisional parse allows a fresh ordinary request.
-      for (const session of sessions.slice(0, MAX_ORDINARY_REQUESTS - MAX_BACKEND_CALLS - 1)) {
-        const stream = request(`${address}/mcp/echo`, {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${TOKEN}`,
-            Accept: "text/event-stream",
-            "Mcp-Session-Id": session,
-          },
-        });
-        stream.on("error", () => {});
-        stream.on("response", (response) => response.resume());
-        stream.end();
-        pending.push(stream);
-      }
-      await Bun.sleep(100);
-      // This request reaches session validation through the last ordinary HTTP slot.
-      expect(
-        await raw(address as string, "/mcp/echo", {
-          method: "GET",
-          headers: { "Mcp-Session-Id": "unknown-session" },
-        }),
-      ).toBe(404);
-
-      // A slow body that never finishes holds a provisional slot until deadline.
-      const slow = request(
-        `${address}/mcp/echo`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${TOKEN}`,
-            "Content-Type": "application/json",
-            Accept: "application/json, text/event-stream",
-            "Mcp-Session-Id": sessions[0],
-          },
-        },
-        (response) => response.resume(),
-      );
-      slow.on("error", () => {});
-      slow.write('{"jsonrpc":"2.0","method":"notifications/cancelled","params":');
-      pending.push(slow);
-      await Bun.sleep(100);
-      // The slow provisional request occupies one slot; ordinary is still full.
-      expect(
-        await raw(address as string, "/mcp/echo", {
-          headers: { "Mcp-Session-Id": sessions[1] },
-          body: '{"jsonrpc":"2.0","id":999,"method":"tools/list"}',
-        }),
-      ).toBe(429);
-      // Abort the slow request mid-body.
-      slow.destroy();
-      await Bun.sleep(500);
-      // HTTP admission resumes independently of the still-full backend-work budget.
-      expect(
-        await raw(address as string, "/mcp/echo", {
-          method: "GET",
-          headers: { "Mcp-Session-Id": "unknown-session" },
-        }),
-      ).toBe(404);
-    } finally {
-      for (const req of pending) req.destroy();
-      await context.cleanup();
-      await rm(directory, { recursive: true, force: true });
-    }
-  }, 20_000);
-
-  test("pure control batches are validated wholly and admitted at ordinary saturation", async () => {
-    const directory = await testDirectory();
-    const pidFile = join(directory, "pids");
-    const context = await setup(await configFor({ echo: stdio({ PID_FILE: pidFile }) }));
-    const pending: ReturnType<typeof request>[] = [];
-    try {
-      const { address } = await context.controller.start();
-      const sessions: string[] = [];
-      // 15 sessions leaves room for a second delay call on sessions[0] within
-      // the 16-slot backend-work budget.
-      for (let index = 0; index < MAX_BACKEND_CALLS - 1; index++)
-        sessions.push(await initializeSession(address as string));
-      for (const [index, session] of sessions.entries()) {
-        const req = request(
-          `${address}/mcp/echo`,
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${TOKEN}`,
-              "Content-Type": "application/json",
-              Accept: "application/json, text/event-stream",
-              "Mcp-Session-Id": session,
-            },
-          },
-          (response) => response.resume(),
-        );
-        req.on("error", () => {});
-        req.end(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            id: 100 + index,
-            method: "tools/call",
-            params: { name: "delay", arguments: { delay: 10_000, marker: `held-${index}` } },
-          }),
-        );
-        pending.push(req);
-      }
-      // Give sessions[0] a second pending request so a pure batch has two ids.
-      const second = request(
-        `${address}/mcp/echo`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${TOKEN}`,
-            "Content-Type": "application/json",
-            Accept: "application/json, text/event-stream",
-            "Mcp-Session-Id": sessions[0],
-          },
-        },
-        (response) => response.resume(),
-      );
-      second.on("error", () => {});
-      second.end(
-        JSON.stringify({
-          jsonrpc: "2.0",
-          id: 200,
-          method: "tools/call",
-          params: { name: "delay", arguments: { delay: 10_000, marker: "held-second" } },
-        }),
-      );
-      pending.push(second);
-      await eventually(
-        async () => (await pids(pidFile)).filter(alive).length === MAX_BACKEND_CALLS - 1,
-      );
-      for (const session of sessions.slice(0, MAX_ORDINARY_REQUESTS - MAX_BACKEND_CALLS)) {
-        const stream = request(`${address}/mcp/echo`, {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${TOKEN}`,
-            Accept: "text/event-stream",
-            "Mcp-Session-Id": session,
-          },
-        });
-        stream.on("error", () => {});
-        stream.on("response", (response) => response.resume());
-        stream.end();
-        pending.push(stream);
-      }
-      await Bun.sleep(100);
-      expect(
-        await raw(address as string, "/mcp/echo", {
-          headers: { "Mcp-Session-Id": sessions[0] },
-          body: '{"jsonrpc":"2.0","id":999,"method":"tools/list"}',
-        }),
-      ).toBe(429);
-
-      // A batch of two genuine cancellations for the same session is admitted as control.
-      expect(
-        await raw(address as string, "/mcp/echo", {
-          headers: { "Mcp-Session-Id": sessions[0] },
-          body: JSON.stringify([
-            {
-              jsonrpc: "2.0",
-              method: "notifications/cancelled",
-              params: { requestId: 100 },
-            },
-            {
-              jsonrpc: "2.0",
-              method: "notifications/cancelled",
-              params: { requestId: 200 },
-            },
-          ]),
-        }),
-      ).toBe(202);
-      // Cancelling both calls frees their HTTP slots and backend work, allowing
-      // a new session and ordinary request without using control capacity.
-      const extraSession = await initializeSession(address as string);
-      expect(
-        await raw(address as string, "/mcp/echo", {
-          headers: { "Mcp-Session-Id": extraSession },
-          body: JSON.stringify({
-            jsonrpc: "2.0",
-            id: 300,
-            method: "tools/list",
-          }),
-        }),
-      ).toBe(200);
-    } finally {
-      for (const req of pending) req.destroy();
-      await context.cleanup();
-      await rm(directory, { recursive: true, force: true });
-    }
-  }, 20_000);
-
-  test("genuine reverse replies to server-originated requests are admitted as control", async () => {
-    const directory = await testDirectory();
-    const pidFile = join(directory, "pids");
-    const context = await setup(await configFor({ echo: stdio({ PID_FILE: pidFile }) }));
-    const pending: ReturnType<typeof request>[] = [];
-    try {
-      const { address } = await context.controller.start();
-      const serverMessages: unknown[] = [];
-      const serverErrors: Error[] = [];
-      // The pinned session routes reverse requests onto its first pending POST.
-      // Parse each response separately while observing the entire client session.
-      const collect = (response: IncomingMessage) => {
-        const parser = createParser({
-          onEvent: ({ data }) => serverMessages.push(JSON.parse(data)),
-        });
-        response.setEncoding("utf8");
-        response.on("data", (chunk: string) => parser.feed(chunk));
-        response.on("error", (error) => serverErrors.push(error));
-      };
-      // Use 15 delay calls so the server-request call can fit within the 16
-      // backend-work budget.
-      const sessions: string[] = [];
-      for (let index = 0; index < MAX_BACKEND_CALLS - 1; index++)
-        sessions.push(await initializeSession(address as string));
-      for (const [index, session] of sessions.entries()) {
-        const req = request(
-          `${address}/mcp/echo`,
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${TOKEN}`,
-              "Content-Type": "application/json",
-              Accept: "application/json, text/event-stream",
-              "Mcp-Session-Id": session,
-            },
-          },
-          (response) => (index === 0 ? collect(response) : response.resume()),
-        );
-        req.on("error", () => {});
-        req.end(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            id: 100 + index,
-            method: "tools/call",
-            params: { name: "delay", arguments: { delay: 10_000 } },
-          }),
-        );
-        pending.push(req);
-      }
-      await eventually(
-        async () => (await pids(pidFile)).filter(alive).length === MAX_BACKEND_CALLS - 1,
-      );
-
-      // Observe the actual reverse request and terminal tool result, not just HTTP 202.
       // biome-ignore lint/complexity/useLiteralKeys: Observe the owned listener's admission ledgers.
       const ingress = context.controller["ingress"];
-      if (!ingress) throw new Error("Expected a running test listener");
-      const serverReq = request(
-        `${address}/mcp/echo`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${TOKEN}`,
-            "Content-Type": "application/json",
-            Accept: "application/json, text/event-stream",
-            "Mcp-Session-Id": sessions[0],
-          },
-        },
-        collect,
-      );
-      serverReq.on("error", (error) => serverErrors.push(error));
-      serverReq.end(
-        JSON.stringify({
-          jsonrpc: "2.0",
-          id: 900,
-          method: "tools/call",
-          params: { name: "server-request", arguments: {} },
-        }),
-      );
-      pending.push(serverReq);
-      await eventually(() =>
-        serverMessages.some(
-          (message) =>
-            typeof message === "object" &&
-            message !== null &&
-            "method" in message &&
-            message.method === "roots/list",
-        ),
-      );
-      expect(serverMessages).toContainEqual({ jsonrpc: "2.0", id: 1, method: "roots/list" });
-      expect(ingressCounts(ingress).calls).toBe(MAX_BACKEND_CALLS);
-
-      // Saturate ordinary HTTP slots with GET streams on the remaining sessions.
-      // 15 delay POSTs + 1 server-request POST + 12 GET streams = 28 ordinary.
-      for (const session of sessions.slice(1, MAX_ORDINARY_REQUESTS - MAX_BACKEND_CALLS + 1)) {
-        const stream = request(`${address}/mcp/echo`, {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${TOKEN}`,
-            Accept: "text/event-stream",
-            "Mcp-Session-Id": session,
-          },
-        });
-        stream.on("error", () => {});
-        stream.on("response", (response) => response.resume());
-        stream.end();
-        pending.push(stream);
+      if (!ingress) throw new Error("Missing ingress");
+      for (let index = 0; index < MAX_SESSIONS; index++) {
+        const abort = new AbortController();
+        aborts.push(abort);
+        void modernCall(address as string, "delay", { delay: 20_000 }, abort.signal).catch(
+          () => {},
+        );
       }
-      await eventually(() => ingressCounts(ingress).ordinary === MAX_ORDINARY_REQUESTS);
-      expect(
-        await raw(address as string, "/mcp/echo", {
-          headers: { "Mcp-Session-Id": sessions[0] },
-          body: '{"jsonrpc":"2.0","id":999,"method":"tools/list"}',
-        }),
-      ).toBe(429);
-
-      expect(ingressCounts(ingress).ordinary).toBe(MAX_ORDINARY_REQUESTS);
-      // A reply without an outstanding server request is ordinary and refused.
-      expect(
-        await raw(address as string, "/mcp/echo", {
-          headers: { "Mcp-Session-Id": sessions[1] },
-          body: JSON.stringify({
-            jsonrpc: "2.0",
-            id: 1,
-            result: { roots: [] },
-          }),
-        }),
-      ).toBe(429);
-
-      // JSON-RPC responses are acknowledged with HTTP 202 by the pinned MCP transport.
-      expect(
-        await raw(address as string, "/mcp/echo", {
-          headers: { "Mcp-Session-Id": sessions[0] },
-          body: JSON.stringify({
-            jsonrpc: "2.0",
-            id: 1,
-            result: { roots: [] },
-          }),
-        }),
-      ).toBe(202);
-      await eventually(() =>
-        serverMessages.some(
-          (message) =>
-            typeof message === "object" &&
-            message !== null &&
-            "id" in message &&
-            message.id === 900 &&
-            "result" in message,
-        ),
+      await eventually(async () => (await pids(pidFile)).filter(alive).length === MAX_SESSIONS);
+      await eventually(() => ingressCounts(ingress).resources === MAX_SESSIONS);
+      expect(ingressCounts(ingress).calls).toBe(MAX_SESSIONS);
+      expect(ingressCounts(ingress).active).toBeLessThanOrEqual(MAX_CONCURRENT_REQUESTS);
+      for (const abort of aborts.splice(0)) abort.abort();
+      await eventually(async () => (await pids(pidFile)).every((pid) => !alive(pid)));
+      await eventually(
+        () => ingressCounts(ingress).resources === 0 && ingressCounts(ingress).calls === 0,
       );
-      expect(ingressCounts(ingress).calls).toBe(MAX_BACKEND_CALLS - 1);
-      expect(serverMessages).toContainEqual({
-        jsonrpc: "2.0",
-        id: 900,
-        result: {
-          content: [{ type: "text", text: JSON.stringify({ clientResponse: { roots: [] } }) }],
-        },
-      });
-      expect(serverErrors).toEqual([]);
-      expect(ingressCounts(ingress).resources).toBe(MAX_BACKEND_CALLS - 1);
     } finally {
-      for (const req of pending) req.destroy();
+      for (const abort of aborts) abort.abort();
+      const owned = await pids(pidFile);
       await context.cleanup();
-      await rm(directory, { recursive: true, force: true });
-    }
-  }, 20_000);
-
-  test("global live session admission holds DELETE's slot until actual process cleanup", async () => {
-    const context = await setup(await configFor({}));
-    const gate = join(context.directory, "cleanup-gate");
-    const signalFile = join(context.directory, "cleanup-signals");
-    const pidFile = join(context.directory, "pids");
-    const config = await configFor({
-      echo: stdio({ PID_FILE: pidFile, CLEANUP_GATE_FILE: gate, CLEANUP_SIGNAL_FILE: signalFile }),
-    });
-    await context.controller.saveConfig(
-      JSON.stringify(config),
-      context.controller.snapshot().revision,
-    );
-    const clients: Array<Awaited<ReturnType<typeof connect>>> = [];
-    const initialize =
-      '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"bounded","version":"1"}}}';
-    try {
-      const { address } = await context.controller.start();
-      for (let index = 0; index < MAX_SESSIONS; index++)
-        clients.push(await connect(address as string));
-      expect(
-        await raw(address as string, "/mcp/echo", {
-          body: initialize,
-        }),
-      ).toBe(429);
-      await clients.pop()?.close();
-      await eventually(async () => (await pids(signalFile)).length > 0);
-      const [stoppingPid] = await pids(signalFile);
-      expect(alive(stoppingPid)).toBe(true);
-      expect(await raw(address as string, "/mcp/echo", { body: initialize })).toBe(429);
-      expect((await pids(pidFile)).filter(alive)).toHaveLength(MAX_SESSIONS);
-      // Rejection validation does not open resources, even at full capacity.
-      expect(
-        await raw(address as string, "/mcp/echo", {
-          body: '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}',
-        }),
-      ).toBe(400);
-      await writeFile(gate, "release");
-      await eventually(() => !alive(stoppingPid));
-      await eventually(async () => {
-        try {
-          clients.push(await connect(address as string));
-          return true;
-        } catch {
-          return false;
-        }
-      });
-      expect(clients).toHaveLength(MAX_SESSIONS);
-      expect((await pids(pidFile)).filter(alive)).toHaveLength(MAX_SESSIONS);
-    } finally {
-      await writeFile(gate, "release");
-      for (const client of clients) await client.close().catch(() => {});
-      const ownedPids = await pids(pidFile);
-      await context.cleanup();
-      await eventually(() => ownedPids.every((pid) => !alive(pid)));
+      await eventually(() => owned.every((pid) => !alive(pid)));
     }
   }, 30_000);
 });

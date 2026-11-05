@@ -13,7 +13,7 @@ All fixtures are synthetic; no Bear, Apple account or actual login registration 
 The login double is injected below AppService through MacLoginManager's native interface.
 
 `bun test tests/core/backend-output.test.ts tests/regressions/backend-output.test.ts` checks backend output limits through the shared readers and authenticated loopback gateway.
-The matrix covers legacy and modern stdio, SSE, and JSON; exact limits, oversized complete and unfinished messages; and streams whose total exceeds the per-event limit.
+The matrix covers modern stdio, SSE, and JSON; exact limits, oversized complete and unfinished messages; and streams whose total exceeds the per-event limit.
 Reader checks cover split UTF-8 and CR/LF framing, metadata/comment fields, deceptive content-type parameters, cancellation, cleanup failures, and backpressure.
 These tests use synthetic output and do not attempt process memory exhaustion.
 
@@ -40,7 +40,7 @@ The default suite includes the shared command owner, confirmed backend-process c
 The original user-facing audit cases remain explicit supplements:
 
 ```sh
-bun test tests/audit/a1-login-lifetime.test.ts tests/audit/a12-bounded-inspection.test.ts tests/audit/gates.test.ts
+bun test tests/audit/a1-login-lifetime.test.ts tests/audit/a12-bounded-inspection.test.ts
 bun test tests/audit/pending -t 'A[23456]:'
 ```
 
@@ -87,8 +87,6 @@ The earlier independent combined-source review of A7-A11/A13 and connected owner
 That blanket conclusion is superseded by the direct-review corrections above.
 Evidence is under `.cache/src-audit-combined-review/20261104T173332Z/` and [the source-closure record](../IMPLEMENTATION-PLAN.md#independent-combined-source-closure).
 One suspected A13 cancellation race was withdrawn after pinned-source tracing and 40 natural runtime cases; no production correction was needed.
-Two new same-write pipelined tests in `control-admission.test.ts` assert single-call cancellation, exact batch sibling output, backend notification delivery and reserved-rate accounting.
-They pass without SDK spies or pauses and fail under a test-only reserved-control refusal.
 The final unit suite passes 591 tests with 4,704 assertions; 62 components, 22 browser tests, 32 audit tests, five SDK helper tests, eight private-hook tests and four development-native scenarios passed on unchanged production bytes in the same run.
 Type checking, lint and scoped LSP diagnostics pass.
 Signed packaged acceptance on this source remains separately gated.
@@ -123,24 +121,11 @@ They did not establish the native signal path: the audit fixture manually invoke
 The later native Quit suite above verifies actual signals with dirty and blocked WKWebView windows.
 New signed incompatible-candidate and malformed-archive replacement fixtures require separate authorization.
 
-### A13 control admission
+### Session protocol and reserved control admission removed
 
-A13 is implemented, locally verified and independently source-reviewed; signed packaged acceptance remains pending.
-The current request ceiling is 28 ordinary plus 4 reserved HTTP slots, with at most 224 ordinary admissions within the 240-per-minute total.
-`tests/core/control-admission.test.ts` and the ingress regressions cover complete-body validation, parser ownership, exact rate accounting, duplicate controls, reverse replies, batch cancellation, and delayed backend cleanup.
-The original audit case and parsed-body capability remain explicit checks:
-
-```sh
-bun test tests/core/control-admission.test.ts tests/core/ingress.test.ts
-bun test tests/audit/pending/protocol.test.ts -t 'A13:'
-bun test tests/audit/gates.test.ts -t 'A13 capability'
-```
-
-The A13 continuation passed 28 admission/ingress tests, 54 components, 20 browser tests, type checking, lint, scoped LSP, a development build, and four isolated macOS native scenarios.
-Its full unit run had 547 passes and one unchanged A11 fixture failure: `updater-archive-numbers.test.ts` expects `entryTooLarge` but receives `unsafePath`.
-At that checkpoint the failure also reproduced alone; neither the A11 fixture nor archive implementation was changed by the A13 task.
-The later A7-A11 work corrected the fixture and passed the full suite as recorded above.
-Evidence and verification limits are recorded in [the A13 source record](../IMPLEMENTATION-PLAN.md#a13-local-source-verification) and `.cache/src-audit-a13/20261104T155056Z/`.
+The pre-2026-07-28 session protocol and its reserved control admission (A13's 28 ordinary plus 4 reserved HTTP slots and 224/16 rate split) have been removed.
+The gateway now serves only the stateless 2026-07-28 protocol and refuses session clients and GET/DELETE with 400/405.
+The historical A13 record remains under `.cache/src-audit-a13/20261104T155056Z/`.
 
 ## GitHub Actions
 
@@ -252,12 +237,12 @@ The later authorized final review found and closed cleanup-parent admission, def
 Current evidence is under `.cache/auto-update-0.3.1/final-acceptance/`; the earlier remediation directory remains historical evidence.
 
 - Lifecycle cancellation makes Stop and Quit cancel pending hostname validation; queued refresh, watcher and service work cannot persist or reopen after cancellation.
-- Malformed initialize returns 400 while the endpoint remains mounted and usable.
-- The global 16-resource cap includes retained modern children across endpoints, alone or mixed with legacy sessions and their asynchronous DELETE cleanup.
-- The shared 16-call backend-work bound spans sessions and endpoints, retains work until a reply, protocol cancellation or confirmed cleanup, and releases only the affected call.
-- Duplicate in-flight IDs, one-element batch duplicates, within-batch duplicates and concurrent duplicates are refused before SDK dispatch; late replies cannot release work that reused an ID.
+- Session-protocol POSTs return 400 while the endpoint remains mounted and usable; GET/DELETE are refused with 405.
+- The global 16-resource cap includes retained modern children across endpoints.
+- The shared 16-call backend-work bound spans endpoints, retains work until a reply, protocol cancellation or confirmed cleanup, and releases only the affected call.
+- Duplicate in-flight IDs are refused before SDK dispatch; late replies cannot release work that reused an ID.
 - A completed modern response releases its protocol work reservation on the terminal reply; its backend-resource lease remains until that child cleanup is confirmed.
-- Malformed legacy replies retain their work, capacity refusals settle session state, and upstream continuation and credential isolation remain covered.
+- Capacity refusals settle request state, and upstream continuation and credential isolation remain covered.
 
 Core, main, and dedicated regression suites are included in the default unit command.
 Audit reproductions and native helper acceptance retain the explicit commands above.
