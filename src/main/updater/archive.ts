@@ -1,13 +1,9 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { lstat, mkdir, open, readdir, rm } from "node:fs/promises";
+import { lstat, mkdir, open, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { MAX_UPDATE_TREE_ENTRIES, MAX_UPDATE_TREE_FILES } from "./budget";
-import {
-  MAX_EXPANDED_ARCHIVE_BYTES,
-  requiredBundleExecutables,
-  UPDATER_HASH_PATTERN,
-} from "./constants";
+import { MAX_EXPANDED_ARCHIVE_BYTES, requiredBundleExecutables } from "./constants";
 
 const BLOCK_BYTES = 512;
 const DEFAULT_MAX_ARCHIVE_BYTES = MAX_EXPANDED_ARCHIVE_BYTES;
@@ -481,21 +477,4 @@ export async function extractAdmittedArchive(
 
 export async function removePrivateDirectory(path: string): Promise<void> {
   await rm(path, { recursive: true, force: true });
-}
-
-export async function listArchiveTopLevel(path: string, signal?: AbortSignal): Promise<string[]> {
-  const inspection = await inspectUpdateArchive(path, defaultLimits, signal);
-  return [...new Set(inspection.entries.map((entry) => entry.path.split("/")[0] ?? ""))];
-}
-
-export function isSafePreparedHash(value: string): boolean {
-  return UPDATER_HASH_PATTERN.test(value);
-}
-
-export async function readDirectoryNames(path: string): Promise<string[]> {
-  try {
-    return await readdir(path);
-  } catch {
-    return [];
-  }
 }

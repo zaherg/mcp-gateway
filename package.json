@@ -15,7 +15,7 @@
         "build:windows": "bun scripts/build.ts windows",
         "release": "bun scripts/build.ts stable",
         "test": "bun run test:unit",
-        "test:unit": "bun test tests/core tests/main tests/regressions",
+        "test:unit": "bun test tests/core tests/main tests/regressions tests/native/update-acceptance",
         "test:components": "node node_modules/vitest/vitest.mjs run",
         "test:e2e": "bun scripts/test-e2e.ts",
         "typecheck": "tsc --noEmit",

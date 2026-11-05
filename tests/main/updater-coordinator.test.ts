@@ -1,5 +1,6 @@
-import { expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { expect, spyOn, test } from "bun:test";
+import * as fs from "node:fs";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { PreparedUpdateAttempt, UpdateCheckResult } from "../../src/main/updater/boundary";
 import type { FrozenCandidate } from "../../src/main/updater/candidate";
@@ -489,6 +490,187 @@ test("setAutomatic writes the preference, stops new scheduling, and preserves th
     await rm(data, { recursive: true, force: true });
   }
 });
+
+for (const enabled of [false, true]) {
+  test(`published preference with uncertain durability controls current and restarted scheduling: ${enabled}`, async () => {
+    const data = await directory();
+    const timers = new FakeTimers();
+    const updater = runtime();
+    const coordinator = new UpdaterCoordinator({
+      dataDirectory: data,
+      supported: true,
+      installedVersion: "0.3.1",
+      runtime: updater,
+      timers,
+    });
+    const restartTimers = new FakeTimers();
+    const restarted = new UpdaterCoordinator({
+      dataDirectory: data,
+      supported: true,
+      installedVersion: "0.3.1",
+      runtime: runtime(),
+      timers: restartTimers,
+    });
+    try {
+      await coordinator.start();
+      await coordinator.setAutomatic(!enabled);
+      const sync = fs.fsyncSync;
+      let failures = 0;
+      const syncMock = spyOn(fs, "fsyncSync").mockImplementation((fd) => {
+        if (fs.fstatSync(fd).isDirectory()) {
+          failures++;
+          throw new Error("Synthetic directory synchronization refusal");
+        }
+        sync(fd);
+      });
+      try {
+        expect(await coordinator.setAutomatic(enabled)).toMatchObject({
+          automaticUpdates: enabled,
+          phase: "idle",
+          preferenceError: expect.stringContaining("durability could not be confirmed"),
+        });
+      } finally {
+        syncMock.mockRestore();
+      }
+      expect(failures).toBe(1);
+      expect(await readFile(join(data, "updates.json"), "utf8")).toBe(
+        `${JSON.stringify({ schema_version: 1, automaticUpdates: enabled })}\n`,
+      );
+      expect(Boolean(timers.startup)).toBe(enabled);
+      expect(Boolean(timers.poll)).toBe(enabled);
+      expect(await restarted.start()).toMatchObject({
+        automaticUpdates: enabled,
+        preferenceError: null,
+      });
+      expect(Boolean(restartTimers.startup)).toBe(enabled);
+      expect(Boolean(restartTimers.poll)).toBe(enabled);
+      timers.runStartup();
+      timers.runPoll(24 * 60 * 60_000);
+      if (enabled) await eventually(() => coordinator.statusValue().phase === "ready");
+      expect(updater.checks).toBe(enabled ? 1 : 0);
+      expect(updater.downloads).toBe(enabled ? 1 : 0);
+      expect(coordinator.statusValue().preferenceError).toContain(
+        "durability could not be confirmed",
+      );
+      expect(await coordinator.setAutomatic(enabled)).toMatchObject({
+        automaticUpdates: enabled,
+        preferenceError: null,
+      });
+    } finally {
+      coordinator.stop();
+      restarted.stop();
+      await rm(data, { recursive: true, force: true });
+    }
+  });
+}
+
+test("unverifiable publication disables scheduling until a successful preference retry", async () => {
+  const data = await directory();
+  const timers = new FakeTimers();
+  const updater = runtime();
+  const coordinator = new UpdaterCoordinator({
+    dataDirectory: data,
+    supported: true,
+    installedVersion: "0.3.1",
+    runtime: updater,
+    timers,
+  });
+  try {
+    await coordinator.start();
+    expect(timers.startup).toBeDefined();
+    const sync = fs.fsyncSync;
+    let failures = 0;
+    const syncMock = spyOn(fs, "fsyncSync").mockImplementation((fd) => {
+      if (fs.fstatSync(fd).isDirectory()) {
+        failures++;
+        fs.truncateSync(join(data, "updates.json"), 0);
+        throw new Error("Synthetic publication refusal");
+      }
+      sync(fd);
+    });
+    try {
+      expect(await coordinator.setAutomatic(true)).toMatchObject({
+        automaticUpdates: false,
+        phase: "preference-error",
+        preferenceError: expect.stringContaining("current value could not be verified"),
+      });
+    } finally {
+      syncMock.mockRestore();
+    }
+    expect(failures).toBe(1);
+    expect(timers.startup).toBeUndefined();
+    expect(timers.poll).toBeUndefined();
+    timers.runStartup();
+    timers.runPoll(24 * 60 * 60_000);
+    expect(updater.checks).toBe(0);
+    expect(await coordinator.setAutomatic(true)).toMatchObject({
+      automaticUpdates: true,
+      phase: "idle",
+      preferenceError: null,
+    });
+    expect(timers.startup).toBeDefined();
+    expect(timers.poll).toBeDefined();
+  } finally {
+    coordinator.stop();
+    await rm(data, { recursive: true, force: true });
+  }
+});
+
+for (const phase of ["available", "ready", "error"] as const) {
+  test(`an unverifiable preference does not erase update work in phase ${phase}`, async () => {
+    const data = await directory();
+    const updater = runtime();
+    const accepted = terminal();
+    const coordinator = new UpdaterCoordinator({
+      dataDirectory: data,
+      supported: true,
+      installationEnabled: true,
+      installedVersion: "0.3.1",
+      runtime: updater,
+      terminal: accepted,
+      timers: new FakeTimers(),
+    });
+    try {
+      await coordinator.start();
+      await coordinator.setAutomatic(false);
+      await coordinator.check();
+      if (phase !== "available") await coordinator.download();
+      if (phase === "error") coordinator.markHandoffFailed("Synthetic retryable handoff failure");
+      const before = coordinator.statusValue();
+      expect(before.phase).toBe(phase);
+      const sync = fs.fsyncSync;
+      let failures = 0;
+      const syncMock = spyOn(fs, "fsyncSync").mockImplementation((fd) => {
+        if (fs.fstatSync(fd).isDirectory()) {
+          failures++;
+          fs.truncateSync(join(data, "updates.json"), 0);
+          throw new Error("Synthetic publication refusal");
+        }
+        sync(fd);
+      });
+      try {
+        expect(await coordinator.setAutomatic(true)).toEqual({
+          ...before,
+          automaticUpdates: false,
+          preferenceError: expect.stringContaining("current value could not be verified"),
+        });
+      } finally {
+        syncMock.mockRestore();
+      }
+      expect(failures).toBe(1);
+      expect(await coordinator.setAutomatic(false)).toEqual(before);
+      if (phase === "available") await coordinator.download();
+      expect(await coordinator.restartToUpdate(VERSION, HASH)).toMatchObject({ phase: "pending" });
+      expect(accepted.calls).toBe(1);
+      expect(updater.checks).toBe(1);
+      expect(updater.downloads).toBe(1);
+      expect(updater.revalidations).toBe(1);
+    } finally {
+      coordinator.stop();
+      await rm(data, { recursive: true, force: true });
+    }
+  });
+}
 
 test("a failed handoff remains retryable with the same frozen candidate", async () => {
   const data = await directory();

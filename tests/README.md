@@ -12,6 +12,11 @@ Neither unit nor component commands launch a browser or Electrobun.
 All fixtures are synthetic; no Bear, Apple account or actual login registration is used.
 The login double is injected below AppService through MacLoginManager's native interface.
 
+`bun test tests/core/backend-output.test.ts tests/regressions/backend-output.test.ts` checks backend output limits through the shared readers and authenticated loopback gateway.
+The matrix covers legacy and modern stdio, SSE, and JSON; exact limits, oversized complete and unfinished messages; and streams whose total exceeds the per-event limit.
+Reader checks cover split UTF-8 and CR/LF framing, metadata/comment fields, deceptive content-type parameters, cancellation, cleanup failures, and backpressure.
+These tests use synthetic output and do not attempt process memory exhaustion.
+
 ## Current audit remediation
 
 A2-A6 and prerequisite A12 are locally verified and independently source-reviewed.
@@ -177,12 +182,18 @@ Malformed, truncated, extra and duplicate startup records fail rather than being
 Acceptance also requires one attempt-bound backend-absence observation immediately before apply; it neither waits for nor kills the backend.
 The live-backend negative control remains rejected even after that process exits before final collection.
 
-The private source hooks at `.cache/auto-update-0.3.1/tests/prepare-fixture-apps.ts` and `product-update-flow.ts` are checked separately with `acceptance-hooks.test.ts`; CI does not import ignored cache files.
+The maintained two-version builder, driver, helper settlement, and tests are under `tests/native/update-acceptance/`.
+Their source checks run in `bun run test:unit` and the existing CI unit step; three macOS-specific cases are skipped elsewhere.
 They patch copied source trees with exact-match anchors, fix isolated home/data/temp roots before SDK imports, write markers outside the signed bundle, and await a private renderer RPC confirmation receipt before forwarding the real restart request.
-Both generated source variants typecheck; the final signed/notarized/stapled private pair passed five product scenarios.
-These cover successful replacement, manifest HTTP 503, interruption after an on-disk partial download, injected cleanup failure with explicit retry, and six-second delayed renderer readiness.
+Both generated source variants typecheck.
+The source tests do not sign apps or perform replacement.
+[Packaged acceptance instructions](native/update-acceptance/README.md) document fresh-checkout prerequisites, private build/run paths, signing gates, and the opt-in driver commands.
+Generated artifacts and evidence remain ignored; the old cache source copies are historical and are not imported by the maintained flow.
+
+Earlier signed/notarized/stapled private-pair evidence covers successful replacement, manifest HTTP 503, interruption after an on-disk partial download, injected cleanup failure with explicit retry, and six-second delayed renderer readiness.
+It does not certify subsequent production changes or the relocated driver through a new packaged run.
 Failure assertions require the intended fault, unchanged complete app inventory and configuration, no handoff, no remaining transaction and checked shutdown.
-Eight private-hook tests cover exact source patches, process/helper cleanup, fault prerequisites, transaction absence, destination refusal and the pinned RPC deadline.
+The maintained hook tests cover exact source patches, process/helper cleanup, fault prerequisites, transaction absence, destination and symlink refusal, and the pinned RPC deadline.
 A product-flow run retains its directory and refuses reuse until its resources and evidence have been inspected.
 The two-second duplicate-startup observation window does not prove that no later restart can occur.
 

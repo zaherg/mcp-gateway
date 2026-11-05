@@ -220,7 +220,12 @@ export function readNativeJsonSync(path: string): unknown {
   return readBoundedSync(path, { requirePrivateMode: false });
 }
 
-export async function atomicWritePrivateJson(path: string, value: unknown): Promise<void> {
+/** onPublished runs after rename; subsequent validation or durability failures still reject. */
+export async function atomicWritePrivateJson(
+  path: string,
+  value: unknown,
+  onPublished?: () => void,
+): Promise<void> {
   const directory = dirname(path);
   await ensurePrivateDirectory(directory);
   const partial = `${path}.${randomBytes(8).toString("hex")}.partial`;
@@ -237,6 +242,7 @@ export async function atomicWritePrivateJson(path: string, value: unknown): Prom
     if (existing && (existing.isSymbolicLink() || !existing.isFile()))
       throw new UpdaterStateError("stateDestination");
     await rename(partial, path);
+    onPublished?.();
     const published = await lstat(path);
     assertOwned(published);
     if (!published.isFile() || published.size !== bytes.length)

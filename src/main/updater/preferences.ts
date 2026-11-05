@@ -2,12 +2,11 @@ import { join } from "node:path";
 import { ensureParent, safeParent } from "../../core/private-parent";
 import { atomicWritePrivateJson, readPrivateJson } from "./storage";
 
-const _MAX_PREFERENCE_BYTES = 4 * 1024;
 const FIELDS = ["automaticUpdates", "schema_version"];
 
 export interface UpdatePreferencesState {
   automaticUpdates: boolean;
-  status: "default" | "loaded" | "invalid" | "write-failed";
+  status: "default" | "loaded" | "invalid" | "write-failed" | "durability-uncertain";
   error: string | null;
 }
 
@@ -67,14 +66,33 @@ export async function saveUpdatePreferences(
   automaticUpdates: boolean,
   previous: UpdatePreferencesState,
 ): Promise<UpdatePreferencesState> {
+  let published = false;
   try {
     await ensureParent(preferencePath(dataDirectory));
-    await atomicWritePrivateJson(preferencePath(dataDirectory), {
-      schema_version: 1,
-      automaticUpdates,
-    });
+    await atomicWritePrivateJson(
+      preferencePath(dataDirectory),
+      { schema_version: 1, automaticUpdates },
+      () => {
+        published = true;
+      },
+    );
     return { automaticUpdates, status: "loaded", error: null };
   } catch {
+    if (published) {
+      const current = await loadUpdatePreferences(dataDirectory);
+      if (current.status !== "loaded")
+        return {
+          ...invalid(),
+          error:
+            "The update preference was replaced, but its current value could not be verified. Background updates are disabled.",
+        };
+      return {
+        ...current,
+        status: "durability-uncertain",
+        error:
+          "The update preference was changed, but its durability could not be confirmed. The displayed setting is active now; it may not survive a crash.",
+      };
+    }
     return {
       automaticUpdates: previous.automaticUpdates,
       status: "write-failed",

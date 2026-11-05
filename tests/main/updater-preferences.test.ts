@@ -1,5 +1,16 @@
-import { expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { expect, spyOn, test } from "bun:test";
+import * as fs from "node:fs";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { join, resolve } from "node:path";
 import {
   DEFAULT_UPDATE_PREFERENCES,
@@ -43,6 +54,136 @@ test("saves and loads the strict versioned preference atomically with owner-only
     await rm(root, { recursive: true, force: true });
   }
 });
+
+for (const initial of [undefined, false, true]) {
+  for (const failurePoint of ["file sync", "directory sync"] as const) {
+    test(`preference save reconciles publication after ${failurePoint}, initial=${initial}`, async () => {
+      const root = await directory();
+      try {
+        const previous =
+          initial === undefined
+            ? await loadUpdatePreferences(root)
+            : await saveUpdatePreferences(root, initial, DEFAULT_UPDATE_PREFERENCES);
+        const requested = !previous.automaticUpdates;
+        const sync = fs.fsyncSync;
+        let failures = 0;
+        const syncMock = spyOn(fs, "fsyncSync").mockImplementation((fd) => {
+          if (fs.fstatSync(fd).isDirectory() === (failurePoint === "directory sync")) {
+            failures++;
+            throw new Error("Synthetic private storage diagnostic");
+          }
+          sync(fd);
+        });
+        let result: Awaited<ReturnType<typeof saveUpdatePreferences>>;
+        try {
+          result = await saveUpdatePreferences(root, requested, previous);
+        } finally {
+          syncMock.mockRestore();
+        }
+        expect(failures).toBe(1);
+        const published = failurePoint === "directory sync";
+        const effective = published ? requested : previous.automaticUpdates;
+        expect(result.automaticUpdates).toBe(effective);
+        expect(result.status).toBe(published ? "durability-uncertain" : "write-failed");
+        expect(result.error).toContain(
+          published ? "durability could not be confirmed" : "previous setting remains active",
+        );
+        expect(result.error).not.toContain("Synthetic private");
+        expect((await loadUpdatePreferences(root)).automaticUpdates).toBe(effective);
+        if (initial !== undefined || published) {
+          expect(await readFile(join(root, "updates.json"), "utf8")).toBe(
+            `${JSON.stringify({ schema_version: 1, automaticUpdates: effective })}\n`,
+          );
+          expect(await readdir(root)).toEqual(["updates.json"]);
+        } else expect(await readdir(root)).toEqual([]);
+        const retried = await saveUpdatePreferences(root, requested, result);
+        expect(retried).toEqual({ automaticUpdates: requested, status: "loaded", error: null });
+        expect(await loadUpdatePreferences(root)).toEqual(retried);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+}
+
+for (const mutation of [
+  "valid replacement",
+  "truncated",
+  "schema",
+  "permissions",
+  "missing",
+  "symlink",
+  "parent symlink",
+] as const) {
+  test(`post-publication readback adopts only verified preferences: ${mutation}`, async () => {
+    const root = await directory();
+    try {
+      const data = join(root, "data");
+      const path = join(data, "updates.json");
+      const previous = await saveUpdatePreferences(data, true, DEFAULT_UPDATE_PREFERENCES);
+      const target = join(root, "untouched.json");
+      const targetText = '{"schema_version":1,"automaticUpdates":true}\n';
+      await writeFile(target, targetText, { mode: 0o600 });
+      const sync = fs.fsyncSync;
+      let failures = 0;
+      const syncMock = spyOn(fs, "fsyncSync").mockImplementation((fd) => {
+        if (!fs.fstatSync(fd).isDirectory()) return sync(fd);
+        failures++;
+        switch (mutation) {
+          case "valid replacement":
+            fs.writeFileSync(path, targetText);
+            break;
+          case "truncated":
+            fs.truncateSync(path, 0);
+            break;
+          case "schema":
+            fs.writeFileSync(path, '{"schema_version":2,"automaticUpdates":true}');
+            break;
+          case "permissions":
+            fs.chmodSync(path, 0o644);
+            break;
+          case "missing":
+            fs.unlinkSync(path);
+            break;
+          case "symlink":
+            fs.unlinkSync(path);
+            fs.symlinkSync(target, path);
+            break;
+          case "parent symlink":
+            fs.renameSync(data, join(root, "moved"));
+            fs.symlinkSync(join(root, "moved"), data);
+            break;
+        }
+        throw new Error("Synthetic private post-publication diagnostic");
+      });
+      let result: Awaited<ReturnType<typeof saveUpdatePreferences>>;
+      try {
+        result = await saveUpdatePreferences(data, false, previous);
+      } finally {
+        syncMock.mockRestore();
+      }
+      expect(failures).toBe(1);
+      if (mutation === "valid replacement") {
+        expect(result).toMatchObject({
+          automaticUpdates: true,
+          status: "durability-uncertain",
+          error: expect.stringContaining("durability could not be confirmed"),
+        });
+        expect((await loadUpdatePreferences(data)).automaticUpdates).toBe(true);
+      } else {
+        expect(result).toEqual({
+          automaticUpdates: false,
+          status: "invalid",
+          error:
+            "The update preference was replaced, but its current value could not be verified. Background updates are disabled.",
+        });
+      }
+      expect(await readFile(target, "utf8")).toBe(targetText);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+}
 
 test("invalid, unsafe, or non-owner-only preferences disable background work without overwriting", async () => {
   const root = await directory();

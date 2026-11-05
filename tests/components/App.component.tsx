@@ -794,6 +794,42 @@ describe("Updates settings", () => {
     expect(screen.queryByRole("button", { name: "Check for Updates" })).not.toBeInTheDocument();
   });
 
+  test.each([false, true])(
+    "keeps the published switch value and shows uncertain durability without a success notice: %s",
+    async (enabled) => {
+      const initial = snapshot();
+      initial.update.automaticUpdates = !enabled;
+      const context = fixture(initial);
+      const warning =
+        "The update preference was changed, but its durability could not be confirmed. The displayed setting is active now; it may not survive a crash.";
+      const published = {
+        ...initial,
+        update: { ...initial.update, automaticUpdates: enabled, preferenceError: warning },
+      };
+      context.client.updatesSetAutomatic.mockImplementation(async () => {
+        context.set(published);
+        return ok(published.update);
+      });
+      render(<App client={context.client} />);
+      await screen.findByRole("heading", { name: "No servers configured" });
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: "Settings" }));
+      const toggle = screen.getByRole("switch", {
+        name: /Automatically check and download updates/,
+      });
+      await user.click(toggle);
+      expect(context.client.updatesSetAutomatic).toHaveBeenCalledWith({ automatic: enabled });
+      expect(toggle).toHaveAttribute("aria-checked", String(enabled));
+      expect(toggle).toBeEnabled();
+      expect(screen.getByText(warning, { selector: ".inline-error" })).toBeVisible();
+      expect(screen.getByText(`UpdatePreference: ${warning}`)).toBeVisible();
+      expect(
+        screen.queryByText(/Automatic update checks (enabled|disabled)\./),
+      ).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Check for Updates" })).toBeEnabled();
+    },
+  );
+
   test("shows a nonmodal available banner and downloads through validated RPC", async () => {
     const initial = snapshot();
     initial.update = {

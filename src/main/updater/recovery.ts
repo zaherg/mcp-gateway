@@ -232,12 +232,6 @@ export async function verifyRetainedRecovery(options: {
   return { record, metadata };
 }
 
-export async function retainedRecoveryEntries(dataDirectory: string): Promise<string[]> {
-  const root = recoveryRoot(dataDirectory);
-  const names = await readdir(root).catch(() => []);
-  return names.filter((name) => name.endsWith(".app"));
-}
-
 export function manualRecoveryDescription(record: RecoveryRecord): string {
   return `A verified copy of version ${record.version} is retained at ${record.retained_bundle_path}. It is a manual recovery copy, not an automatic downgrade.`;
 }

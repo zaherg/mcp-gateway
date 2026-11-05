@@ -124,21 +124,17 @@ declare module "supergateway/dist/lib/ownedChildProcesses.js" {
     close(): Promise<void>;
   }
 }
-declare module "supergateway/dist/lib/serverSource.js" {
-  import type { spawn } from "node:child_process";
-  import type {
-    ChildrenOwner,
-    GatewayLogger,
-    PeerFactory,
-    Source,
-  } from "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js";
-  export function startServer(
+declare module "supergateway/dist/lib/childCommand.js" {
+  import type { ChildProcessWithoutNullStreams, SpawnOptions, spawn } from "node:child_process";
+  import type { Command } from "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js";
+  export function spawnCommand(
     spawnProcess: typeof spawn,
-    source: Source,
-    children: ChildrenOwner,
-    logger: GatewayLogger,
-    label: string,
-  ): PeerFactory;
+    command: Command,
+    options: SpawnOptions & { stdio: "pipe" },
+  ): ChildProcessWithoutNullStreams;
+}
+declare module "supergateway/dist/lib/outputBackpressure.js" {
+  export function readWhile(response: Response, wait: () => Promise<void> | undefined): Response;
 }
 declare module "supergateway/dist/gateways/statefulSessions.js" {
   import type { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -240,6 +236,7 @@ declare module "supergateway/dist/lib/retainedChildren.js" {
   }
 }
 declare module "supergateway/dist/lib/ownedStdioTransport.js" {
+  import type { ChildProcessWithoutNullStreams } from "node:child_process";
   import type {
     ChildrenOwner,
     Command,
@@ -250,7 +247,12 @@ declare module "supergateway/dist/lib/ownedStdioTransport.js" {
     command: Command,
     owner: ChildrenOwner,
     logger: GatewayLogger,
-  ) => ModernChild;
+  ) => ModernChild & {
+    child?: ChildProcessWithoutNullStreams;
+    stop?: () => Promise<void>;
+    watch(child: ChildProcessWithoutNullStreams): void;
+    deliver(line: string): void;
+  };
 }
 declare module "supergateway/dist/lib/upstreamModernChild.js" {
   import type {
@@ -265,6 +267,7 @@ declare module "supergateway/dist/lib/upstreamModernChild.js" {
   ) => ModernChild & {
     readonly reading: Set<Promise<void>>;
     readonly held?: Promise<void>;
+    read(response: Response, awaited?: string | number): Promise<void>;
     events(response: Response, deliver: (value: unknown) => void): Promise<void>;
   };
   export const MODERN_VERSION: string;

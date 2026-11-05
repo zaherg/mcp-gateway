@@ -1,7 +1,7 @@
 import { expect, spyOn, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import * as serverSource from "supergateway/dist/lib/serverSource.js";
+import * as backendPeer from "../../src/core/backend-peer";
 import {
   BACKEND_CAPACITY_ERROR,
   DUPLICATE_REQUEST_ERROR,
@@ -193,8 +193,8 @@ function modernDisconnected(
 }
 
 test("regression: failed cancellation forwarding retains the request and its reply", async () => {
-  const original = serverSource.startServer;
-  const mocked = spyOn(serverSource, "startServer").mockImplementation((...args) => {
+  const original = backendPeer.startBackend;
+  const mocked = spyOn(backendPeer, "startBackend").mockImplementation((...args) => {
     const factory = original(...args);
     return (owner) => {
       const peer = factory(owner);

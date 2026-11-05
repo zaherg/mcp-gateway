@@ -112,6 +112,11 @@ Bodies are limited to 4 MiB and requests to 30 seconds; backend resources and ou
 An authenticated client occupying the reserved slots can still delay control traffic.
 Protocol cancellation does not guarantee that arbitrary upstream work physically stops.
 
+Each backend stdout line and each HTTP JSON or error body is limited to 4 MiB.
+SSE events share a 4 MiB byte limit across data, metadata, and comment fields, excluding CR/LF framing.
+The limits apply as chunks arrive; oversized output fails the affected backend operation instead of being truncated.
+A long-lived SSE session can carry multiple bounded events whose combined size exceeds 4 MiB.
+
 ## Configuration
 
 Use one `mcp.json` or `mcp.jsonc` in `~/Library/Application Support/MCP Gateway/` on macOS.

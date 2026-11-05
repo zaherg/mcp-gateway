@@ -25,6 +25,7 @@ import type {
   Source,
   StatefulMount,
 } from "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js";
+import { spawnCommand } from "supergateway/dist/lib/childCommand.js";
 import {
   admit,
   headerValue,
@@ -42,11 +43,17 @@ import {
   RetainedChildren,
   type ReusedChild,
 } from "supergateway/dist/lib/retainedChildren.js";
-import { startServer } from "supergateway/dist/lib/serverSource.js";
 import { streamableHttpApp } from "supergateway/dist/lib/streamableHttpApp.js";
 import { UpstreamModernChild } from "supergateway/dist/lib/upstreamModernChild.js";
 import type { LogLevel } from "../shared/logs";
 import type { HttpServerConfig, StdioServerConfig } from "../shared/types";
+import {
+  BackendOutputLimitError,
+  boundedBackendResponse,
+  MAX_BACKEND_MESSAGE_BYTES,
+  readBackendLines,
+} from "./backend-output";
+import { startBackend } from "./backend-peer";
 import { BackendProcesses } from "./backend-processes";
 import {
   BACKEND_CAPACITY_ERROR,
@@ -403,8 +410,7 @@ export function createMount(
             if (children.closing || ended) throw failure("Closed", "The request ended.");
             this.openResponses.set(opened, responses);
             this.sessionWires.set(opened, wires);
-            const factory = startServer(
-              spawn,
+            const factory = startBackend(
               source,
               {
                 ...owner,
@@ -412,7 +418,6 @@ export function createMount(
                 track: (stop) => (cleanup = owner.track(stop)),
               },
               sessionLogger,
-              "Session",
             );
             return (peerOwner) =>
               admitPeer(factory, peerOwner, work, wires, calls, localFailure, (id) =>
@@ -475,6 +480,27 @@ export function createMount(
   class LeasedStdio extends OwnedStdioTransport {
     override close: () => Promise<void>;
     cleanedUp = false;
+
+    override async start(): Promise<void> {
+      if (!source.stdioCmd) throw new Error("Expected stdio source");
+      const child = spawnCommand(spawn, source.stdioCmd, {
+        ...children.spawnOptions,
+        stdio: "pipe",
+      });
+      this.child = child;
+      this.stop = children.own(child);
+      this.watch(child);
+      child.stderr.on("data", (chunk) => logger.error("Child stderr:", chunk.toString("utf8")));
+      readBackendLines(
+        child.stdout,
+        (line) => this.deliver(line),
+        (error) => {
+          child.stdout.destroy(error);
+        },
+        () => undefined,
+      );
+    }
+
     constructor(lease: ResourceLease) {
       if (!source.stdioCmd) throw new Error("Expected stdio source");
       super(source.stdioCmd, children, logger);
@@ -501,10 +527,20 @@ export function createMount(
       }
     }
 
+    override read(response: Response, awaited?: string | number): Promise<void> {
+      return super.read(boundedBackendResponse(response), awaited);
+    }
+
     override async events(response: Response, deliver: (value: unknown) => void): Promise<void> {
       if (!response.body) throw new Error("Upstream event stream has no body");
       const parser = createParser({
+        maxBufferSize: MAX_BACKEND_MESSAGE_BYTES,
+        onError: (error) => {
+          if (error.type === "max-buffer-size-exceeded") throw new BackendOutputLimitError();
+        },
         onEvent: ({ data }) => {
+          if (Buffer.byteLength(data) > MAX_BACKEND_MESSAGE_BYTES)
+            throw new BackendOutputLimitError();
           if (data) deliver(JSON.parse(data));
         },
       });

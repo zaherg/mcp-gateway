@@ -328,11 +328,11 @@ export class UpdaterCoordinator {
       automaticUpdates: next.automaticUpdates,
       preferenceError: next.error,
       phase:
-        next.status === "invalid"
-          ? "preference-error"
-          : this.status.phase === "preference-error"
-            ? "idle"
-            : this.status.phase,
+        this.status.phase === "idle" || this.status.phase === "preference-error"
+          ? next.status === "invalid"
+            ? "preference-error"
+            : "idle"
+          : this.status.phase,
     };
     if (next.automaticUpdates && this.initialized) this.scheduleChecks();
     else this.clearTimers();
