@@ -35,6 +35,11 @@ Signed SDK/replacement and native signal tests remain opt-in because unit double
 | Browser strict-JSON and bind-banner repetitions | Config parser/store/controller tests, component repair/occurrence cases, browser JSONC and Logs flows                                         |
 | Repeated browser Quit variants                  | Component draft/status matrices, lifecycle/service tests, representative browser editor, copy, lost-acknowledgement and Linux controls checks |
 
+Coordinator startup and restart-preflight checks each use one delayed flow that also covers coalescing, reservation identity, and refused concurrent actions.
+The controller Quit regression covers ingress retries through two timeouts and a third pending retry that completes only after raw cleanup is released.
+Command-output overflow cases share one fixture while retaining both a naturally exiting child at the default limit and a still-running child at an injected limit.
+Cheap parser/security matrices and main-entrypoint/native checks remain separate where they exercise different boundaries.
+
 Screenshots from removed tests were generated observations, not pixel-comparison baselines.
 Pruning reduces repeated cross-layer combinations; it does not establish that browser and native coverage is exhaustive.
 
@@ -44,7 +49,8 @@ The 2026-11-05 run validates Electrobun `2.0.5`, not the newer `2.0.6` recipe/st
 Results and limits from that run are in [the validation record](UPDATER-VALIDATION.md), with the full matrix under `.cache/updater-documentation-validation/20261105T052930Z/`.
 The audit checkpoints below are historical snapshots, not the current source's acceptance status.
 
-`tests/native/updater-sdk-contract.native.ts` adds unchanged-SDK patch, fallback, metadata, status-history, veto, cancellation, and failure cases.
+`tests/native/updater-sdk-contract.native.ts` maintains 20 unchanged-SDK cases for the application's full-download path, metadata/version refusal, native veto, cancellation, and failures.
+Delta/cache reuse and unused SDK API tests from the historical documentation-validation run are not part of the maintained suite.
 The maintained [operator guide](native/update-acceptance/README.md#sdk-contract-and-helper-checks) documents its signed-input prerequisites and the native-helper and rendered-UI checks.
 The helper matrix includes automatic rollback after a post-swap integration failure, separate manual restoration, and an explicitly authorized 8 MiB ENOSPC image.
 These tests do not upgrade the SDK or publish a release.

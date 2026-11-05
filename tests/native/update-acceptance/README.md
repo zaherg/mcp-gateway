@@ -106,9 +106,11 @@ Unconfirmed cleanup is a failed run, not permission to delete its app, transacti
 ## SDK contract and helper checks
 
 The opt-in SDK suite uses the unchanged Electrobun `2.0.5` projection, copies signature-verified runtime helpers, and routes the fixed feed to loopback.
-It checks full downloads, prepared-record reuse, single and multi-hop patches, fallback, malformed metadata, version policy, network/archive failures, cancellation, metadata/history APIs, and an actual SDK `before-quit` veto.
-Patch cases require exact target TAR bytes and patch-only requests; the test-only `MCP_GATEWAY_TEST_DISABLE_BSPATCH=1` negative control makes both delta cases fail.
-The application's safety boundary prunes its cached TARs before preparation, so these SDK delta checks do not claim that the packaged application uses deltas.
+Its 20 cases cover full downloads, malformed metadata, version policy, network/archive failures, cancellation, and an actual SDK `before-quit` veto.
+Exact target TAR bytes, prepared records, request paths, configuration preservation, and worker cleanup remain checked.
+The application's safety boundary prunes cached TARs and prepared records before preparation, so delta/fallback and cache-reuse cases are not maintained.
+Unused SDK metadata aliases, history APIs, direct development-channel discovery, and apply-without-preparation cases are also excluded.
+Restore the corresponding coverage before enabling any of those paths in the application.
 
 ```sh
 MCP_GATEWAY_SIGNED_PAYLOAD="$MCP_GATEWAY_FIXTURE_A_APP" \

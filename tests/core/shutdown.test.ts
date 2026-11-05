@@ -133,11 +133,14 @@ test("controller Quit retry retains outstanding ingress cleanup until raw comple
     await eventually(() => quit.status().phase === "failed", 12_000);
     expect(mounts.outstanding).toBe(1);
     expect(exits).toBe(0);
-    mounts.release();
-    await eventually(() => mounts.completed === 1);
     quit.handle(() => {
       vetoes++;
     });
+    await Bun.sleep(100);
+    expect(quit.status()).toMatchObject({ attempt: 3, phase: "pending" });
+    expect(exits).toBe(0);
+    expect(mounts.outstanding).toBe(1);
+    mounts.release();
     await eventually(() => exits === 1);
     expect(vetoes).toBe(3);
     expect(mounts.completed).toBe(1);
@@ -158,38 +161,6 @@ test("controller Quit retry retains outstanding ingress cleanup until raw comple
     await rm(path, { recursive: true, force: true });
   }
 }, 30_000);
-
-test("ingress close retries keep raw mount ownership after the deadline", async () => {
-  const mounts = controlledMounts();
-  const config = await configFor({ echo: stdio() });
-  const ingress = await GatewayIngress.open(config, () => {});
-  try {
-    await expect(ingress.close()).rejects.toMatchObject({ code: "ShutdownFailure" });
-    expect(ingress.running).toBe(false);
-    expect(mounts.outstanding).toBe(1);
-    let settled = false;
-    const retry = ingress.close().then(
-      () => {
-        settled = true;
-        return { ok: true };
-      },
-      (error: unknown) => {
-        settled = true;
-        return { ok: false, error };
-      },
-    );
-    await Bun.sleep(100);
-    expect(settled).toBe(false);
-    mounts.release();
-    expect(await retry).toEqual({ ok: true });
-    expect(mounts.completed).toBe(1);
-    expect(mounts.calls).toBe(1);
-    expect(mounts.outstanding).toBe(0);
-  } finally {
-    await mounts.dispose();
-    await expectedFailureDuringTeardown(() => ingress.close());
-  }
-}, 20_000);
 
 test.each(["stop", "listener error"])(
   "%s and stopped reconfiguration cannot replace ingress until outstanding cleanup finishes",

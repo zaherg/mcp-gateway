@@ -1,7 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import {
-  chmod,
   copyFile,
   mkdir,
   mkdtemp,
@@ -32,12 +31,9 @@ import { appEntries, tarBytes, versionJson } from "../fixtures/updater";
 const PROJECT = resolve(import.meta.dir, "../..");
 const SDK = join(PROJECT, ".hutch/devkit/api/sdks/main/core/Updater.ts");
 const SDK_SHA256 = "776f1c1e71fba8e0ba129c7c7a8961041ec6c74076740cb0cfca5b2e176b3544";
-const CORE_SHA256 = "610db158df864a067055be365e443d3945392012f92092fb77c26bd2215ef892";
 const PREFIX = "/zaherg/mcp-gateway/releases/latest/download/";
 const MANIFEST = `${PREFIX}stable-macos-arm64-update.json`;
 const ARTIFACT = `${PREFIX}${UPDATER_ARTIFACT_FILE}`;
-const PATCH = `${PREFIX}stable-macos-arm64-current1234.patch`;
-const NEXT_PATCH = `${PREFIX}stable-macos-arm64-middle1234.patch`;
 const TARGET_HASH = "target123456";
 const FILES = [
   "bun",
@@ -49,11 +45,8 @@ const FILES = [
 ];
 let root: string;
 let bin: string;
-let bsdiff: string;
-let currentTar: Uint8Array;
 let targetTar: Uint8Array;
 let targetZstd: Uint8Array;
-const patches = new Map<string, Uint8Array>();
 const provenance: Record<string, string> = {};
 const evidence: Record<string, unknown>[] = [];
 let cleanupConfirmed = true;
@@ -74,9 +67,6 @@ beforeAll(async () => {
   if (!app.startsWith(`${await realpath(PROJECT)}/`) || !app.endsWith(".app"))
     throw new Error("The SDK contract input must be a project-local app");
   expect(digest(await readFile(SDK))).toBe(SDK_SHA256);
-  expect(
-    digest(await readFile(join(PROJECT, ".cache/research/electrobun-core-darwin-arm64.tar.gz"))),
-  ).toBe(CORE_SHA256);
   await checked("/usr/bin/codesign", ["--verify", "--deep", "--strict", app]);
   expect(
     await checked("/usr/bin/plutil", [
@@ -96,30 +86,8 @@ beforeAll(async () => {
     provenance[name] = digest(await readFile(source));
     await copyFile(source, join(bin, name));
   }
-  if (process.env.MCP_GATEWAY_TEST_DISABLE_BSPATCH === "1")
-    await chmod(join(bin, "bspatch"), 0o600);
-  // Extract the patch generator from the verified official core, never a system substitute.
-  const core = join(root, "core");
-  await mkdir(core);
-  await checked("/usr/bin/tar", [
-    "-xzf",
-    join(PROJECT, ".cache/research/electrobun-core-darwin-arm64.tar.gz"),
-    "-C",
-    core,
-    "bsdiff",
-  ]);
-  bsdiff = join(core, "bsdiff");
-  provenance.bsdiff = digest(await readFile(bsdiff));
-  const current = appEntries({ version: "0.3.0", hash: "current1234" });
-  currentTar = tarBytes(current);
-  const middleTar = tarBytes(appEntries({ version: "0.3.1", hash: "middle1234" }));
   targetTar = tarBytes(appEntries({ version: "0.3.2", hash: TARGET_HASH }));
-  for (const [name, bytes] of [
-    ["current", currentTar],
-    ["middle", middleTar],
-    ["target", targetTar],
-  ] as const)
-    await writeFile(join(root, `${name}.tar`), bytes);
+  await writeFile(join(root, "target.tar"), targetTar);
   await checked(join(bin, "zig-zstd"), [
     "compress",
     "-i",
@@ -129,17 +97,6 @@ beforeAll(async () => {
     "--no-timing",
   ]);
   targetZstd = await readFile(join(root, "target.tar.zst"));
-  for (const [from, to] of [
-    ["current", "target"],
-    ["current", "middle"],
-    ["middle", "target"],
-    ["middle", "current"],
-  ]) {
-    const name = `${from}-${to}`;
-    const path = join(root, `${name}.patch`);
-    await checked(bsdiff, [join(root, `${from}.tar`), join(root, `${to}.tar`), path]);
-    patches.set(name, await readFile(path));
-  }
 }, 60_000);
 
 afterAll(async () => {
@@ -148,7 +105,7 @@ afterAll(async () => {
   for (const name of FILES) expect(digest(await readFile(join(bin, name)))).toBe(provenance[name]);
   await writeFile(
     join(root, "evidence.json"),
-    `${JSON.stringify({ sdkSha256: SDK_SHA256, coreSha256: CORE_SHA256, provenance, cleanupConfirmed, cases: evidence }, null, 2)}\n`,
+    `${JSON.stringify({ sdkSha256: SDK_SHA256, provenance, cleanupConfirmed, cases: evidence }, null, 2)}\n`,
     { mode: 0o600 },
   );
   if (cleanupConfirmed) await rm(join(root, "runtime"), { recursive: true });
@@ -166,15 +123,13 @@ async function stopFeed(server: Server) {
 
 interface Scenario {
   name: string;
-  patch?: "single" | "multi" | "missing" | "corrupt" | "cycle" | "interrupted";
-  mode?: "prepare" | "api" | "veto" | "not-ready" | "sdk-dev";
+  mode?: "prepare" | "veto";
   fault?:
     | "manifest-http"
     | "manifest-invalid"
     | "identity"
     | "channel"
     | "arch"
-    | "fallback-http"
     | "artifact-missing"
     | "corrupt-archive"
     | "truncated-archive"
@@ -184,7 +139,6 @@ interface Scenario {
   local?: "dev" | "missing";
   version?: string;
   hash?: string;
-  cached?: "matching" | "stale";
   expected: "ready" | "failed" | "no-update" | "unavailable" | "cancelled";
 }
 
@@ -213,29 +167,6 @@ async function runScenario(scenario: Scenario) {
     await writeFile(join(directory, "Resources/version.json"), JSON.stringify(local));
   }
   const installedInventory = await inventoryBundle(join(directory, "Resources"));
-  if (scenario.patch) await writeFile(join(staging, "current1234.tar"), currentTar);
-  if (scenario.cached) {
-    const cachedHash = scenario.cached === "matching" ? TARGET_HASH : "stale123456";
-    const cachedVersion = scenario.cached === "matching" ? "0.3.2" : "0.3.0";
-    await writeFile(
-      join(staging, `${cachedHash}.tar`),
-      scenario.cached === "matching" ? targetTar : currentTar,
-    );
-    await writeFile(
-      join(staging, PREPARED_UPDATE_FILE),
-      JSON.stringify({
-        schema_version: 1,
-        identifier: UPDATER_IDENTIFIER,
-        channel: "stable",
-        platform: "macos",
-        arch: "arm64",
-        version: cachedVersion,
-        hash: cachedHash,
-        artifact_file: UPDATER_ARTIFACT_FILE,
-        retained_tar_path: join(staging, `${cachedHash}.tar`),
-      }),
-    );
-  }
   const requests: Array<{ path: string; search: string }> = [];
   const manifest = {
     schemaVersion: 1,
@@ -268,28 +199,9 @@ async function runScenario(scenario: Scenario) {
       }
       response.setHeader("Content-Type", "application/json");
       response.end(scenario.fault === "manifest-invalid" ? "{broken" : JSON.stringify(manifest));
-    } else if (url.pathname === PATCH || url.pathname === NEXT_PATCH) {
-      let patch: Uint8Array | undefined;
-      if (url.pathname === PATCH) {
-        if (scenario.patch === "single") patch = patches.get("current-target");
-        if (["multi", "cycle", "interrupted"].includes(scenario.patch ?? ""))
-          patch = patches.get("current-middle");
-        if (scenario.patch === "corrupt") patch = Buffer.from("not a patch");
-      } else if (scenario.patch === "multi") patch = patches.get("middle-target");
-      else if (scenario.patch === "cycle") patch = patches.get("middle-current");
-      else if (scenario.patch === "interrupted") {
-        const complete = patches.get("middle-target");
-        if (!complete) throw new Error("Missing intermediate patch fixture");
-        response.setHeader("Content-Length", complete.byteLength);
-        response.setHeader("Connection", "close");
-        response.end(complete.subarray(0, Math.floor(complete.byteLength / 2)));
-        return;
-      }
-      if (!patch) response.writeHead(404).end();
-      else response.end(patch);
     } else if (url.pathname === ARTIFACT) {
-      if (scenario.fault === "fallback-http" || scenario.fault === "artifact-missing") {
-        response.writeHead(scenario.fault === "artifact-missing" ? 404 : 503).end();
+      if (scenario.fault === "artifact-missing") {
+        response.writeHead(404).end();
         return;
       }
       if (scenario.fault === "cancel") {
@@ -339,10 +251,7 @@ async function runScenario(scenario: Scenario) {
         SDK_CONTRACT_ORIGIN: `http://127.0.0.1:${address.port}`,
         SDK_CONTRACT_MODE: scenario.mode ?? "prepare",
         MCP_GATEWAY_UPDATE_RESULT: resultPath,
-        MCP_GATEWAY_UPDATE_CHANNEL_ROOT:
-          scenario.mode === "sdk-dev"
-            ? join(home, "Library/Application Support", UPDATER_IDENTIFIER, "dev")
-            : channel,
+        MCP_GATEWAY_UPDATE_CHANNEL_ROOT: channel,
         MCP_GATEWAY_UPDATE_GRANT: "1",
       },
       resultPath,
@@ -398,7 +307,6 @@ async function runScenario(scenario: Scenario) {
         expect(contract.info.updateReady).toBe(false);
         if (scenario.fault) expect(contract.info.error).not.toBe("");
       }
-      if (scenario.mode === "api") expect(contract.historyAndUnsubscribe).toBe(true);
       if (scenario.mode === "veto") {
         expect(contract.vetoes).toBe(1);
         expect(contract.info.updateReady).toBe(true);
@@ -406,28 +314,8 @@ async function runScenario(scenario: Scenario) {
         expect(names).not.toContain("applying");
       }
     }
-    if (scenario.patch === "single" || scenario.patch === "multi") {
-      expect(paths).toEqual(
-        scenario.patch === "single" ? [MANIFEST, PATCH] : [MANIFEST, PATCH, NEXT_PATCH],
-      );
-      expect(names.filter((name) => name === "applying-patch")).toHaveLength(
-        scenario.patch === "single" ? 1 : 2,
-      );
-      expect(statuses.find((entry) => entry.status === "download-complete")?.details).toMatchObject(
-        { usedPatchPath: true, totalPatchesApplied: scenario.patch === "single" ? 1 : 2 },
-      );
-      expect(paths).not.toContain(ARTIFACT);
-    } else if (scenario.patch) {
-      expect(paths).toContain(PATCH);
-      expect(paths).toContain(ARTIFACT);
-      if (scenario.patch === "cycle" || scenario.patch === "corrupt")
-        expect(names).toContain("patch-failed");
-      if (scenario.patch === "interrupted") {
-        expect(paths).toContain(NEXT_PATCH);
-        expect(names).toContain("patch-failed");
-        expect(names.filter((name) => name === "patch-applied")).toHaveLength(1);
-      }
-    }
+    if (scenario.expected === "ready" || scenario.mode === "veto")
+      expect(paths).toEqual([MANIFEST, ARTIFACT]);
     if (scenario.fault) {
       const artifactFault = [
         "artifact-missing",
@@ -435,13 +323,7 @@ async function runScenario(scenario: Scenario) {
         "truncated-archive",
         "cancel",
       ].includes(scenario.fault);
-      expect(paths).toEqual(
-        scenario.patch
-          ? [MANIFEST, PATCH, ARTIFACT]
-          : artifactFault
-            ? [MANIFEST, ARTIFACT]
-            : [MANIFEST],
-      );
+      expect(paths).toEqual(artifactFault ? [MANIFEST, ARTIFACT] : [MANIFEST]);
       if (scenario.fault !== "cancel") expect(names).toContain("error");
       if (scenario.fault === "corrupt-archive" || scenario.fault === "truncated-archive")
         expect(names).toContain("decompressing");
@@ -449,8 +331,6 @@ async function runScenario(scenario: Scenario) {
       expect(await Bun.file(join(staging, PREPARED_UPDATE_FILE)).exists()).toBe(false);
       expect(await Bun.file(join(staging, `${TARGET_HASH}.tar`)).exists()).toBe(false);
     }
-    if (scenario.cached === "matching") expect(paths).toEqual([MANIFEST]);
-    if (scenario.cached === "stale") expect(paths).toEqual([MANIFEST, ARTIFACT]);
     if (scenario.local) expect(paths).toEqual([]);
     if (scenario.hash === "current1234" || scenario.version) expect(paths).toEqual([MANIFEST]);
     for (const request of requests.filter(
@@ -463,8 +343,6 @@ async function runScenario(scenario: Scenario) {
     expect(await inventoryBundle(join(directory, "Resources"))).toEqual(installedInventory);
     expect(await readFile(join(data, "mcp.json"))).toEqual(configuration);
     expect(await readFile(join(data, "updates.json"))).toEqual(preferences);
-    if (scenario.patch)
-      expect(digest(await readFile(join(staging, "current1234.tar")))).toBe(digest(currentTar));
     await cleanupInterruptedStaging({ channelRoot: channel, dataDirectory: data });
     expect(
       (await readdir(staging)).filter(
@@ -500,20 +378,8 @@ async function runScenario(scenario: Scenario) {
 
 const scenarios: Scenario[] = [
   { name: "fresh-full", expected: "ready" },
-  { name: "prepared-reuse", cached: "matching", expected: "ready" },
-  { name: "stale-prepared-refetch", cached: "stale", expected: "ready" },
-  { name: "single-delta", patch: "single", expected: "ready" },
-  { name: "multi-hop-delta", patch: "multi", expected: "ready" },
-  { name: "missing-patch-fallback", patch: "missing", expected: "ready" },
-  { name: "corrupt-patch-fallback", patch: "corrupt", expected: "ready" },
-  { name: "cyclic-patch-fallback", patch: "cycle", expected: "ready" },
-  { name: "interrupted-chain-fallback", patch: "interrupted", expected: "ready" },
-  { name: "fallback-http-refusal", patch: "missing", fault: "fallback-http", expected: "failed" },
-  { name: "metadata-history-single-flight", mode: "api", expected: "no-update" },
   { name: "actual-before-quit-veto", mode: "veto", expected: "no-update" },
-  { name: "apply-without-preparation", mode: "not-ready", expected: "no-update" },
   { name: "packaged-dev-refusal", local: "dev", expected: "failed" },
-  { name: "sdk-dev-discovery-disabled", mode: "sdk-dev", local: "dev", expected: "no-update" },
   { name: "missing-local-metadata", local: "missing", expected: "failed" },
   { name: "identical-hash", hash: "current1234", expected: "no-update" },
   { name: "same-version-new-hash", version: "0.3.0", expected: "no-update" },

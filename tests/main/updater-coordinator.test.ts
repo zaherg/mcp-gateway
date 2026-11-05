@@ -192,7 +192,7 @@ test("manual and automatic update work stays closed until shared startup reconci
     reconcile: async () => {
       reconciliations++;
       await pending;
-      return { status: "none" };
+      return { status: "confirmed", version: VERSION, hash: HASH };
     },
   });
   const timers = new FakeTimers();
@@ -205,6 +205,8 @@ test("manual and automatic update work stays closed until shared startup reconci
   });
   try {
     await coordinator.start({ reconcile: false });
+    expect(reconciliations).toBe(0);
+    expect(timers.startup).toBeUndefined();
     await expect(coordinator.check()).rejects.toMatchObject({ code: "UpdateBusy" });
     await expect(coordinator.download()).rejects.toMatchObject({ code: "UpdateBusy" });
     const first = coordinator.completeInitialization();
@@ -217,6 +219,11 @@ test("manual and automatic update work stays closed until shared startup reconci
     finish();
     await Promise.all([first, duplicate]);
     expect(reconciliations).toBe(1);
+    expect(coordinator.statusValue().transaction).toMatchObject({
+      status: "confirmed",
+      version: VERSION,
+      hash: HASH,
+    });
     expect(coordinator.statusValue().recoveryRequired).toBe(false);
     expect(timers.startup).toBeDefined();
     await coordinator.check();
@@ -837,81 +844,6 @@ test("download is refused while a check is in flight and after shutdown admissio
   }
 });
 
-test("publishes restarting before awaiting restart preflight revalidation", async () => {
-  const data = await directory();
-  try {
-    let releaseRevalidation: () => void = () => {};
-    let revalidationStarted = false;
-    const gate = new Promise<void>((resolve) => {
-      releaseRevalidation = resolve;
-    });
-    const updater = runtime();
-    updater.revalidate = async () => {
-      revalidationStarted = true;
-      await gate;
-    };
-    const accepted = terminal();
-    const coordinator = new UpdaterCoordinator({
-      dataDirectory: data,
-      supported: true,
-      installationEnabled: true,
-      installedVersion: "0.3.1",
-      runtime: updater,
-      terminal: accepted,
-      timers: new FakeTimers(),
-    });
-    await coordinator.start();
-    await coordinator.check();
-    await coordinator.download();
-    const pending = coordinator.restartToUpdate(VERSION, HASH);
-    expect(revalidationStarted).toBe(true);
-    expect(coordinator.statusValue().phase).toBe("restarting");
-    releaseRevalidation();
-    await pending;
-    expect(accepted.calls).toBe(1);
-  } finally {
-    await rm(data, { recursive: true, force: true });
-  }
-});
-
-test("reserves restart identity before queueing and excludes checks/downloads until retirement", async () => {
-  const data = await directory();
-  try {
-    const updater = runtime();
-    const accepted = terminal();
-    const coordinator = new UpdaterCoordinator({
-      dataDirectory: data,
-      supported: true,
-      installationEnabled: true,
-      installedVersion: "0.3.1",
-      runtime: updater,
-      terminal: accepted,
-      timers: new FakeTimers(),
-    });
-    await coordinator.start();
-    await coordinator.check();
-    await coordinator.download();
-    const reserved = coordinator.beginRestart(VERSION, HASH);
-    expect(coordinator.statusValue()).toMatchObject({
-      phase: "restarting",
-      attemptId: reserved.id,
-      readyVersion: VERSION,
-    });
-    expect(coordinator.beginRestart(VERSION, HASH).id).toBe(reserved.id);
-    await expect(coordinator.check()).rejects.toMatchObject({ code: "UpdateBusy" });
-    await expect(coordinator.download()).rejects.toMatchObject({ code: "UpdateBusy" });
-    expect(coordinator.statusValue()).toMatchObject({
-      phase: "restarting",
-      attemptId: reserved.id,
-      readyVersion: VERSION,
-    });
-    await coordinator.restartToUpdate(VERSION, HASH);
-    expect(accepted.calls).toBe(1);
-  } finally {
-    await rm(data, { recursive: true, force: true });
-  }
-});
-
 test("a failed restart revalidation cancels its reservation but retains preparation for retry", async () => {
   const data = await directory();
   try {
@@ -951,7 +883,7 @@ test("a failed restart revalidation cancels its reservation but retains preparat
   }
 });
 
-test("a menu check during restart preflight cannot erase the reservation", async () => {
+test("restart reserves one identity before queueing and retains it through delayed preflight and refused actions", async () => {
   const data = await directory();
   try {
     let release: () => void = () => {};
@@ -977,9 +909,18 @@ test("a menu check during restart preflight cannot erase the reservation", async
     await coordinator.check();
     await coordinator.download();
     const reserved = coordinator.beginRestart(VERSION, HASH);
+    expect(coordinator.statusValue()).toMatchObject({
+      phase: "restarting",
+      attemptId: reserved.id,
+      readyVersion: VERSION,
+    });
+    expect(coordinator.beginRestart(VERSION, HASH).id).toBe(reserved.id);
+    await expect(coordinator.check()).rejects.toMatchObject({ code: "UpdateBusy" });
+    await expect(coordinator.download()).rejects.toMatchObject({ code: "UpdateBusy" });
     const pending = coordinator.restartToUpdate(VERSION, HASH);
     expect(started).toBe(true);
     await expect(coordinator.check()).rejects.toMatchObject({ code: "UpdateBusy" });
+    await expect(coordinator.download()).rejects.toMatchObject({ code: "UpdateBusy" });
     expect(coordinator.statusValue()).toMatchObject({
       phase: "restarting",
       attemptId: reserved.id,
@@ -988,39 +929,6 @@ test("a menu check during restart preflight cannot erase the reservation", async
     release();
     await pending;
     expect(accepted.calls).toBe(1);
-  } finally {
-    await rm(data, { recursive: true, force: true });
-  }
-});
-
-test("deferred startup reconciliation runs only at completed initialization", async () => {
-  const data = await directory();
-  try {
-    const timers = new FakeTimers();
-    let reconciles = 0;
-    const updater = runtime({
-      reconcile: async () => {
-        reconciles++;
-        return { status: "confirmed", version: VERSION, hash: HASH };
-      },
-    });
-    const coordinator = new UpdaterCoordinator({
-      dataDirectory: data,
-      supported: true,
-      installedVersion: "0.3.1",
-      runtime: updater,
-      timers,
-    });
-    await coordinator.start({ reconcile: false });
-    expect(reconciles).toBe(0);
-    expect(timers.startup).toBeUndefined();
-    const initialized = await coordinator.completeInitialization();
-    expect(reconciles).toBe(1);
-    expect(initialized.transaction).toMatchObject({
-      status: "confirmed",
-      version: VERSION,
-      hash: HASH,
-    });
   } finally {
     await rm(data, { recursive: true, force: true });
   }

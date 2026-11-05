@@ -124,63 +124,43 @@ test("times out a hanging command and reaps the child before returning", async (
   }
 });
 
-test("terminates a child that exceeds the output limit", async () => {
-  const root = await tempRoot();
-  const pidFile = join(root, "pid");
-  const script = join(root, "overflow.js");
-  try {
-    await writeFile(
-      script,
-      `#!/usr/bin/env ${process.execPath}\nrequire("node:fs").writeFileSync("${pidFile}", String(process.pid));\nconsole.log("x".repeat(128 * 1024));\n`,
-      { mode: 0o700 },
+test.each([
+  { state: "exiting", bytes: 128 * 1024, limit: undefined, timeoutMs: 60_000 },
+  { state: "running", bytes: 64, limit: 16, timeoutMs: 500 },
+])(
+  "output overflow rejects and reaps the $state child before its deadline",
+  async ({ state, bytes, limit, timeoutMs }) => {
+    const root = await tempRoot();
+    const pidFile = join(root, "pid");
+    const controller = new AbortController();
+    const run = limit === undefined ? runCommand : createCommandRunner({ maxOutputBytes: limit });
+    const pending = run(
+      process.execPath,
+      [
+        "-e",
+        'require("node:fs").writeFileSync(process.argv[1], String(process.pid)); process.stdout.write("x".repeat(Number(process.argv[2]))); if (process.argv[3] === "running") setInterval(() => {}, 1000)',
+        pidFile,
+        String(bytes),
+        state,
+      ],
+      timeoutMs,
+      controller.signal,
     );
-    const pending = runCommand(script, [], 60_000);
-    pending.catch(() => {});
-    await eventually(async () => {
-      try {
-        return Number(await Bun.file(pidFile).text()) > 0;
-      } catch {
-        return false;
-      }
-    });
-    const pid = Number(await Bun.file(pidFile).text());
-    await expect(pending).rejects.toThrow(/exceeded the limit/);
-    await eventually(() => !alive(pid));
-    expect(alive(pid)).toBe(false);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("output overflow terminates a still-running child before the command deadline", async () => {
-  const root = await tempRoot();
-  const pidFile = join(root, "pid");
-  const controller = new AbortController();
-  const run = createCommandRunner({ maxOutputBytes: 16 });
-  const pending = run(
-    process.execPath,
-    [
-      "-e",
-      'require("node:fs").writeFileSync(process.argv[1], String(process.pid)); process.stdout.write("x".repeat(64)); setInterval(() => {}, 1000)',
-      pidFile,
-    ],
-    500,
-    controller.signal,
-  );
-  const outcome = pending.then(
-    () => undefined,
-    (error: unknown) => error,
-  );
-  try {
-    expect(await outcome).toMatchObject({ message: "Command output exceeded the limit" });
-    const pid = Number(await Bun.file(pidFile).text());
-    expect(alive(pid)).toBe(false);
-  } finally {
-    controller.abort();
-    await outcome;
-    await rm(root, { recursive: true, force: true });
-  }
-});
+    const outcome = pending.then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    try {
+      expect(await outcome).toMatchObject({ message: "Command output exceeded the limit" });
+      const pid = Number(await Bun.file(pidFile).text());
+      expect(alive(pid)).toBe(false);
+    } finally {
+      controller.abort();
+      await outcome;
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
 
 test("process inspector returns absent for confirmed empty output", async () => {
   const root = await tempRoot();
