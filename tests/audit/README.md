@@ -4,14 +4,15 @@ This directory holds deterministic reproductions for the A1-A13 findings from
 the src audit at HEAD `9bcb74a`.
 A1 was fixed in `ad4722a`.
 A2-A6 plus prerequisite A12 completed their earlier source and packaged verification.
-The remaining cases supplement the default core/main suites with native login-library lifetime, stalled process inspection, update identity refusal, Quit attempt ordering, native plist compatibility and main-entrypoint Quit wiring.
+The remaining cases supplement the default core/main suites with native login-library lifetime, stalled process inspection, update identity refusal, native plist compatibility and main-entrypoint Quit wiring.
 The `pending/` directory retains its original layout; the directory name does not indicate current status.
 Compiled build identity and transaction confirmation live in `tests/main/build-identity.test.ts` and `tests/main/updater-transaction.test.ts`.
 Startup cancellation and crash recovery live in `tests/main/updater-startup.test.ts` and `tests/main/updater-residue.test.ts`.
 Discovery and TAR numeric validation live in `tests/core/discovery.test.ts` and `tests/main/updater-archive-numbers.test.ts`.
 The audit retains the boundary-level refusal to confirm an update using replacement metadata alone.
 The standalone SDK identity experiment, simpler startup/recovery reproductions and duplicate discovery/archive cases are omitted.
-A7-A11, including `a9-attempt-numbering.test.ts`, are implemented, locally verified and independently reviewed; signed packaged acceptance remains pending.
+Quit attempt ordering is maintained in `tests/main/lifecycle.test.ts` and `tests/components/terminal-order.component.tsx`; its duplicate audit file has been removed.
+The following acceptance statements describe the historical A7-A11 review, not a new review of the pruned suite.
 The A13 reserved control admission and its session-protocol cases (formerly `gates.test.ts` and `pending/protocol.test.ts`) were removed with the session protocol itself.
 The combined-source review run passed 591 unit/integration tests and all 32 explicit audit tests.
 No production correction was needed; the suspected dispatch-window finding was withdrawn after pinned-source tracing and runtime probes.

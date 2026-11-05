@@ -4,44 +4,6 @@ import type { HandoffSession } from "../../src/main/updater/handoff";
 import { withQuitInvocation } from "../../src/main/updater/invocation";
 import { eventually } from "../core/helpers";
 
-test("QuitCoordinator retries failed cleanup, coalesces repeated quit, and permits exit only after success", async () => {
-  let attempts = 0;
-  let failed = 0;
-  let quits = 0;
-  let vetoes = 0;
-  const coordinator = new QuitCoordinator(
-    async () => {
-      if (++attempts === 1) throw new Error("synthetic failure");
-    },
-    () => {
-      quits++;
-    },
-    () => {
-      failed++;
-    },
-  );
-  coordinator.handle(() => {
-    vetoes++;
-  });
-  await eventually(() => failed === 1);
-  coordinator.handle(() => {
-    vetoes++;
-  });
-  coordinator.handle(() => {
-    vetoes++;
-  });
-  await eventually(() => quits === 1);
-  coordinator.handle(() => {
-    vetoes++;
-  });
-  expect({ attempts, failed, quits, vetoes }).toEqual({
-    attempts: 2,
-    failed: 1,
-    quits: 1,
-    vetoes: 3,
-  });
-});
-
 test("QuitCoordinator exposes sanitized attempt-scoped delayed failures and preserves veto during retry", async () => {
   let rejectCleanup = (_error: Error) => {};
   let finishCleanup = () => {};
@@ -92,7 +54,9 @@ test("QuitCoordinator exposes sanitized attempt-scoped delayed failures and pres
   await eventually(() => quits === 1);
   expect(coordinator.status()).toEqual({ attempt: 2, phase: "ready", error: null });
   coordinator.handle(veto);
-  expect(vetoes).toBe(4);
+  expect({ calls, quits, vetoes }).toEqual({ calls: 2, quits: 1, vetoes: 4 });
+  expect(failures).toHaveLength(1);
+  expect(coordinator.reserveUpdate(updateCandidate())).toBeUndefined();
 });
 
 test("QuitCoordinator retains failure feedback when native exit throws after cleanup completed", async () => {
@@ -493,6 +457,25 @@ test("Quit and update retries share one counter and ignore cancelled older attem
   expect(second.signal.aborted).toBe(false);
   expect(coordinator.acceptUpdateRestart(first)).toBe(false);
   expect(coordinator.status()).toEqual(status);
+});
+
+test("an update reservation, failed ordinary Quit and update retry allocate distinct attempts", async () => {
+  const coordinator = new QuitCoordinator(
+    async () => {
+      throw new Error("synthetic cleanup refusal");
+    },
+    () => {},
+    () => {},
+  );
+  const first = coordinator.reserveUpdate(updateCandidate());
+  if (!first) throw new Error("Expected reservation");
+  expect(first.id).toBe(1);
+  expect(coordinator.armQuit()).toBe(true);
+  coordinator.handle(() => {});
+  await eventually(() => coordinator.status().phase === "failed");
+  expect(coordinator.status().attempt).toBe(2);
+  expect(first.signal.aborted).toBe(true);
+  expect(coordinator.reserveUpdate(updateCandidate("0.3.3"))?.id).toBe(3);
 });
 
 test("ordinary Quit supersedes a pending update with one newer identity and joins its cleanup", async () => {

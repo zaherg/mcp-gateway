@@ -129,13 +129,8 @@ MCP_GATEWAY_ALLOW_ENOSPC_IMAGE=1 \
   bun tests/native/update-acceptance/native-failures.ts
 ```
 
-The separate rendered check uses the existing synthetic UI fixture and installed Google Chrome, without signing or app replacement.
-It records desktop/narrow update states and checks keyboard confirmation cancellation, focus, progress, retry controls, and horizontal overflow.
-
-```sh
-MCP_GATEWAY_UI_OUTPUT="$PWD/.cache/update-acceptance/ui-run-1" \
-  bun tests/native/update-acceptance/ui-update-visual.ts
-```
+Update rendering, progress, and retry states are covered by `bun run test:components`.
+`bun run test:e2e` checks the restart confirmation's keyboard cancellation, focus, and desktop/narrow layout with synthetic update status; it does not install an update.
 
 These commands retain project-local evidence and do not contact the public feed, register login startup, or change installed apps.
 Missing prerequisites fail explicitly; the native `.native.ts` suite and these scripts are not part of default unit-test discovery.

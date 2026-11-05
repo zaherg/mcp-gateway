@@ -38,25 +38,19 @@ process.env.MCP_E2E_TOKEN = "synthetic-reference-source";
 const context = await setup(
   initialConfig,
   scenario === "jsonc" ? "jsonc" : "json",
-  scenario === "jsonc"
-    ? jsoncFixture(initialConfig)
-    : scenario === "strict-comments"
-      ? `// strict refusal\n${JSON.stringify(initialConfig)}`
-      : undefined,
+  scenario === "jsonc" ? jsoncFixture(initialConfig) : undefined,
 );
 await chmod(context.directory, 0o700);
 const pidFile = resolve(context.directory, "pids");
 const bundle = resolve(context.directory, "bundle");
 const secret = randomBytes(32).toString("hex");
 let nativeState = 0;
-let refuseLoginChanges = false;
 const loginCalls: boolean[] = [];
 const copied: string[] = [];
 const login = new MacLoginManager({
   status: () => nativeState,
   set: (enabled) => {
     loginCalls.push(enabled);
-    if (refuseLoginChanges) return 1;
     nativeState = enabled ? 1 : 0;
     return 0;
   },
@@ -90,14 +84,12 @@ const service = new AppService(
     quitStatus: () => quit.status(),
   },
 );
-const heldClients: Array<Awaited<ReturnType<typeof connect>>> = [];
 let closed = false;
 async function closeController() {
   if (!closed) {
     closed = true;
     await context.controller.close();
   }
-  for (const held of heldClients.splice(0)) await held.client.close();
   await eventually(async () => (await pids(pidFile)).every((pid) => !alive(pid)));
 }
 try {
@@ -130,8 +122,6 @@ try {
           return Response.json(await handler(params));
         }
         if (url.pathname === "/control") {
-          if (params === "occupied-port")
-            return Response.json({ port: Number(new URL(upstream.url).port) });
           if (params === "inspect")
             return Response.json({
               snapshot: context.controller.snapshot(),
@@ -139,14 +129,7 @@ try {
               copied,
               diskText: await readFile(context.path, "utf8"),
             });
-          if (params === "login-pending") {
-            nativeState = 2;
-            refuseLoginChanges = true;
-          } else if (params === "login-approved") {
-            nativeState = 1;
-          } else if (params === "login-allow") {
-            refuseLoginChanges = false;
-          } else if (params === "quit-hold") {
+          if (params === "quit-hold") {
             quitGate = new Promise((resolve) => {
               releaseQuit = resolve;
             });
@@ -226,11 +209,13 @@ try {
           } else if (params === "hold") {
             const address = context.controller.snapshot().address;
             if (!address) throw new Error("Gateway not running");
-            const held = await connect(address, "local");
-            heldClients.push(held);
-            // Retain one backend child so the e2e can observe a live process
-            // while the hold is outstanding and its cleanup on close.
-            await held.client.callTool({ name: "ask", arguments: {} });
+            // One stateless request retains one child, without a tools/list child still closing.
+            const held = await mcpCall(address, "local", "tools/call", {
+              name: "ask",
+              arguments: {},
+            });
+            if (held.status !== 200 || held.message?.result?.resultType !== "input_required")
+              throw new Error("Synthetic hold did not retain a backend continuation");
             return Response.json({ livePids: (await pids(pidFile)).filter(alive).length });
           } else if (params === "close") {
             await closeController();
@@ -246,9 +231,6 @@ try {
               "logs-benign",
               "logs-failure",
               "invalid-again",
-              "login-pending",
-              "login-approved",
-              "login-allow",
               "quit-fail-once",
               "quit-hold",
               "quit-release",

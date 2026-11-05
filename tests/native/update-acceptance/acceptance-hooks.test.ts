@@ -40,7 +40,6 @@ test("maintained acceptance sources use tracked helpers and the default unit com
     "product-update-flow.ts",
     "settle-product-helper.ts",
     "native-failures.ts",
-    "ui-update-visual.ts",
   ]) {
     const source = await readFile(join(import.meta.dir, file), "utf8");
     expect(source).not.toContain(".cache/auto-update-0.3.1");

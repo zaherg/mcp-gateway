@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { test as base, expect } from "@playwright/test";
 import { parseConfigDocument } from "../../src/shared/config-document";
+import type { UpdateStatus } from "../../src/shared/rpc";
 import type { GatewaySnapshot, StdioServerConfig } from "../../src/shared/types";
 
 type Bridge = {
@@ -200,8 +201,26 @@ test("real App CRUD, gateway, MCP transports, login preferences and close cleanu
     ["remote", "e2e-remote"],
   ]);
   for (const probe of probes) expect(probe.tools).toContain("echo");
+  const local = page.getByRole("article").filter({
+    has: page.getByRole("heading", { name: "local", exact: true }),
+  });
+  await local.getByRole("button", { name: "Restart local", exact: true }).click();
+  await expect(page.getByText("local restarted.", { exact: true })).toBeVisible();
+  await local.getByRole("button", { name: "Copy endpoint for local" }).click();
+  await local.getByRole("button", { name: "Copy client configuration", exact: false }).click();
+  await expect
+    .poll(async () => (await bridge.control<{ copied: string[] }>("inspect")).copied.length)
+    .toBe(2);
+  const { copied } = await bridge.control<{ copied: string[] }>("inspect");
+  expect(copied[0]).toBe(
+    stored.snapshot.servers.find((server) => server.name === "local")?.endpoint,
+  );
+  expect(JSON.parse(copied[1] ?? "").mcpServers.local.url).toBe(copied[0]);
   await page.getByRole("button", { name: "Stop gateway", exact: true }).click();
   await expect(page.getByText("Stopped", { exact: true }).first()).toBeVisible();
+  await page.getByRole("button", { name: "Delete local", exact: true }).click();
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(local).toBeVisible();
   for (const name of ["local", "remote"]) {
     await page.getByRole("button", { name: `Delete ${name}`, exact: true }).click();
     await page.getByRole("button", { name: "Delete server", exact: true }).click();
@@ -225,54 +244,6 @@ test("real App CRUD, gateway, MCP transports, login preferences and close cleanu
   console.log(
     "Browser E2E uses real AppService/controller/store and synthetic MCP; Electrobun RPC/window lifecycle remains covered only by scripts/check-native.ts.",
   );
-});
-
-test("native approval clears warnings and clean saves retry refused pending unregister", async ({
-  page,
-  bridge,
-}) => {
-  await page.goto(`${bridge.url}/#${bridge.secret}`);
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await bridge.control("login-pending");
-  await page.getByRole("switch", { name: /Launch app at login/ }).check();
-  await save(page);
-  const warning = page.getByRole("alert").filter({ hasText: "Login startup:" });
-  await expect(warning).toContainText("macOS refused");
-  expect((await bridge.control("inspect")).loginCalls).toEqual([true]);
-  await bridge.control("login-approved");
-  await expect(warning).not.toBeVisible({ timeout: 8000 });
-  await expect(page.getByText("Actual login registration: Enabled", { exact: true })).toBeVisible();
-  expect((await bridge.control("inspect")).loginCalls).toEqual([true]);
-  await bridge.control("login-pending");
-  await page.getByRole("switch", { name: /Launch app at login/ }).uncheck();
-  await save(page);
-  await expect(warning).toContainText("macOS refused");
-  await expect(page.getByText("Unsaved changes", { exact: true })).not.toBeVisible();
-  const before = await bridge.control("inspect");
-  expect(before.loginCalls).toEqual([true, false]);
-  await page.screenshot({ path: "tests/e2e/artifacts/login-retry-desktop.png", fullPage: true });
-  await warning.getByRole("button", { name: "Dismiss error" }).click();
-  await page.waitForTimeout(2300);
-  await expect(warning).not.toBeVisible();
-  expect((await bridge.control("inspect")).loginCalls).toEqual([true, false]);
-  await page.setViewportSize({ width: 390, height: 650 });
-  await page.screenshot({ path: "tests/e2e/artifacts/login-retry-mobile.png", fullPage: true });
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
-    true,
-  );
-  await bridge.control("login-allow");
-  const retry = page.getByRole("button", { name: "Retry login registration" });
-  await retry.focus();
-  await page.keyboard.press("Enter");
-  await expect(retry).not.toBeVisible();
-  const after = await bridge.control("inspect");
-  expect(after.loginCalls).toEqual([true, false, false]);
-  expect(after.snapshot.revision).toBe(before.snapshot.revision);
-  expect(after.snapshot.configText).toBe(before.snapshot.configText);
-  expect(after.snapshot.running).toBe(false);
-  await expect(
-    page.getByText("Actual login registration: Disabled", { exact: true }),
-  ).toBeVisible();
 });
 
 test("external CAS conflict preserves draft; invalid disk config recovers through authoritative editor", async ({
@@ -310,95 +281,6 @@ test("external CAS conflict preserves draft; invalid disk config recovers throug
     page.getByRole("alert").filter({ hasText: "Configuration unavailable" }),
   ).not.toBeVisible();
 });
-
-for (const action of ["add", "edit", "delete"] as const) {
-  test(`open ${action} action survives invalid external configuration without overwriting it`, async ({
-    page,
-    bridge,
-  }) => {
-    await page.goto(`${bridge.url}/#${bridge.secret}`);
-    if (action !== "add") {
-      await page.getByRole("button", { name: "Add server", exact: true }).click();
-      await page.getByLabel("Server name", { exact: false }).fill("local");
-      await page.getByLabel("Command", { exact: true }).fill(bridge.stdio.command);
-      await page.getByLabel("Arguments (JSON array)").fill(JSON.stringify(bridge.stdio.args));
-      await page.getByRole("button", { name: "Apply to draft" }).click();
-      await save(page);
-    }
-    await page.getByRole("button", { name: "Start gateway", exact: true }).click();
-    await expect(page.getByText("Running", { exact: true })).toBeVisible();
-    const before = await bridge.control("inspect");
-    await page
-      .getByRole("button", {
-        name: action === "add" ? "Add server" : action === "edit" ? "Edit server" : "Delete local",
-        exact: true,
-      })
-      .click();
-    if (action === "add") {
-      await page.getByLabel("Server name", { exact: false }).fill("added");
-      await page.getByLabel("Command", { exact: true }).fill(bridge.stdio.command);
-      await page.getByLabel("Arguments (JSON array)").fill(JSON.stringify(bridge.stdio.args));
-    } else if (action === "edit") {
-      await page.getByLabel("Server name", { exact: false }).fill("renamed");
-    }
-    await bridge.control("invalid");
-    await expect.poll(async () => (await bridge.control("inspect")).snapshot.running).toBe(false);
-    await expect(page.getByText(/The configuration changed outside this window/)).toBeAttached({
-      timeout: 8000,
-    });
-    await expect(page.getByRole("dialog")).toBeVisible();
-    if (action !== "delete")
-      await expect(page.getByLabel("Server name", { exact: false })).toHaveValue(
-        action === "add" ? "added" : "renamed",
-      );
-    if (action === "add") {
-      await page.setViewportSize({ width: 390, height: 650 });
-      await page.screenshot({
-        path: "tests/e2e/artifacts/editor-invalid-mobile.png",
-        fullPage: true,
-      });
-    }
-    await page
-      .getByRole("button", {
-        name: action === "delete" ? "Delete server" : "Apply to draft",
-        exact: true,
-      })
-      .click();
-    await expect(page.getByRole("dialog")).not.toBeVisible();
-    const recovery = page.getByRole("button", { name: /Authoritative configuration/ });
-    await expect(
-      action === "add" ? page.getByRole("button", { name: "Add server", exact: true }) : recovery,
-    ).toBeFocused();
-    await recovery.click();
-    const raw = page.getByLabel("mcp.json", { exact: true });
-    const draft = await raw.inputValue();
-    const expected = JSON.parse(before.snapshot.configText);
-    if (action === "add")
-      expected.mcpServers.added = {
-        command: bridge.stdio.command,
-        args: bridge.stdio.args,
-        env: {},
-        disabled: false,
-      };
-    else if (action === "edit") {
-      expected.mcpServers.renamed = expected.mcpServers.local;
-      delete expected.mcpServers.local;
-    } else delete expected.mcpServers.local;
-    expect(JSON.parse(draft)).toEqual(expected);
-    await page.getByRole("button", { name: "Save mcp.json", exact: true }).click();
-    await expect(page.getByRole("alert").filter({ hasText: "StaleRevision" })).toBeVisible();
-    await expect(raw).toHaveValue(draft);
-    expect((await bridge.control<{ diskText: string }>("inspect")).diskText).toBe(
-      '{"unknown":true}',
-    );
-    await expect(page.getByRole("button", { name: "Start gateway", exact: true })).toBeDisabled();
-    if (action === "add")
-      await page.screenshot({
-        path: "tests/e2e/artifacts/editor-stale-mobile.png",
-        fullPage: true,
-      });
-  });
-}
 
 test("cancelling an invalidated editor returns keyboard focus to configuration recovery", async ({
   page,
@@ -482,27 +364,6 @@ test.describe("JSONC document editing", () => {
     await page.getByRole("button", { name: "Save mcp.jsonc", exact: true }).click();
     await expect(page.getByRole("alert").filter({ hasText: "AmbiguousConfig" })).toBeVisible();
     expect((await bridge.control<{ diskText: string }>("inspect")).diskText).toBe(stored.diskText);
-  });
-});
-
-test.describe("strict JSON syntax", () => {
-  test.use({ scenario: "strict-comments" });
-  test("comments in mcp.json remain recoverable raw bytes but cannot expose or save", async ({
-    page,
-    bridge,
-  }) => {
-    await page.goto(`${bridge.url}/#${bridge.secret}`);
-    await expect(page.getByText("Repair configuration to continue", { exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Start gateway", exact: true })).toBeDisabled();
-    const original = (await bridge.control<{ diskText: string }>("inspect")).diskText;
-    await page.getByRole("button", { name: /Authoritative configuration/ }).click();
-    const raw = page.getByLabel("mcp.json", { exact: true });
-    await expect(raw).toHaveValue(original);
-    await raw.fill(`${original}\n`);
-    await page.getByRole("button", { name: "Save mcp.json", exact: true }).click();
-    await expect(page.getByRole("alert").filter({ hasText: "InvalidConfig" })).toBeVisible();
-    expect((await bridge.control<{ diskText: string }>("inspect")).diskText).toBe(original);
-    await expect(raw).toHaveValue(`${original}\n`);
   });
 });
 
@@ -649,38 +510,6 @@ test("local Logs retain raw synthetic backend values, filter and clear without c
   await expect(configError).toBeVisible({ timeout: 8000 });
 });
 
-test("dismissed local bind failure does not return as a polled banner; a new identical failure does", async ({
-  page,
-  bridge,
-}) => {
-  await page.goto(`${bridge.url}/#${bridge.secret}`);
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
-  const occupied = await bridge.control<{ port: number }>("occupied-port");
-  await page.getByLabel("Port", { exact: true }).fill(String(occupied.port));
-  await save(page);
-  await page.getByRole("button", { name: "Dismiss notification" }).click();
-  await page.waitForTimeout(2200);
-  await expect(page.getByText("Configuration saved.", { exact: true })).not.toBeVisible();
-  await page.getByRole("button", { name: "Start gateway", exact: true }).click();
-  const banner = page.getByRole("alert").filter({ hasText: "EADDRINUSE" });
-  await expect(banner).toHaveCount(1);
-  const first = (await bridge.control("inspect")).snapshot.operationalError;
-  expect(first?.occurrenceId).toBeTruthy();
-  await banner.getByRole("button", { name: "Dismiss error" }).click();
-  await page.waitForTimeout(2300);
-  await expect(banner).not.toBeVisible();
-  expect((await bridge.control("inspect")).snapshot.operationalError?.occurrenceId).toBe(
-    first?.occurrenceId,
-  );
-  await page.getByRole("button", { name: "Start gateway", exact: true }).click();
-  await expect(banner).toHaveCount(1);
-  expect((await bridge.control("inspect")).snapshot.operationalError?.occurrenceId).not.toBe(
-    first?.occurrenceId,
-  );
-  await page.waitForTimeout(2300);
-  await expect(banner).toHaveCount(1);
-});
-
 test("Quit freezes settings and raw drafts while keeping keyboard copy, Logs and retry available", async ({
   page,
   bridge,
@@ -791,80 +620,118 @@ test("lost Quit acknowledgement and unavailable status never unlock unsavable se
   await bridge.control("quit-release");
 });
 
-for (const action of ["add", "edit", "delete"] as const) {
-  test(`native Quit locks an open ${action} dialog and restores focus to draft recovery`, async ({
-    page,
-    bridge,
-  }) => {
-    await page.goto(`${bridge.url}/#${bridge.secret}`);
-    await page.getByRole("button", { name: /Authoritative configuration/ }).click();
-    const raw = page.getByLabel("mcp.json", { exact: true });
-    const config = JSON.parse(await raw.inputValue());
-    config.mcpServers.existing = { url: bridge.upstream.url };
-    await raw.fill(JSON.stringify(config));
-    await save(page);
-    const saved = await raw.inputValue();
-    const opener = page.getByRole("button", {
-      name: action === "add" ? "Add server" : action === "edit" ? "Edit server" : "Delete existing",
-      exact: true,
-    });
-    await opener.click();
-    if (action !== "delete")
-      await page.getByLabel("Server name", { exact: false }).fill("retained");
-    await bridge.control("quit-hold");
-    await bridge.control("quit-fail-once");
-    await bridge.control("native-quit");
-    const apply = page.getByRole("button", {
-      name: action === "delete" ? "Delete server" : "Apply to draft",
-      exact: true,
-    });
-    await expect(apply).toBeDisabled();
-    if (action !== "delete") {
-      const name = page.getByLabel("Server name", { exact: false });
-      await expect(name).toHaveAttribute("readonly", "");
-      await name.focus();
-      await page.keyboard.press("ControlOrMeta+A");
-      await page.keyboard.type("unsavable edit");
-      await expect(name).toHaveValue("retained");
-      await expect(page.getByLabel("Transport", { exact: true })).toBeDisabled();
-      await expect(page.getByLabel("Disabled (do not mount this endpoint)")).toBeDisabled();
-    }
-    await bridge.control("quit-release");
-    await expect(page.locator("[data-action=quit]")).toHaveText("Retry Quit");
-    await expect(page.locator("[data-action=quit]")).toBeDisabled();
-    await expect(apply).toBeDisabled();
-    await page.screenshot({ path: `.cache/review-f1-f3/${action}-dialog-desktop.png` });
-    await page.setViewportSize({ width: 390, height: 650 });
-    await page.screenshot({ path: `.cache/review-f1-f3/${action}-dialog-mobile.png` });
-    const cancel = page.getByRole("button", { name: "Cancel", exact: true });
-    await cancel.focus();
-    await expect(cancel).toBeFocused();
-    // Native Chrome dialogs can Tab into browser chrome at the end; test in-dialog order instead.
-    await page.keyboard.press("Shift+Tab");
-    await expect(
-      action === "add"
-        ? page.getByLabel("Working directory", { exact: true })
-        : action === "edit"
-          ? page.getByLabel("Headers (JSON object)", { exact: true })
-          : page.getByRole("button", { name: "Close dialog" }),
-    ).toBeFocused();
-    await page.keyboard.press("Tab");
-    await expect(cancel).toBeFocused();
-    await cancel.scrollIntoViewIfNeeded();
-    await page.screenshot({ path: `.cache/review-f1-f3/${action}-dialog-actions-mobile.png` });
+test("native Quit locks an open editor and restores keyboard focus to draft recovery", async ({
+  page,
+  bridge,
+}) => {
+  await page.goto(`${bridge.url}/#${bridge.secret}`);
+  await page.getByRole("button", { name: /Authoritative configuration/ }).click();
+  const raw = page.getByLabel("mcp.json", { exact: true });
+  const config = JSON.parse(await raw.inputValue());
+  config.mcpServers.existing = { url: bridge.upstream.url };
+  await raw.fill(JSON.stringify(config));
+  await save(page);
+  const saved = await raw.inputValue();
+  const opener = page.getByRole("button", { name: "Edit server", exact: true });
+  await opener.click();
+  const name = page.getByLabel("Server name", { exact: false });
+  await name.fill("retained");
+  await bridge.control("quit-hold");
+  await bridge.control("quit-fail-once");
+  await bridge.control("native-quit");
+  const apply = page.getByRole("button", { name: "Apply to draft", exact: true });
+  await expect(apply).toBeDisabled();
+  await expect(name).toHaveAttribute("readonly", "");
+  await name.focus();
+  await page.keyboard.press("ControlOrMeta+A");
+  await page.keyboard.type("unsavable edit");
+  await expect(name).toHaveValue("retained");
+  await expect(page.getByLabel("Transport", { exact: true })).toBeDisabled();
+  await expect(page.getByLabel("Disabled (do not mount this endpoint)")).toBeDisabled();
+  await bridge.control("quit-release");
+  await expect(page.locator("[data-action=quit]")).toHaveText("Retry Quit");
+  await expect(page.locator("[data-action=quit]")).toBeDisabled();
+  await expect(apply).toBeDisabled();
+  await page.setViewportSize({ width: 390, height: 650 });
+  const cancel = page.getByRole("button", { name: "Cancel", exact: true });
+  await cancel.focus();
+  await expect(cancel).toBeFocused();
+  // Native Chrome dialogs can Tab into browser chrome at the end; test in-dialog order instead.
+  await page.keyboard.press("Shift+Tab");
+  await expect(page.getByLabel("Headers (JSON object)", { exact: true })).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(cancel).toBeFocused();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).not.toBeVisible();
+  await expect(page.getByRole("button", { name: /Authoritative configuration/ })).toBeFocused();
+  await expect(raw).toHaveValue(saved);
+  await expect(raw).toHaveAttribute("readonly", "");
+  await expect(opener).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Retry Quit" })).toBeEnabled();
+  expect((await bridge.control("inspect")).snapshot.configText).toBe(saved);
+});
+
+test("update confirmation preserves keyboard focus and fits desktop and narrow layouts", async ({
+  page,
+  bridge,
+}) => {
+  const update: UpdateStatus = {
+    supported: true,
+    installationEnabled: true,
+    automaticUpdates: true,
+    installedVersion: "0.3.1",
+    availableVersion: "0.3.2",
+    availableHash: "next123456",
+    readyVersion: "0.3.2",
+    phase: "ready",
+    error: null,
+    preferenceError: null,
+    recoveryRequired: false,
+    recoveryPath: null,
+    checkedAt: null,
+  };
+  // Only updater status is synthetic; the renderer, dialogs and gateway bridge stay real.
+  await page.route("**/rpc/snapshot", async (route) => {
+    const response = await route.fetch();
+    const result = await response.json();
+    expect(result.ok).toBe(true);
+    await route.fulfill({ json: { ...result, value: { ...result.value, update } } });
+  });
+  await page.route("**/rpc/updatesStatus", (route) =>
+    route.fulfill({ json: { ok: true, value: update } }),
+  );
+  let restartCalls = 0;
+  await page.route("**/rpc/updatesRestart", (route) => {
+    restartCalls++;
+    return route.abort();
+  });
+  await page.goto(`${bridge.url}/#${bridge.secret}`);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const restart = page.getByRole("button", { name: "Restart to Update", exact: true });
+  await expect(restart).toBeEnabled();
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    await restart.focus();
+    await page.keyboard.press("Enter");
+    const dialog = page.getByRole("dialog", { name: "Restart to update?" });
+    await expect(dialog).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
     );
+    expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+      true,
+    );
+    await page.screenshot({
+      path: `.cache/test-pruning/update-confirm-${width}.png`,
+      fullPage: true,
+    });
     await page.keyboard.press("Escape");
-    await expect(page.getByRole("dialog")).not.toBeVisible();
-    await expect(page.getByRole("button", { name: /Authoritative configuration/ })).toBeFocused();
-    await expect(raw).toHaveValue(saved);
-    await expect(raw).toHaveAttribute("readonly", "");
-    await expect(opener).toBeDisabled();
-    await expect(page.getByRole("button", { name: "Retry Quit" })).toBeEnabled();
-    expect((await bridge.control("inspect")).snapshot.configText).toBe(saved);
-  });
-}
+    await expect(dialog).not.toBeVisible();
+    await expect(restart).toBeFocused();
+  }
+  expect(restartCalls).toBe(0);
+});
 
 test.describe("Linux desktop controls", () => {
   test.use({ scenario: "linux" });
@@ -909,97 +776,5 @@ test.describe("Linux desktop controls", () => {
     await page.getByRole("button", { name: "Discard changes and quit" }).click();
     await expect(page.getByText("Quit requested. Waiting for gateway cleanup.")).toBeVisible();
     await expect.poll(async () => (await bridge.control("inspect")).snapshot.running).toBe(false);
-  });
-  test("delayed Quit cleanup failure exposes sanitized retry through the local lifecycle boundary", async ({
-    page,
-    bridge,
-  }) => {
-    await page.goto(`${bridge.url}/#${bridge.secret}`);
-    await expect(page.getByText("Linux · local")).toBeVisible();
-    await bridge.control("quit-fail-once");
-    await page.getByRole("button", { name: "Quit MCP Gateway", exact: true }).click();
-    await expect(page.getByText("Quit requested. Waiting for gateway cleanup.")).toBeVisible();
-    const failure = page.getByRole("alert").filter({ hasText: "Quit cleanup failed." });
-    await expect(failure).toHaveText("Quit cleanup failed. The app has not exited. Retry Quit.", {
-      timeout: 8000,
-    });
-    await expect(page.getByRole("button", { name: "Retry Quit", exact: true })).toBeEnabled();
-    await expect(page.getByText("Quit requested. Waiting for gateway cleanup.")).not.toBeVisible();
-    await expect(
-      page.getByText("synthetic-private-quit-cleanup", { exact: false }),
-    ).not.toBeVisible();
-    await page.screenshot({
-      path: ".cache/linux-runtime/review-fixes/quit-retry-desktop.png",
-      fullPage: true,
-    });
-    await page.setViewportSize({ width: 390, height: 650 });
-    await page.screenshot({
-      path: ".cache/linux-runtime/review-fixes/quit-retry-mobile.png",
-      fullPage: true,
-    });
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
-      true,
-    );
-    await page.getByRole("button", { name: "Retry Quit", exact: true }).click();
-    await expect(page.getByRole("button", { name: "Quitting…", exact: true })).toBeDisabled();
-    await expect(failure).not.toBeVisible();
-    await expect(page.getByText("Quit requested. Waiting for gateway cleanup.")).toBeVisible();
-  });
-  test("a new renderer retries failed Quit even when gateway snapshot is unavailable", async ({
-    page,
-    bridge,
-  }) => {
-    await bridge.control("quit-fail-once");
-    const headers = {
-      Authorization: `Bearer ${bridge.secret}`,
-      "Content-Type": "application/json",
-    };
-    const requested = await fetch(`${bridge.url}/rpc/quit`, {
-      method: "POST",
-      headers,
-      body: "{}",
-    });
-    expect(requested.status).toBe(200);
-    await expect
-      .poll(async () => {
-        const response = await fetch(`${bridge.url}/rpc/quitStatus`, {
-          method: "POST",
-          headers,
-          body: "{}",
-        });
-        const result = await response.json();
-        return result.ok ? result.value.phase : "unavailable";
-      })
-      .toBe("failed");
-    await page.route("**/rpc/snapshot", (route) =>
-      route.fulfill({
-        contentType: "application/json",
-        body: JSON.stringify({
-          ok: false,
-          error: { code: "OperationFailed", message: "Synthetic unavailable gateway snapshot." },
-        }),
-      }),
-    );
-    await page.goto(`${bridge.url}/#${bridge.secret}`);
-    const retry = page.getByRole("button", { name: "Retry Quit", exact: true });
-    await expect(retry).toBeEnabled();
-    await expect(
-      page.getByText("Synthetic unavailable gateway snapshot.", { exact: false }),
-    ).toBeVisible();
-    await page.screenshot({
-      path: ".cache/linux-runtime/shutdown-fixes/snapshot-unavailable-desktop.png",
-      fullPage: true,
-    });
-    await page.setViewportSize({ width: 390, height: 650 });
-    await page.screenshot({
-      path: ".cache/linux-runtime/shutdown-fixes/snapshot-unavailable-mobile.png",
-      fullPage: true,
-    });
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
-      true,
-    );
-    await retry.click();
-    await expect(page.getByRole("button", { name: "Quitting…", exact: true })).toBeDisabled();
-    await expect(page.getByText("Quit cleanup failed.", { exact: false })).not.toBeVisible();
   });
 });

@@ -2,12 +2,13 @@
 
 Run in order:
 
-1. `bun run test:e2e`: Playwright and installed Google Chrome exercise the real React App through a test-only authenticated loopback bridge to AppService, controller, config store and synthetic stdio/HTTP MCP servers.
-2. `bun run test:components`: Vitest, React Testing Library and jsdom exercise App rendering, typed form validation, modal cancel/focus restoration, polling/CAS drafts, repair, token controls, Logs filtering/clear/error states and dismissible operation banners with explicit AppClient doubles.
-3. `bun run test:unit` (also `bun run test`): Bun exercises core libraries and injected native-service/login/lifecycle boundaries, including the blocking adapter regressions.
+1. `bun run test:unit` (also `bun run test`): Bun exercises core libraries, native-service/login/lifecycle boundaries, adapter regressions and acceptance-helper source checks.
+2. `bun run test:components`: Vitest, React Testing Library and jsdom cover rendering, validation, drafts, polling, error states and update controls with AppClient doubles.
+3. `bun run test:e2e`: Playwright and installed Google Chrome cover browser-specific behavior and selected end-to-end flows through the real AppService, controller, config store and synthetic stdio/HTTP servers.
 
 `*.e2e.ts` and `*.component.tsx` are deliberately outside Bun's test filename patterns, and Playwright and Vitest use explicit include patterns.
-`bun scripts/check-ui.ts` builds the synthetic UI harness, captures desktop/narrow screenshots under `tests/ui/artifacts`, and checks keyboard focus and horizontal overflow; the current Updates screenshots are retained under `.cache/auto-update-0.3.1/acceptance-direct/ui/`.
+Browser tests cover keyboard focus, native HTML dialogs, scrolling and narrow layouts without a second synthetic UI application.
+The update-confirmation case injects only updater status and cancels before installation; component tests cover the other update states.
 Neither unit nor component commands launch a browser or Electrobun.
 All fixtures are synthetic; no Bear, Apple account or actual login registration is used.
 The login double is injected below AppService through MacLoginManager's native interface.
@@ -16,6 +17,26 @@ The login double is injected below AppService through MacLoginManager's native i
 The matrix covers modern stdio, SSE, and JSON; exact limits, oversized complete and unfinished messages; and streams whose total exceeds the per-event limit.
 Reader checks cover split UTF-8 and CR/LF framing, metadata/comment fields, deceptive content-type parameters, cancellation, cleanup failures, and backpressure.
 These tests use synthetic output and do not attempt process memory exhaustion.
+
+## Coverage selection
+
+Keep validation and state matrices in unit/component tests; add browser cases for behavior jsdom cannot reproduce or a distinct integration boundary.
+The default Bun command includes integration tests despite its `test:unit` name.
+Protocol limits, authentication, filesystem safety, process ownership and updater recovery tests remain in that command.
+Signed SDK/replacement and native signal tests remain opt-in because unit doubles cannot establish those behaviors.
+
+| Consolidated coverage                           | Retained tests                                                                                                                                |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Repeated Quit attempt audit                     | `main/lifecycle.test.ts`, `components/terminal-order.component.tsx`                                                                           |
+| Synthetic UI CRUD, preset and clipboard checks  | `components/App.component.tsx`, browser CRUD smoke, `main/service.test.ts`                                                                    |
+| Synthetic update screenshots                    | Component update-state cases and browser desktop/narrow restart confirmation                                                                  |
+| Browser login retry matrix                      | `main/login.test.ts`, `main/service.test.ts`, component login retry cases                                                                     |
+| Browser add/edit/delete invalidation matrix     | Component JSONC invalidation cases, controller CAS tests, browser external-edit and focus checks                                              |
+| Browser strict-JSON and bind-banner repetitions | Config parser/store/controller tests, component repair/occurrence cases, browser JSONC and Logs flows                                         |
+| Repeated browser Quit variants                  | Component draft/status matrices, lifecycle/service tests, representative browser editor, copy, lost-acknowledgement and Linux controls checks |
+
+Screenshots from removed tests were generated observations, not pixel-comparison baselines.
+Pruning reduces repeated cross-layer combinations; it does not establish that browser and native coverage is exhaustive.
 
 ## Updater documentation validation
 
@@ -37,7 +58,7 @@ Private failure evidence now records the initial app inventory/configuration dig
 
 A2-A6 and prerequisite A12 are locally verified and independently source-reviewed.
 The default suite includes the shared command owner, confirmed backend-process cleanup, pinned batch cancellation, compiled build identity, guarded startup cancellation, and crash-residue tests.
-The remaining audit supplements cover native login-library lifetime, stalled process inspection, update identity refusal, Quit attempt ordering, native plist compatibility and main-entrypoint Quit wiring:
+The remaining audit supplements cover native login-library lifetime, stalled process inspection, update identity refusal, native plist compatibility and main-entrypoint Quit wiring:
 
 ```sh
 bun test tests/audit
@@ -115,7 +136,7 @@ The earlier A11 boundary fixture failure is corrected by using a valid file path
 bun test tests/main/updater-verify.test.ts tests/main/updater-boundary.test.ts
 bun test tests/main/interactive-quit.test.ts tests/main/lifecycle.test.ts
 bun test tests/core/discovery.test.ts tests/main/updater-archive-numbers.test.ts
-bun test tests/audit/a9-attempt-numbering.test.ts tests/audit/pending
+bun test tests/main/lifecycle.test.ts tests/audit/pending
 ```
 
 These earlier checks received focused self-review, followed by the historical combined-source review above.
@@ -175,7 +196,7 @@ Final signed project-local evidence is under `.cache/auto-update-0.3.1/final-acc
 Earlier sibling evidence directories contain intermediate builds and do not certify the final source.
 Local acceptance is not a hosted CI substitute.
 Component tests cover the Updates settings view, automation toggle, available/error/progress states, draft-discard confirmation, restart locking, menu-to-Settings signaling, focus, and window recreation.
-The synthetic UI visual check covers desktop/narrow update states and keyboard restart-confirmation cancellation; the 20 real-service browser tests protect existing gateway behavior, not native updater replacement.
+Browser tests cover desktop/narrow restart-confirmation cancellation and selected gateway flows, not native updater replacement.
 
 `release-inventory.test.ts` rejects changed launcher/signature bytes, modes, types, symlink targets, missing entries and extra files even when metadata and payload match.
 `release-dmg.test.ts` covers settled cleanup, late attach after cancellation, exact mount identity, forced-detach restrictions and unknown cleanup ownership.

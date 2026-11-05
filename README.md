@@ -247,7 +247,7 @@ See [platform prerequisites](https://docs.electrobun.dev/electrobun/guides/cross
 ```sh
 bun run prepare:sdk
 bun run typecheck && bun run lint
-bun run test:e2e && bun run test:components && bun run test:unit
+bun run test:unit && bun run test:components && bun run test:e2e
 ```
 
 Browser tests require Google Chrome and use synthetic servers, not real Bear notes.

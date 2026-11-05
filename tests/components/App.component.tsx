@@ -34,6 +34,28 @@ describe("App structured editor", () => {
     expect(client.saveConfig).not.toHaveBeenCalled();
   });
 
+  test("stdio fields preserve argument boundaries, environment values and working directory", async () => {
+    const { user, client } = await mount();
+    await user.click(screen.getByRole("button", { name: "Add server" }));
+    for (const [label, value] of [
+      ["Server name", "local"],
+      ["Command", "/synthetic/command"],
+      ["Arguments (JSON array)", '["serve","two words"]'],
+      ["Environment (JSON object)", '{"MODE":"test"}'],
+      ["Working directory", "/synthetic/workspace"],
+    ])
+      fireEvent.change(screen.getByLabelText(label, { exact: false }), { target: { value } });
+    await user.click(screen.getByRole("button", { name: "Apply to draft" }));
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(JSON.parse(client.saveConfig.mock.calls[0][0].text).mcpServers.local).toEqual({
+      command: "/synthetic/command",
+      args: ["serve", "two words"],
+      env: { MODE: "test" },
+      cwd: "/synthetic/workspace",
+      disabled: false,
+    });
+  });
+
   test("HTTP fields retain typed header values and serialize transport-specific data only", async () => {
     const { user, client } = await mount();
     await user.click(screen.getByRole("button", { name: "Add server" }));
@@ -66,8 +88,8 @@ describe("App structured editor", () => {
     expect(screen.getByRole("heading", { name: "remote" })).toBeVisible();
   });
 
-  test("dialog cancel and close restore the opener focus", async () => {
-    const { user } = await mount();
+  test("dialog cancel and close restore the opener focus without applying the Bear preset", async () => {
+    const { user, client } = await mount();
     const opener = screen.getByRole("button", { name: "Add server" });
     await user.click(opener);
     expect(screen.getByRole("dialog")).toContainElement(document.activeElement as HTMLElement);
@@ -77,6 +99,13 @@ describe("App structured editor", () => {
     await user.keyboard("{Enter}");
     await user.click(screen.getByRole("button", { name: "Close dialog" }));
     expect(opener).toHaveFocus();
+    await user.click(screen.getByRole("button", { name: "Use macOS Bear preset" }));
+    expect(screen.getByLabelText("Command", { exact: true })).toHaveValue(
+      "/Applications/Bear.app/Contents/MacOS/bearcli",
+    );
+    await user.click(screen.getByRole("button", { name: /^Cancel$/ }));
+    expect(screen.getByRole("heading", { name: "No servers configured" })).toBeVisible();
+    expect(client.saveConfig).not.toHaveBeenCalled();
   });
 });
 

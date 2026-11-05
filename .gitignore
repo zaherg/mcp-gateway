@@ -11,7 +11,6 @@ release/
 coverage/
 playwright-report/
 test-results/
-tests/ui/.bundle/
 .env
 .env.*
 !.env.example
