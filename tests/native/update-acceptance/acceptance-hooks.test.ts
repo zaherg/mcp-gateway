@@ -39,6 +39,8 @@ test("maintained acceptance sources use tracked helpers and the default unit com
     "prepare-fixture-apps.ts",
     "product-update-flow.ts",
     "settle-product-helper.ts",
+    "native-failures.ts",
+    "ui-update-visual.ts",
   ]) {
     const source = await readFile(join(import.meta.dir, file), "utf8");
     expect(source).not.toContain(".cache/auto-update-0.3.1");
@@ -115,6 +117,21 @@ nativeTest(
     }
   },
 );
+
+test("private failure evidence identifies the last attempted verification boundary", async () => {
+  const source = patchEntrypoint(await readFile(resolve("src/main/index.ts"), "utf8"), true);
+  for (const [stage, operation] of [
+    ["failure-state", "if (updates.statusValue().readyVersion"],
+    ["failure-renderer", "const responsive = await inspectViewport();"],
+    ["failure-mcp", "const aliveReply = await client.callTool"],
+    ["failure-record", "await record({ phase: scenario"],
+  ]) {
+    const marker = `stage = "${stage}";`;
+    expect(source.split(marker)).toHaveLength(2);
+    expect(source.indexOf(marker)).toBeLessThan(source.indexOf(operation));
+  }
+  expect(source).toContain('phase: "failed", stage, rendererResult');
+});
 
 test("private failure cases require the intended HTTP fault and persisted partial bytes", () => {
   const manifest = "/releases/latest/download/stable-macos-arm64-update.json";

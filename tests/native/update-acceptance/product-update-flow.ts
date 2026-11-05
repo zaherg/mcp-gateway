@@ -2,7 +2,11 @@ import { createHash } from "node:crypto";
 import { cp, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { nativeEnvironment, ownFixture, spawnOwned } from "../../../scripts/native-process";
-import { compareBundleInventories, inventoryBundle } from "../../../scripts/release-inventory";
+import {
+  compareBundleInventories,
+  inventoryBundle,
+  inventoryDigest,
+} from "../../../scripts/release-inventory";
 import { assertUpdateAcceptance, parseStartupMarkers } from "../../../scripts/update-acceptance";
 import { readLease } from "../../../src/main/updater/transaction";
 import { runCommand } from "../../../src/main/updater/verify";
@@ -255,6 +259,9 @@ async function main() {
   const evidence: Record<string, unknown> = {
     schemaVersion: 3,
     scenario: SCENARIO,
+    initialRuntime: { version: initial.version, hash: initial.hash },
+    initialInventoryDigest: inventoryDigest(initialInventory),
+    configurationSha256: configHash,
     feed: FEED,
     requests,
     responses,
@@ -271,6 +278,7 @@ async function main() {
   };
   process.on("SIGINT", interrupt);
   process.on("SIGTERM", terminate);
+  let stage = "initial-launch";
   try {
     const env = nativeEnvironment(OUT, "macos", { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" });
     delete env.MCP_GATEWAY_ISOLATED;
@@ -284,6 +292,7 @@ async function main() {
     );
     stdout = new Response(processHandle.child.stdout).text();
     stderr = new Response(processHandle.child.stderr).text();
+    stage = "waiting-for-trigger";
     const trigger = await waitFor(
       async () => {
         const text = await optionalText(join(roots.dataDirectory, "update-acceptance.json"));
@@ -295,6 +304,7 @@ async function main() {
     const failureCase = SCENARIO === "offline" || SCENARIO === "interrupted";
     if (trigger.phase !== (failureCase ? SCENARIO : "triggered"))
       throw new Error("Private update trigger failed.");
+    stage = "waiting-for-old-exit";
     const oldProcessExit = await waitFor(
       async () => processHandle?.child.exitCode ?? undefined,
       90_000,
@@ -352,6 +362,7 @@ async function main() {
         retainedVersion: current.version,
       });
     } else {
+      stage = "waiting-for-target-startup";
       await waitFor(
         async () => {
           const text = await optionalText(markerPath);
@@ -363,6 +374,7 @@ async function main() {
       );
       // Observe a bounded window for duplicate completed launches, then read all records again.
       await Bun.sleep(2_000);
+      stage = "target-assertions";
       const startupText = await readFile(markerPath, "utf8");
       if (!Number.isSafeInteger(trigger.syntheticPid) || trigger.syntheticPid <= 1)
         throw new Error("Synthetic backend PID missing.");
@@ -430,6 +442,7 @@ async function main() {
     cancellation.signal.throwIfAborted();
     evidence.assertionsPassed = true;
   } catch {
+    evidence.failedStage = stage;
     evidence.error = "Product update acceptance failed; inspect retained synthetic evidence.";
     process.exitCode ||= 1;
   } finally {

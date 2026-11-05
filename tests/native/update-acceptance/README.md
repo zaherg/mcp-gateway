@@ -99,5 +99,43 @@ Use fresh build and acceptance roots for each case, repeating preparation and si
 Changing only the runtime environment does not relocate an already signed fixture.
 
 The driver refuses an existing acceptance directory and retains `evidence.json` plus synthetic logs.
+Failure evidence includes the initial app inventory/configuration digests and the last attempted driver stage; the app fixture separately identifies failure-state, renderer, and MCP probe failures.
 After interruption or cleanup failure, inspect that directory and confirm all owned processes and native helpers have settled before removing anything.
 Unconfirmed cleanup is a failed run, not permission to delete its app, transaction journal, or recovery evidence.
+
+## SDK contract and helper checks
+
+The opt-in SDK suite uses the unchanged Electrobun `2.0.5` projection, copies signature-verified runtime helpers, and routes the fixed feed to loopback.
+It checks full downloads, prepared-record reuse, single and multi-hop patches, fallback, malformed metadata, version policy, network/archive failures, cancellation, metadata/history APIs, and an actual SDK `before-quit` veto.
+Patch cases require exact target TAR bytes and patch-only requests; the test-only `MCP_GATEWAY_TEST_DISABLE_BSPATCH=1` negative control makes both delta cases fail.
+The application's safety boundary prunes its cached TARs before preparation, so these SDK delta checks do not claim that the packaged application uses deltas.
+
+```sh
+MCP_GATEWAY_SIGNED_PAYLOAD="$MCP_GATEWAY_FIXTURE_A_APP" \
+  bun test ./tests/native/updater-sdk-contract.native.ts
+```
+
+`native-failures.ts` exercises the signed input's unchanged native helper using small signed app fixtures.
+It checks parent-exit waiting, publisher and incompatible-host refusal, rollback after a post-swap integration failure, moving-payload refusal, read-only destinations, manual restoration, file limits, literal ENOSPC, and signature tampering.
+The small apps are signed locally but are not notarized product releases; the full product pair remains the startup/RPC acceptance test.
+A successful `/usr/bin/open` spawn does not establish application startup or health.
+The disk-full case requires explicit authorization and the opt-in below; it fills only an isolated 8 MiB image and checks detachment.
+The output directory must be fresh and below the project's `.cache` directory.
+
+```sh
+MCP_GATEWAY_MATRIX_APP="$MCP_GATEWAY_FIXTURE_A_APP" \
+MCP_GATEWAY_MATRIX_ROOT="$PWD/.cache/update-acceptance/helper-run-1" \
+MCP_GATEWAY_ALLOW_ENOSPC_IMAGE=1 \
+  bun tests/native/update-acceptance/native-failures.ts
+```
+
+The separate rendered check uses the existing synthetic UI fixture and installed Google Chrome, without signing or app replacement.
+It records desktop/narrow update states and checks keyboard confirmation cancellation, focus, progress, retry controls, and horizontal overflow.
+
+```sh
+MCP_GATEWAY_UI_OUTPUT="$PWD/.cache/update-acceptance/ui-run-1" \
+  bun tests/native/update-acceptance/ui-update-visual.ts
+```
+
+These commands retain project-local evidence and do not contact the public feed, register login startup, or change installed apps.
+Missing prerequisites fail explicitly; the native `.native.ts` suite and these scripts are not part of default unit-test discovery.

@@ -17,6 +17,22 @@ The matrix covers legacy and modern stdio, SSE, and JSON; exact limits, oversize
 Reader checks cover split UTF-8 and CR/LF framing, metadata/comment fields, deceptive content-type parameters, cancellation, cleanup failures, and backpressure.
 These tests use synthetic output and do not attempt process memory exhaustion.
 
+## Updater documentation validation
+
+The 2026-11-05 run validates Electrobun `2.0.5`, not the newer `2.0.6` recipe/streaming contract.
+Current results are in [the validation record](../IMPLEMENTATION-PLAN.md#validation-results-2026-11-05), with the full matrix under `.cache/updater-documentation-validation/20261105T052930Z/`.
+The audit checkpoints below are historical snapshots, not the current source's acceptance status.
+
+`tests/native/updater-sdk-contract.native.ts` adds unchanged-SDK patch, fallback, metadata, status-history, veto, cancellation, and failure cases.
+The maintained [operator guide](native/update-acceptance/README.md#sdk-contract-and-helper-checks) documents its signed-input prerequisites and the native-helper and rendered-UI checks.
+The helper matrix includes automatic rollback after a post-swap integration failure, separate manual restoration, and an explicitly authorized 8 MiB ENOSPC image.
+These tests do not upgrade the SDK or publish a release.
+
+Source checks pass, but the required signed `late-start` product flow failed twice after reaching its six-second renderer delay.
+The original HTTP-503 fixture failed twice; a fixture with finer failure-stage reporting then passed three runs without changing product behavior, timeouts, or assertions.
+Those failures remain recorded; neither the exact cause nor a product-versus-fixture attribution is established.
+Private failure evidence now records the initial app inventory/configuration digests and the last attempted driver stage.
+
 ## Current audit remediation
 
 A2-A6 and prerequisite A12 are locally verified and independently source-reviewed.

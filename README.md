@@ -51,15 +51,12 @@ Dismissing a banner does not resolve the underlying failure; a new occurrence ca
 
 ### Automatic updates
 
-The A7-A11/A13 review was reopened after direct review found native-signal and executable-access gaps.
-Both corrections are locally verified with focused self-review, not a new independent review.
-New signed packaged acceptance remains pending; the earlier signed acceptance below does not certify this source.
-See [current acceptance criteria](IMPLEMENTATION-PLAN.md#current-acceptance-criteria).
-
-The local `0.3.1` build passed independent source and acceptance reviews, signing, notarization, stapling, and isolated signed two-version update and failure/recovery tests.
-Verification is recorded in [the final acceptance run](IMPLEMENTATION-PLAN.md#final-acceptance-run).
-This work did not publish or install `0.3.1`; live GitHub delivery remains untested.
-The published `0.3.0` release has no updater.
+The 2026-11-05 validation passed source/SDK checks and fresh signed `0.3.1` build verification, but packaged acceptance remains incomplete.
+The required delayed-renderer case failed twice before its completed-startup marker and update-trigger receipt; attribution to the application or fixture remains unresolved.
+The HTTP-503 case also had two failures before three passing diagnostic-fixture runs.
+See [validation results](IMPLEMENTATION-PLAN.md#validation-results-2026-11-05) for evidence, passing cases, and limits.
+No release was published or installed.
+The public latest release remains `0.3.0`, which has no updater, and the required updater assets are not published.
 
 Automatic updates are limited to the signed macOS arm64 stable distribution.
 Linux, Windows, Intel macOS, prerelease channels, and alternate update servers are unsupported and do not contact the update feed.
@@ -68,7 +65,9 @@ The fixed source is `https://github.com/zaherg/mcp-gateway/releases/latest/downl
 Automatic checks and downloads are enabled by default.
 MCP Gateway checks after startup has settled, then daily while it runs; the **Settings → Updates** switch disables new automatic checks and download admissions.
 The preference is stored separately in owner-only `updates.json` in the application data directory, not in `mcp.json` or `mcp.jsonc`.
-Invalid or unsafe preference files disable background work and remain visible for repair; a failed write preserves the previous setting.
+Invalid or unsafe preference files disable background work and remain visible for repair.
+A failure before publication preserves the previous setting; after publication, the app reads back the saved value and warns that durability is uncertain.
+If that value cannot be verified, background updates are disabled.
 A missing file means enabled.
 
 Use **Settings → Updates**, the macOS application menu **Check for Updates…**, or the tray menu for a manual check.
@@ -79,6 +78,8 @@ The launcher, Bun runtime and pinned update helpers must be regular files with e
 Missing required native inspection tools or invalid metadata also refuse the update; retained manual-recovery verification remains available.
 Automatic updates off requires an explicit **Download Update** action after a manual check.
 The download and preparation status is shown in Settings; a background discovery also appears as a nonmodal notice when the window is open.
+Preparation currently uses full archives: the application removes cached TARs and prepared records before a new attempt, even though the pinned SDK supports deltas.
+Electrobun `2.0.6` archive recipes, streamed preparation, and v2 manifests are not implemented by the pinned `2.0.5` runtime.
 
 **Restart to Update** requires confirmation, interrupts active MCP connections, and stops the gateway before handoff.
 If the configuration has unsaved changes, the confirmation explicitly discards the draft; it is never silently saved.

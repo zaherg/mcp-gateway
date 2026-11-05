@@ -183,12 +183,16 @@ async function runUpdateAcceptance(): Promise<void> {
         if (Date.now() >= deadline) throw new Error("Failure-case state deadline");
         await Bun.sleep(100);
       }
+      stage = "failure-state";
       if (updates.statusValue().readyVersion !== null || !inspectViewport)
         throw new Error("Failure case unexpectedly prepared or lost renderer");
+      stage = "failure-renderer";
       const responsive = await inspectViewport();
       if (responsive.supported !== true) throw new Error("Failure-case renderer unresponsive");
+      stage = "failure-mcp";
       const aliveReply = await client.callTool({ name: "echo", arguments: { value: "during-download-failure" } });
       if (aliveReply.isError) throw new Error("Failure case broke MCP session");
+      stage = "failure-record";
       await record({ phase: scenario, syntheticPid, readyVersion: null, responsive: true, mcpUsable: true, partialDownload });
       quit?.armQuit(); Utils.quit();
       return;

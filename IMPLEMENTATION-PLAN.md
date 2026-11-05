@@ -193,18 +193,23 @@ Not checked: fresh browser/native UI runs, signed replacement, Linux/Windows exe
 Not every build/test helper or third-party implementation was read.
 
 Issues 1-7 are locally fixed.
-The documentation-validation plan below remains planned and unexecuted.
+Documentation validation ran under the execution authorization recorded below; required packaged acceptance remains failed.
 
 ## Electrobun updater documentation validation plan
 
-Status: planned, not executed.
-This section defines validation of the automatic-update feature against Electrobun's documented contract; it does not mark the preceding audit issues resolved.
-The request authorizes this plan only, not source changes, dependency upgrades, test execution, signing, application replacement, publication, or Git operations.
+Status: source and SDK checks passed; required packaged acceptance failed on 2026-11-05.
+Live updater delivery is blocked, and Electrobun `2.0.6` behavior remains a version gap.
+The user authorized source and unchanged-SDK checks, missing validation tests, signing/notarization, execution and replacement of private app copies, and read-only public-feed inspection.
+The user separately authorized literal ENOSPC testing within an isolated project-local 8 MiB image.
+Product remediation, dependency upgrades, installed-app changes, publication, and Git mutations remain excluded.
+Evidence root: `.cache/updater-documentation-validation/20261105T052930Z/`.
 
 ### Baseline and documentation
 
 Planning inspection: 2026-11-05, HEAD `2445386d646e109e87a2539d2b4f0fc17e84e381`, app version `0.3.1`, with uncommitted work present.
-Capture a new source snapshot when validation starts rather than treating this commit alone as the tested implementation.
+Execution baseline: clean HEAD `b01bde6caa533700421afadc51a05e95fe58f54d`, app `0.3.1`, Bun `1.4.4`, Node `26.13.0`, macOS `27.2` arm64.
+`baseline.json` records 240 tracked-file hashes and 416 SDK/projection hashes before execution.
+Validation-only test and documentation edits are recorded separately from that baseline.
 The project pins Electrobun `2.0.5`; its toolchain uses Hutch `0.28.2` and Bun `1.4.4`.
 The current documentation includes changes introduced in Electrobun `2.0.6`, including native streamed preparation, archive recipes, and v2 update manifests.
 Passing the existing implementation's tests cannot establish conformance with those newer behaviors.
@@ -223,11 +228,11 @@ Keep reusable verification code in maintained test/script paths, not in that evi
 
 ### V1. Establish a version-aware contract matrix
 
-- [ ] Freeze the source/dependency/toolchain baseline, including uncommitted files and the generated SDK projection, before running checks.
-- [ ] Record each documented claim with its URL/section, applicable SDK version, implementation location, test case, evidence path, and outcome.
-- [ ] Separate shared SDK contracts, application-specific policies, and requirements introduced in 2.0.6.
-- [ ] Use outcomes `PASS`, `FAIL`, `BLOCKED`, `VERSION GAP`, and `NOT APPLICABLE`, with an explicit reason for the last three.
-- [ ] Record default-on background checks/downloads, explicit Restart to Update, monotonic stable versions, publisher verification, and gateway cleanup as application policies rather than promises made by the SDK example.
+- [x] Freeze the source/dependency/toolchain baseline, including uncommitted files and the generated SDK projection, before running checks.
+- [x] Record each documented claim with its URL/section, applicable SDK version, implementation location, test case, evidence path, and outcome.
+- [x] Separate shared SDK contracts, application-specific policies, and requirements introduced in 2.0.6.
+- [x] Use outcomes `PASS`, `FAIL`, `BLOCKED`, `VERSION GAP`, and `NOT APPLICABLE`, with an explicit reason for the last three.
+- [x] Record default-on background checks/downloads, explicit Restart to Update, monotonic stable versions, publisher verification, and gateway cleanup as application policies rather than promises made by the SDK example.
 
 Start with this mapping; the rows identify work to verify, not passing results:
 
@@ -245,14 +250,14 @@ Exit condition: every relevant API section has a mapped check, and newer-version
 
 ### V2. Verify configuration, metadata, and artifact delivery
 
-- [ ] Compare `package.json`, `bun.lock`, prepared devkit metadata, build inputs, and packaged runtime identity for the selected validation build.
-- [ ] Assert the production identity `dev.srvr.mcpgateway`, channel `stable`, target `macos/arm64`, and feed `https://github.com/zaherg/mcp-gateway/releases/latest/download` agree across configuration, manifest, installed `version.json`, and prepared candidate.
-- [ ] Verify the 2.0.5 feed assets retain their generated names: `stable-macos-arm64-update.json` and `stable-macos-arm64-MCPGateway.app.tar.zst`.
-- [ ] Verify the manifest's artifact reference, version, routing hash, platform, and architecture match the exact archive and signed runtime payload.
-- [ ] Distinguish `macos-arm64-MCPGateway.dmg` and its installer wrapper from the runtime archive consumed by the updater; a DMG alone is not an update feed.
-- [ ] Exercise missing/malformed metadata, incorrect identity/channel/architecture, missing archive, stale cached responses, and a moving latest release between manifest and artifact requests.
-- [ ] Confirm a mismatched manifest/payload pair is refused without changing the installed app or publishing ready state.
-- [ ] Check that packaged `dev` builds never offer updates, as documented, and that the app's narrower macOS arm64/stable support policy refuses unsupported builds without background requests.
+- [x] Compare `package.json`, `bun.lock`, prepared devkit metadata, build inputs, and packaged runtime identity for the selected validation build.
+- [x] Assert the production identity `dev.srvr.mcpgateway`, channel `stable`, target `macos/arm64`, and feed `https://github.com/zaherg/mcp-gateway/releases/latest/download` agree across configuration, manifest, installed `version.json`, and prepared candidate.
+- [x] Verify the 2.0.5 feed assets retain their generated names: `stable-macos-arm64-update.json` and `stable-macos-arm64-MCPGateway.app.tar.zst`.
+- [x] Verify the manifest's artifact reference, version, routing hash, platform, and architecture match the exact archive and signed runtime payload.
+- [x] Distinguish `macos-arm64-MCPGateway.dmg` and its installer wrapper from the runtime archive consumed by the updater; a DMG alone is not an update feed.
+- [x] Exercise missing/malformed metadata, incorrect identity/channel/architecture, missing archive, stale cached responses, and a moving latest release between manifest and artifact requests.
+- [x] Confirm a mismatched manifest/payload pair is refused without changing the installed app or publishing ready state.
+- [x] Check that packaged `dev` builds never offer updates, as documented, and that the app's narrower macOS arm64/stable support policy refuses unsupported builds without background requests.
 
 Treat the release hash as a routing identifier, not publisher authentication.
 Verify application signature, expected publisher, executable permissions, architecture, and minimum host requirements through the existing candidate verifier.
@@ -260,16 +265,16 @@ A generated artifact, local archive, and remotely served archive must have separ
 
 ### V3. Verify API sequencing and application policy
 
-- [ ] Trace `getLocalInfo()` → `checkForUpdate()` → `downloadUpdate()` → `updateInfo()` → `applyUpdate()` through the production worker, safety boundary, coordinator, and service.
-- [ ] Assert that `updateAvailable` permits preparation but does not mean ready, and that a resolved `downloadUpdate()` promise is insufficient without `updateReady` and an empty `error`.
-- [ ] Exercise check/download failures that return status instead of throwing, plus thrown failures, and require a visible sanitized error with no apply call.
-- [ ] Test identical hashes, higher stable versions, older versions, same-version/different-hash offers, prereleases, malformed versions, and stale prepared records.
-- [ ] Preserve the application's higher-version requirement while recording that the pinned SDK itself uses hash inequality for availability.
-- [ ] Verify default-on checks/downloads, persisted opt-out, explicit manual checks/downloads while opted out, single-flight behavior, startup reconciliation ordering, timer cancellation, and retry after failure.
-- [ ] Prove no background task or ordinary Quit installs an update; only an explicit, accepted Restart to Update request can reach apply.
-- [ ] Compare `getLocalInfo()`, convenience metadata getters, `channelBucketUrl()`, and `appDataFolder()` with the packaged metadata and SDK-resolved installed workspace in an isolated runtime.
-- [ ] Confirm path admission and transaction ownership precede effectful SDK getters and status subscription, including the pinned reconciliation callbacks they schedule.
-- [ ] Retain regressions for unsafe roots, symlinks, concurrent instances, cancellation, and a stale executing build after another process replaces the on-disk bundle.
+- [x] Trace `getLocalInfo()` → `checkForUpdate()` → `downloadUpdate()` → `updateInfo()` → `applyUpdate()` through the production worker, safety boundary, coordinator, and service.
+- [x] Assert that `updateAvailable` permits preparation but does not mean ready, and that a resolved `downloadUpdate()` promise is insufficient without `updateReady` and an empty `error`.
+- [x] Exercise check/download failures that return status instead of throwing, plus thrown failures, and require a visible sanitized error with no apply call.
+- [x] Test identical hashes, higher stable versions, older versions, same-version/different-hash offers, prereleases, malformed versions, and stale prepared records.
+- [x] Preserve the application's higher-version requirement while recording that the pinned SDK itself uses hash inequality for availability.
+- [x] Verify default-on checks/downloads, persisted opt-out, explicit manual checks/downloads while opted out, single-flight behavior, startup reconciliation ordering, timer cancellation, and retry after failure.
+- [x] Prove no background task or ordinary Quit installs an update; only an explicit, accepted Restart to Update request can reach apply.
+- [x] Compare `getLocalInfo()`, convenience metadata getters, `channelBucketUrl()`, and `appDataFolder()` with the packaged metadata and SDK-resolved installed workspace in an isolated runtime.
+- [x] Confirm path admission and transaction ownership precede effectful SDK getters and status subscription, including the pinned reconciliation callbacks they schedule.
+- [x] Retain regressions for unsafe roots, symlinks, concurrent instances, cancellation, and a stale executing build after another process replaces the on-disk bundle.
 
 Exit condition: each path reaches the expected public state, and failed or cancelled operations cannot publish readiness, mutate configuration unexpectedly, or release resources before cleanup is confirmed.
 
@@ -278,32 +283,32 @@ Exit condition: each path reaches the expected public state, and failed or cance
 Use the unchanged SDK and its bundled native helpers through the production adapter, with synthetic manifests, isolated app copies, and a loopback feed.
 SDK doubles establish application branching but do not establish download, patching, decompression, or native behavior.
 
-- [ ] Cover a fresh full download, reuse of a matching prepared candidate, a valid single delta, and a multi-hop delta chain reaching the exact selected target.
-- [ ] Record requested patch filenames and native-helper execution so a supposed delta test cannot pass by silently downloading the full archive.
-- [ ] Cover missing current TAR, missing patch, corrupt patch, repeated/cyclic hash, interrupted chain, and full-download fallback failure.
-- [ ] Verify patch-chain and fallback results have the expected payload bytes and target identity; preserve the installed bundle throughout preparation.
-- [ ] Test manifest HTTP errors, offline/timeout, interrupted download, truncated/corrupt archive, content-length and chunked overflows, decompression limits, and cancellation during preparation.
-- [ ] Exercise free-space refusal, file-write/sync errors, and literal ENOSPC only on an authorized bounded project-local test image, never by filling the host disk.
-- [ ] Check complete app inventories, configuration/preference bytes, staging ownership, child-process settlement, and retry behavior after each refusal.
-- [ ] Confirm gateway activity and renderer RPC remain responsive during preparation, including the pinned synchronous helper work isolated in the worker.
+- [x] Cover a fresh full download, reuse of a matching prepared candidate, a valid single delta, and a multi-hop delta chain reaching the exact selected target.
+- [x] Record requested patch filenames and native-helper execution so a supposed delta test cannot pass by silently downloading the full archive.
+- [x] Cover missing current TAR, missing patch, corrupt patch, repeated/cyclic hash, interrupted chain, and full-download fallback failure.
+- [x] Verify patch-chain and fallback results have the expected payload bytes and target identity; preserve the installed bundle throughout preparation.
+- [x] Test manifest HTTP errors, offline/timeout, interrupted download, truncated/corrupt archive, content-length and chunked overflows, decompression limits, and cancellation during preparation.
+- [x] Exercise free-space refusal, file-write/sync errors, and literal ENOSPC only on an authorized bounded project-local test image, never by filling the host disk.
+- [x] Check complete app inventories, configuration/preference bytes, staging ownership, child-process settlement, and retry behavior after each refusal.
+- [x] Confirm gateway activity and renderer RPC remain responsive during preparation, including the pinned synchronous helper work isolated in the worker.
 
 Record the 2.0.5 retained-TAR/prepared-record layout as the observed version contract.
 Do not label it a recipe-based or fully streaming implementation, and do not extrapolate small-limit tests to full-size storage or power-loss durability.
 
 ### V5. Verify quit approval, replacement, relaunch, and recovery
 
-- [ ] Call apply without a valid prepared update and verify no replacement occurs.
-- [ ] Exercise an actual SDK `before-quit` veto and require no armed native apply plan/helper, while preserving valid prepared-candidate ownership for retry.
-- [ ] Require explicit draft consent and successful preflight before shutdown, then close gateway/listener/backend resources before exactly one update handoff.
+- [x] Call apply without a valid prepared update and verify no replacement occurs.
+- [x] Exercise an actual SDK `before-quit` veto and require no armed native apply plan/helper, while preserving valid prepared-candidate ownership for retry.
+- [x] Require explicit draft consent and successful preflight before shutdown, then close gateway/listener/backend resources before exactly one update handoff.
 - [ ] Cover duplicate clicks, stale/lost acknowledgements, closed/reopened windows, delayed renderer readiness, cleanup refusal, and explicit retry.
-- [ ] Retain issue 1 coverage: a failed preflight leaves a still-running app editable and permits ordinary Quit without applying the rejected candidate.
-- [ ] Send actual SIGTERM/SIGINT to dirty and unresponsive native windows; verify ordinary cleanup without renderer consent or install-on-quit.
-- [ ] Verify the native helper waits for the owned old process to exit before replacement and revalidates the candidate at handoff.
-- [ ] Test tampered signatures, wrong publisher/identity, non-executable required files, incompatible host, changed prepared archive, read-only destination, and interrupted replacement through the relevant verifier/helper boundary.
-- [ ] Distinguish automatic rollback attempted by the helper, successful restoration, and application-managed/manual recovery; record the complete inventory and recovery journal for each outcome.
-- [ ] Retain issues 2 and 4 fault cases so post-publication failures cannot delete a referenced recovery copy or misreport the effective update preference.
-- [ ] Require the target process to confirm the exact version/hash/build identity, complete startup, answer renderer RPC, and confirm its native transaction before declaring success.
-- [ ] Require an attempt-bound observation of backend absence before handoff, unchanged synthetic configuration, and exactly one target startup within a recorded observation window.
+- [x] Retain issue 1 coverage: a failed preflight leaves a still-running app editable and permits ordinary Quit without applying the rejected candidate.
+- [x] Send actual SIGTERM/SIGINT to dirty and unresponsive native windows; verify ordinary cleanup without renderer consent or install-on-quit.
+- [x] Verify the native helper waits for the owned old process to exit before replacement and revalidates the candidate at handoff.
+- [x] Test tampered signatures, wrong publisher/identity, non-executable required files, incompatible host, changed prepared archive, read-only destination, and interrupted replacement through the relevant verifier/helper boundary.
+- [x] Distinguish automatic rollback attempted by the helper, successful restoration, and application-managed/manual recovery; record the complete inventory and recovery journal for each outcome.
+- [x] Retain issues 2 and 4 fault cases so post-publication failures cannot delete a referenced recovery copy or misreport the effective update preference.
+- [x] Require the target process to confirm the exact version/hash/build identity, complete startup, answer renderer RPC, and confirm its native transaction before declaring success.
+- [x] Require an attempt-bound observation of backend absence before handoff, unchanged synthetic configuration, and exactly one target startup within a recorded observation window.
 
 The documented launch operation is not an application health check.
 A helper exit, changed files, launch request, or externally started target process does not by itself prove automatic relaunch and healthy startup.
@@ -311,18 +316,19 @@ Preserve uncertain ownership and recovery evidence; do not delete them merely to
 
 ### V6. Verify status reporting and user-visible behavior
 
-- [ ] Observe the pinned `onStatusChange` events and `UpdateStatusEntry` fields, then map them to the application's checking, available, downloading, ready, restarting, and error states.
-- [ ] Exercise `getStatusHistory()`, `clearStatusHistory()`, and `onStatusChange(null)` in isolated SDK tests without treating unused convenience APIs as missing product features.
-- [ ] Verify error/readiness transitions and asynchronous callbacks cannot produce false success or stale ready state after cancellation, opt-out, failed preflight, or shutdown.
-- [ ] Verify callbacks cannot mutate state after ownership ends, history remains available according to the pinned SDK contract until cleared, and neither exposes credentials/private diagnostics through renderer summaries or LAN endpoints.
-- [ ] Inspect rendered desktop/narrow layouts, keyboard/focus behavior, discard confirmation, retry controls, and window reopening while an update is prepared.
-- [ ] Ensure UI progress reflects evidence the pinned SDK actually supplies; do not invent byte percentages or assume newer native preparation emits per-patch progress.
+- [x] Observe the pinned `onStatusChange` events and `UpdateStatusEntry` fields, then map them to the application's checking, available, downloading, ready, restarting, and error states.
+- [x] Exercise `getStatusHistory()`, `clearStatusHistory()`, and `onStatusChange(null)` in isolated SDK tests without treating unused convenience APIs as missing product features.
+- [x] Verify error/readiness transitions and asynchronous callbacks cannot produce false success or stale ready state after cancellation, opt-out, failed preflight, or shutdown.
+- [x] Verify callbacks cannot mutate state after ownership ends, history remains available according to the pinned SDK contract until cleared, and neither exposes credentials/private diagnostics through renderer summaries or LAN endpoints.
+- [x] Inspect rendered desktop/narrow layouts, keyboard/focus behavior, discard confirmation, retry controls, and window reopening while an update is prepared.
+- [x] Ensure UI progress reflects evidence the pinned SDK actually supplies; do not invent byte percentages or assume newer native preparation emits per-patch progress.
 
 ### V7. Run reproducible source and packaged acceptance
 
 First confirm issue 6's maintained helpers and dependencies are available from the source snapshot without historical `.cache` programs.
 Use `tests/native/update-acceptance/{prepare-fixture-apps.ts,product-update-flow.ts,settle-product-helper.ts,acceptance-hooks.test.ts}` and its [operator guide](tests/native/update-acceptance/README.md).
-The helper relocation was in progress during planning; its presence in a dirty working tree does not establish fresh-checkout reproducibility or packaged acceptance.
+The helper relocation is committed in the execution baseline.
+The maintained checkout-projection test passed without the historical acceptance cache; new packaged checks use those maintained helpers.
 
 After validation execution is authorized, run the existing source checks from the repository root:
 
@@ -369,18 +375,94 @@ For release readiness, inspect the production GitHub feed read-only using isolat
 - [ ] Verify the stable latest-release redirect and every required asset are anonymously reachable over HTTPS, preserving safe redirects and the SDK's cache-busting requests.
 - [ ] Compare downloaded manifest/archive bytes with the exact accepted build, including publisher, version/hash, platform, architecture, and artifact names.
 - [ ] Check that archive/patch assets become available before manifests advertise them, old hash-named patches remain reachable when promised, and missing patches return normal errors that permit fallback.
-- [ ] Confirm `/releases/latest` is used only for stable releases and that prereleases cannot become the app's automatic feed.
-- [ ] Identify releases without an updater or usable feed that require a manual bootstrap upgrade; do not promise automatic delivery to them.
+- [x] Confirm `/releases/latest` is used only for stable releases and that prereleases cannot become the app's automatic feed.
+- [x] Identify releases without an updater or usable feed that require a manual bootstrap upgrade; do not promise automatic delivery to them.
 
 Feed publication, tag changes, release uploads, and installation remain separate operations requiring explicit authorization.
 If no accepted release is published, report live delivery as `BLOCKED` rather than substituting local-feed success.
 
 ### Completion criteria
 
-- [ ] Every applicable contract row has a source citation, exact tested SDK/build identity, reproducible procedure, expected result, observed result, and evidence location.
-- [ ] Source, unchanged-SDK, signed packaged, and live-feed outcomes are reported separately, with all version gaps, failures, skipped checks, and authorization blockers visible.
-- [ ] Negative cases prove the intended fault was reached and preserve the installed app/configuration or the documented recovery state.
-- [ ] Any discovered implementation defects are recorded for approval; validation does not silently expand into remediation of audit issues 6-7 or unrelated code.
-- [ ] The final report states the supported scope as stable macOS arm64 and lists untested minimum-OS, physical input, actual login, Linux/Windows, prolonged-load, full-size disk/memory, and power-loss behavior where applicable.
+- [x] Every applicable contract row has a source citation, exact tested SDK/build identity, reproducible procedure, expected result, observed result, and evidence location.
+- [x] Source, unchanged-SDK, signed packaged, and live-feed outcomes are reported separately, with all version gaps, failures, skipped checks, and authorization blockers visible.
+- [x] Negative cases prove the intended fault was reached and preserve the installed app/configuration or the documented recovery state.
+- [x] Any discovered implementation defects are recorded for approval; validation does not silently expand into product remediation or unrelated changes.
+- [x] The final report states the supported scope as stable macOS arm64 and lists untested minimum-OS, physical input, actual login, Linux/Windows, prolonged-load, full-size disk/memory, and power-loss behavior where applicable.
 
-No validation outcome is claimed by adding this plan.
+### Validation results: 2026-11-05
+
+Overall outcome: **FAIL**, because the required signed `late-start` acceptance case failed twice.
+This is a validation failure, not a confirmed attribution to product code.
+Source-suite passes and successful native-helper tests do not override it.
+The evidence root above contains `contract-matrix.json`, `summary.json`, `preservation.json`, and `cleanup.json`.
+The matrix maps all 65 checklist entries plus V7's source and packaged layers: 56 `PASS`, 2 `FAIL`, 3 `BLOCKED`, and 6 `VERSION GAP` rows.
+`live-feed.json` and `live-feed-final.json` retain both anonymous feed inspections; the final API response still lists only the `0.3.0` DMG.
+Checked boxes refer to the layer-qualified checks in that matrix, not universal packaged or latest-SDK acceptance.
+
+| Layer | Outcome | Evidence and limits |
+| --- | --- | --- |
+| Source | PASS | 692 unit/integration tests, 5,424 assertions; 64 components; 22 browser tests; 32 supplementary audit tests; types, lint, and scoped LSP diagnostics. |
+| Unchanged SDK | PASS | 32 new contract cases, 451 assertions; 5 existing SDK helper tests, 223 assertions; exact patch-only requests and output digests; disabled-bspatch negative control fails both delta tests. |
+| Native checks | PASS | Four development and four signed smoke scenarios; four dirty/unresponsive signal cases; six signed executable/archive-permission cases; 11 signed-small-app helper cases, including post-swap rollback and literal ENOSPC. |
+| Signed artifacts | PASS | Fresh production `0.3.1` build, wrapper/payload/DMG signatures, notarization, tickets, Gatekeeper, complete DMG inventory, metadata/build identity, and credential scan. |
+| Private replacement | FAIL | `success`, `interrupted`, and `cleanup-failure` pass; HTTP-503 diagnostic fixture passes three runs after two original failures; `late-start` fails twice. |
+| Public delivery | BLOCKED | Anonymous latest is stable `v0.3.0`, with only a DMG; both updater assets initially returned 404, and the final manifest probe returned 504. |
+| Electrobun 2.0.6 | VERSION GAP | Recipes, native streamed preparation, v2 manifests, paired Hutch, redirect enforcement, and bridge/subsequent-update acceptance require a separately approved upgrade. |
+
+#### Packaged blocker and flakiness
+
+V5.4 and V7 packaged acceptance remain failed.
+Both `late-start` attempts recorded the intended 6,002 ms renderer delay, but produced neither a completed-startup marker nor `update-acceptance.json` within the driver's 120-second trigger deadline.
+The second attempt records `failedStage: waiting-for-trigger`.
+Both retain the original A bundle byte-for-byte, have no active app or update transaction, and have no cleanup-resource failure.
+The second attempt also proves unchanged configuration bytes; the original driver did not persist the first attempt's initial configuration digest.
+See `late-start-failure.json`, `private-runs/late-start-attempt-1/`, and `private-runs/late-start/`.
+Investigation must distinguish `completeUpdateStartup`/startup-marker fixture behavior from application/native RPC readiness before claiming acceptance or authorizing a product correction.
+No timeout or assertion was relaxed.
+
+The original HTTP-503 fixture failed twice with only a coarse `waiting-for-update` stage.
+A newly signed A fixture with finer failure-stage assignments then passed three consecutive runs against the same fault; product behavior, timeouts, and assertions were unchanged.
+Those successes do not establish the original failures' cause.
+Evidence is retained under `private-runs/offline-attempt-1/`, `private-runs/offline/`, and `private-runs/offline-diagnostic*`.
+The maintained driver now records initial app/configuration digests and the last attempted stage even on failure.
+
+#### Version and policy distinctions
+
+The application deliberately removes cached TARs and prepared records before a new preparation attempt.
+Its normal path therefore uses full archives, despite the unchanged SDK passing synthetic delta and prepared-cache reuse tests.
+Those SDK checks do not certify packaged delta use or Electrobun `2.0.6` recipes.
+Renderer RPC and another MCP call succeeded during the packaged interrupted download; source and worker tests place synchronous native helper work in a child process.
+No precise decompression-overlap latency or prolonged-load benchmark is claimed.
+
+The native helper's successful launch request is not a startup health check.
+A signed incompatible-host probe that bypassed application preflight produced a successful helper receipt without a startup marker; the application verifier correctly refused that same candidate.
+Tagged `2.0.5` native source shows that macOS handoff spawns `/usr/bin/open` without awaiting its result.
+A separate integration-directory collision reached a post-swap failure and verified automatic restoration and prior-app relaunch; interrupted-target recovery was verified separately as manual restoration.
+
+#### Artifacts, corrections, and verification limits
+
+Fresh production wrapper: `.cache/updater-documentation-validation/20261105T052930Z/production-build/stable-macos-arm64/MCP Gateway.app`.
+Local distribution assets: `.cache/updater-documentation-validation/20261105T052930Z/production-artifacts/`.
+Production routing hash: `1kfamm7lzcla3`.
+Compiled/signed build identity: `73c0891f9eba6a9e7ca32f2960533a05de1d9c928a314d99e4601d11bade4609`.
+DMG SHA-256: `651e65629dc469559f31153650b1b2379481aaafd796103e2d2fba6a4fc55689`.
+Runtime archive SHA-256: `627ec37f529ccbf9c84c3fef10f732d743125ff51f0fff801490b63217ba4d77`.
+These are validation artifacts, not an accepted release to publish or install.
+Some extracted-launcher runs emitted `BootstrapInstallFailed`/`FileNotFound` warnings; successful runtime checks do not establish installer bootstrap success, and those warnings are not a proven cause of the failed cases.
+
+Validation changes add maintained SDK/helper/UI cases and improve failure evidence.
+The supplementary A9 test's obsolete idle-state expectation was corrected to the committed issue-1 contract: retry reservation preserves prior failed shutdown state while allocating attempt 3.
+A first development-build invocation used absolute output paths and was refused by Hutch; project-relative paths passed without changing the toolchain.
+Imported historical test fixtures required current recovery fields and the required executable layout; those test-only corrections did not alter product code or SDK files.
+Focused self-review also noted a pre-existing driver logging issue: unknown routes are recorded as HTTP 200 even though the handler returns 404.
+No packaged request in this run used that branch; the SDK suite records and tests missing artifacts separately.
+That unrelated logging issue was left unchanged.
+Focused self-review was performed; no subagents or new independent review were used.
+
+Production source, package/lock, assets, and retained public distributions remain unchanged; staging is empty.
+HEAD advanced during validation to README-only commit `b7e333b952bd80d64479dc0744221fef0254a557`, outside the recorded validation commands.
+That README introduction change is preserved, and application source still matches the captured `b01bde6` baseline.
+Generated tracked screenshots were restored after preserving run evidence.
+Owned verification processes, loopback listeners, and mounts were checked and settled.
+No installed app, external configuration, real Bear data, or login registration was changed; no publication or Git mutation was performed by this validation run.
+Minimum macOS, physical input, actual login, native Linux/Windows, second-device LAN, prolonged load, full-size disk/memory pressure, power loss, installer-wrapper execution, arbitrary delayed Launch Services behavior, and live GitHub updater delivery remain unverified.

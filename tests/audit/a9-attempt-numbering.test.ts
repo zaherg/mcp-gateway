@@ -46,7 +46,11 @@ test("A9: two failed Quits followed by update allocate exactly 1, 2, 3", async (
   expect(calls()).toBe(2);
   const attempt = quit.reserveUpdate(candidate());
   expect(attempt?.id).toBe(3);
-  expect(quit.status()).toEqual({ attempt: 3, phase: "idle", error: null });
+  expect(quit.status()).toEqual({
+    attempt: 3,
+    phase: "failed",
+    error: "Quit cleanup failed. The app has not exited. Retry Quit.",
+  });
 });
 
 test("A9: update, failed ordinary Quit, and another update stay monotonic", async () => {
