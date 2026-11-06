@@ -1,4 +1,3 @@
-import type { ConfigFormat } from "../src/shared/config-document";
 import type { DesktopPlatform } from "../src/shared/rpc";
 
 export function nativeReport(value: unknown): Record<string, unknown> {
@@ -11,13 +10,10 @@ export function validateNativeReport(
   report: Record<string, unknown>,
   options: {
     platform: DesktopPlatform;
-    format: ConfigFormat;
-    fresh: boolean;
-    signal: boolean;
     closed: boolean;
   },
 ): void {
-  const { platform, format, fresh, signal, closed } = options;
+  const { platform, closed } = options;
   const linux = platform === "linux";
   // Older signed macOS payloads retain their existing report interpretation.
   const legacy = !linux && report.platform === undefined;
@@ -30,9 +26,10 @@ export function validateNativeReport(
   )
     throw new Error("Native renderer scroll/canvas policy verification failed.");
   if (
-    report.configFormat !== format ||
+    report.configFormat !== "json" ||
     report.configError !== null ||
-    (fresh && (report.running !== false || report.serverCount !== 0))
+    report.running !== false ||
+    report.serverCount !== 0
   )
     throw new Error("Native configuration/default-state verification failed.");
   if (
@@ -61,11 +58,9 @@ export function validateNativeReport(
   if (
     closed &&
     (report.running !== false ||
-      (signal
-        ? report.quitMethod !== "SIGTERM"
-        : linux
-          ? report.quitRequested !== true || report.quitMethod !== "renderer"
-          : report.shortcutHandled !== true))
+      (linux
+        ? report.quitRequested !== true || report.quitMethod !== "renderer"
+        : report.shortcutHandled !== true))
   )
     throw new Error("Native graceful shutdown verification failed.");
 }

@@ -34,23 +34,23 @@ Without a `MCP_GATEWAY_BUILD_ROOT` override, the macOS development app is `build
 To build and launch the development app instead, run `bun run dev`.
 Running the app can read or change its configuration; see [Configuration](README.md#configuration).
 
-The build prepares the pinned toolchain automatically and writes generated files under `.cache/`, `.hutch-home/`, `dist/`, `assets/`, and the selected build directory.
+The build prepares the toolchain automatically and writes generated files under `.cache/`, `.hutch-home/`, `dist/`, `assets/`, and the selected build directory.
 Use a separate checkout for concurrent builds because these intermediate paths are shared.
+
+The current `hutch.config.ts` requests Electrobun 2.0.6, while `scripts/toolchain.ts` supplies the 2.0.5 macOS devkit.
+On macOS arm64, this mismatch stops the build with `ElectrobunDevkitVersionMismatch`.
 
 ### Tests
 
-Run the checks appropriate to the build:
+Run the available checks:
 
 ```sh
 bun run typecheck
 bun run lint
-bun run test:unit
-bun run test:components
-bun run test:e2e
 ```
 
-The browser tests require Google Chrome.
-See [tests/README.md](tests/README.md) for test prerequisites, native checks, and signed update acceptance.
+The test suites and packaged-acceptance fixtures are absent from this checkout.
+The test commands in `package.json` cannot run the deleted suites.
 
 ## Signed and notarized release
 
@@ -99,11 +99,13 @@ Use a separate checkout for concurrent builds because intermediate files are sha
 The signed installer wrapper is `build/v<version>/stable-macos-arm64/MCP Gateway.app`.
 The artifacts directory contains:
 
-- `macos-arm64-MCPGateway.dmg`
-- `stable-macos-arm64-update.json`
-- `stable-macos-arm64-MCPGateway.app.tar.zst`
+- `macos-arm64-MCPGateway.dmg` is the installer for manual installation.
+- `stable-macos-arm64-update.json` is the updater manifest.
+- `stable-macos-arm64-MCPGateway.app.tar.zst` is the updater payload.
 
-Keep all three assets together for an updater-capable release, and ensure their version matches `package.json`.
+After the verification and acceptance checks pass, upload all three files to the same GitHub release without renaming them.
+Their version must match `package.json`.
+The existing `artifacts/v0.3.1/` files predate the current dependency changes and do not verify the current checkout.
 If the build fails, inspect the command output and use a new candidate directory for the next attempt.
 The Electrobun signing step also writes a redacted log to `.cache/build-stable.log`; failures before that step may not produce a current log.
 Do not remove retained artifacts to make a build proceed.
@@ -119,15 +121,17 @@ bun scripts/verify-release.ts
 For a candidate built with output overrides, pass the same `MCP_GATEWAY_BUILD_ROOT` and `MCP_GATEWAY_ARTIFACTS_DIR` values to the verifier.
 The verifier checks signatures, notarization tickets, Gatekeeper assessment, version and payload consistency, and the DMG contents.
 By default, it writes `release-verification.json` in the artifacts directory and extracts a separate signed payload under `.cache/signed-payload-*`.
+The verification record is local evidence and is not a required release asset.
 Set `MCP_GATEWAY_VERIFICATION_OUTPUT` to choose another record location.
 Check the command result and the record before using the candidate.
 
 Verification alone does not establish updater or packaged replacement acceptance.
 The recorded `0.3.1` packaged acceptance has not passed: the signed late-start case failed twice, and the original HTTP 503 fixture had unresolved failures.
-See the [updater validation results](tests/README.md#updater-documentation-validation) and [packaged acceptance guide](tests/native/update-acceptance/README.md) before publishing an updater-capable release.
+The packaged-acceptance fixtures and their guides are absent from this checkout, so those checks cannot currently be rerun using the deleted suite.
 
 The updater feed is fixed to `https://github.com/zaherg/mcp-gateway/releases/latest/download` in `src/main/updater/constants.ts`.
 Update candidates must match the installed app's identifier and Apple Developer team, so a build signed by a different team cannot update the official build.
+Version `0.3.0` has no updater and requires a manual upgrade using the DMG.
 
 ### Install or distribute
 
