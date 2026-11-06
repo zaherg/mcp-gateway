@@ -1453,7 +1453,7 @@ export class TransactionLease {
 
   /**
    * Remove an uncommitted operation/prepared/preflight journal only after every
-   * tracked writer and cleanup task settles. Committed embargos are refused.
+   * tracked writer and cleanup task settles. Committed embargoes are refused.
    */
   async releaseUncommitted(): Promise<void> {
     try {

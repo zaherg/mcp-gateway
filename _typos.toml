@@ -1,0 +1,28 @@
+[files]
+ignore-hidden = false
+ignore-global = false
+ignore-parent = false
+extend-exclude = [
+  ".agents/**",
+  ".cache/**",
+  ".codegraph/**",
+  ".cottontail-tmp/**",
+  ".env",
+  ".env.*",
+  ".git/**",
+  ".hutch/**",
+  ".hutch-home/**",
+  ".pi/**",
+  ".runtime/**",
+  ".serena/**",
+  "artifacts/**",
+  "assets/**",
+  "build/**",
+  "coverage/**",
+  "dist/**",
+  "node_modules/**",
+  "playwright-report/**",
+  "release/**",
+  "test-results/**",
+  "bun.lock",
+]
