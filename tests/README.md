@@ -46,7 +46,7 @@ Pruning reduces repeated cross-layer combinations; it does not establish that br
 ## Updater documentation validation
 
 The 2026-11-05 run validates Electrobun `2.0.5`, not the newer `2.0.6` recipe/streaming contract.
-Results and limits from that run are in [the validation record](UPDATER-VALIDATION.md), with the full matrix under `.cache/updater-documentation-validation/20261105T052930Z/`.
+Results and limits from that run are summarized below, with the full matrix under `.cache/updater-documentation-validation/20261105T052930Z/`.
 The audit checkpoints below are historical snapshots, not the current source's acceptance status.
 
 `tests/native/updater-sdk-contract.native.ts` maintains 20 unchanged-SDK cases for the application's full-download path, metadata/version refusal, native veto, cancellation, and failures.
@@ -86,7 +86,7 @@ Earlier signed `0.3.1` evidence below predates this remediation and does not cer
 
 The later direct review reopened source closure for native signal provenance and executable access.
 The corrections have local verification and focused self-review only; no Kimi, subagents, workflows, or new independent review were used.
-Evidence for these corrections is under `.cache/review-boundary-fixes/20261104T184453Z/`; the later [validation record](UPDATER-VALIDATION.md) reports the unresolved packaged acceptance failures.
+Evidence for these corrections is under `.cache/review-boundary-fixes/20261104T184453Z/`; the later [updater documentation validation](#updater-documentation-validation) reports the unresolved packaged acceptance failures.
 
 Two explicit macOS suites require project-local inputs and fail if prerequisites are missing:
 
@@ -250,7 +250,7 @@ The explicit command fails rather than silently skipping missing prerequisites.
 Its `.native.ts` suffix keeps it outside the default Bun test discovery and CI unit command.
 It prints the retained evidence path and removes owned temporary resources only after confirmed process cleanup.
 This uses small 64 KiB limits and synthetic HTTP traffic, not physical disk exhaustion, live GitHub delivery or application replacement.
-Independent source closure and regenerated signed packaged acceptance passed for the final local `0.3.1` build.
+Independent source closure and signed packaged acceptance passed for an earlier local `0.3.1` build; the later required signed `late-start` test failed twice, so overall packaged acceptance has not passed.
 The separate native failure matrix exercises the final bundled helper with signed small applications, including literal ENOSPC on an isolated 8 MiB image and verified manual restoration.
 Those helper cases do not establish full-size physical-host exhaustion or every product recovery UI path.
 
@@ -268,12 +268,12 @@ Current evidence is under `.cache/auto-update-0.3.1/final-acceptance/`; the earl
 - Lifecycle cancellation makes Stop and Quit cancel pending hostname validation; queued refresh, watcher and service work cannot persist or reopen after cancellation.
 - Session-protocol POSTs return 400 while the endpoint remains mounted and usable; GET/DELETE are refused with 405.
 - The global 16-resource cap includes retained modern children across endpoints.
-- The shared 16-call backend-work bound spans endpoints, retains work until a reply, protocol cancellation or confirmed cleanup, and releases only the affected call.
+- The shared 16-call backend-work bound spans endpoints, retains work until a matching reply or confirmed cleanup, and releases only the affected call.
 - Duplicate in-flight IDs are refused before SDK dispatch; late replies cannot release work that reused an ID.
 - A completed modern response releases its protocol work reservation on the terminal reply; its backend-resource lease remains until that child cleanup is confirmed.
 - Capacity refusals settle request state, and upstream continuation and credential isolation remain covered.
 
 Core, main, and dedicated regression suites are included in the default unit command.
 Audit reproductions and native helper acceptance retain the explicit commands above.
-The [audit remediation checkpoint](#current-audit-remediation) records A2-A6 and A12 source verification; the later [validation record](UPDATER-VALIDATION.md) reports the unresolved packaged acceptance failures.
+The [audit remediation checkpoint](#current-audit-remediation) records A2-A6 and A12 source verification; the later [updater documentation validation](#updater-documentation-validation) reports the unresolved packaged acceptance failures.
 The earlier signed acceptance and F1-F5 records remain historical.

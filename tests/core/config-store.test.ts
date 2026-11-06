@@ -15,6 +15,9 @@ import { MAX_CONFIG_BYTES, newConfigText } from "../../src/core/config";
 import { ConfigStore, revisionOf } from "../../src/core/config-store";
 import { testDirectory } from "./helpers";
 
+const lockMessage =
+  "Configuration is locked. If mcp.json.lock beside the configuration is stale, quit every app instance and confirm no writer is active before removing it and retrying.";
+
 describe("ConfigStore", () => {
   test("owner-only creation, SHA revisions, synced replacement and byte-preserved no-op", async () => {
     const directory = await testDirectory();
@@ -56,7 +59,14 @@ describe("ConfigStore", () => {
       await writeFile(`${path}.lock`, "", { mode: 0o600 });
       await expect(store.save(newConfigText(), initial.revision)).rejects.toMatchObject({
         code: "ConfigLocked",
+        message: lockMessage,
       });
+      await expect(new ConfigStore(path).initialize()).rejects.toMatchObject({
+        code: "ConfigLocked",
+        message: lockMessage,
+      });
+      expect(await store.read()).toEqual(initial);
+      expect(await readFile(`${path}.lock`, "utf8")).toBe("");
       expect(await readFile(path, "utf8")).toBe(initial.text);
       await rm(`${path}.lock`);
       const writes = await Promise.allSettled([
@@ -130,7 +140,13 @@ describe("ConfigStore format selection", () => {
       await writeFile(`${json}.lock`, "", { mode: 0o600 });
       await expect(store.save(`${text}\n`, initial.revision)).rejects.toMatchObject({
         code: "ConfigLocked",
+        message: lockMessage,
       });
+      await expect(new ConfigStore(jsonc).initialize()).rejects.toMatchObject({
+        code: "ConfigLocked",
+        message: lockMessage,
+      });
+      expect(await readFile(jsonc, "utf8")).toBe(text);
       await rm(`${json}.lock`);
       const saved = await store.save(`${text}\n`, initial.revision);
       await expect(store.save(text, initial.revision)).rejects.toMatchObject({

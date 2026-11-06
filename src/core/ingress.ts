@@ -14,7 +14,7 @@ import { ResourceAdmission } from "./resource-admission";
 
 export const MAX_BODY_BYTES = 4 * 1024 * 1024;
 export const MAX_CONCURRENT_REQUESTS = 32;
-export const MAX_SESSIONS = 16;
+export const MAX_BACKEND_RESOURCES = 16;
 export const REQUEST_DEADLINE_MS = 30_000;
 const MAX_CONNECTIONS = 64;
 export const MAX_REQUESTS_PER_MINUTE = 240;
@@ -31,8 +31,8 @@ export class GatewayIngress {
   private readonly endpoints = new Map<string, Endpoint>();
   private readonly backendErrors = new Map<string, VisibleError>();
   private readonly closingMounts = new Map<string, GatewayMount>();
-  private readonly admission = new ResourceAdmission(MAX_SESSIONS);
-  // One backend-work budget shared by every endpoint and session.
+  private readonly admission = new ResourceAdmission(MAX_BACKEND_RESOURCES);
+  // One backend-work budget shared by every endpoint.
   private readonly work = new BackendCalls(MAX_BACKEND_CALLS);
   private selected: InterfaceChoice;
   private active = 0;

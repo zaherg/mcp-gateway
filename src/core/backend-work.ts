@@ -2,9 +2,8 @@
 //
 // Separate from HTTP request admission and from backend resource ownership: a
 // stateless request's call continues after its response stream closes, so its
-// slot stays charged until the backend replies, the client sends the protocol
-// cancellation, or the owned request cleanup completes. Neither a disconnect
-// nor a cleanup deadline proves that work has ended.
+// slot stays charged until the backend replies or the owned request cleanup
+// completes. Neither a disconnect nor a cleanup deadline proves that work has ended.
 export const MAX_BACKEND_CALLS = 16;
 
 /** Opaque identity for one request's backend work. */

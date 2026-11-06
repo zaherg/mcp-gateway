@@ -54,6 +54,7 @@ It requires macOS arm64, Xcode command-line tools, the existing Developer ID sig
 Do not put credential values in source, command examples, or generated fixtures.
 
 Build and verify each private version inside its copied project.
+Each copy's `artifacts/` must be absent or empty before building.
 Explicit output overrides keep these artifacts inside the copy even if the caller has other build variables set:
 
 ```sh

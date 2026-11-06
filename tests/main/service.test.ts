@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { QuitCoordinator } from "../../src/main/lifecycle";
 import { MacLoginManager } from "../../src/main/login";
 import { AppService, type UpdateManager } from "../../src/main/service";
@@ -62,6 +62,34 @@ describe("native application boundary", () => {
       expect(login.calls).toBe(0);
       expect(context.controller.snapshot().running).toBe(false);
     } finally {
+      await context.cleanup();
+    }
+  });
+
+  test("locked configuration exposes safe recovery guidance and permits retry after removal", async () => {
+    const context = await setup();
+    const lock = `${context.path}.lock`;
+    try {
+      const app = new AppService(context.controller, fakeLogin().manager, () => {}, desktop);
+      const before = context.controller.snapshot();
+      const request = { text: `${before.configText}\n`, expectedRevision: before.revision };
+      await writeFile(lock, "", { mode: 0o600 });
+      const result = await app.handlers.saveConfig(request);
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          code: "ConfigLocked",
+          message:
+            "Configuration is locked. If mcp.json.lock beside the configuration is stale, quit every app instance and confirm no writer is active before removing it and retrying.",
+        },
+      });
+      expect(await readFile(lock, "utf8")).toBe("");
+      expect(await readFile(context.path, "utf8")).toBe(before.configText);
+      await rm(lock);
+      expect((await app.handlers.saveConfig(request)).ok).toBe(true);
+      expect(await readFile(context.path, "utf8")).toBe(request.text);
+    } finally {
+      await rm(lock, { force: true });
       await context.cleanup();
     }
   });

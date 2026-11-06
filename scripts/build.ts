@@ -1,6 +1,7 @@
 import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { buildPlan } from "./build-platform";
+import { assertEmptyReleaseArtifacts } from "./release-output";
 import { command, prepareToolchain, toolchainEnvironment } from "./toolchain";
 
 const root = resolve(import.meta.dir, "..");
@@ -10,6 +11,7 @@ const environment = {
   CLANG_MODULE_CACHE_PATH: resolve(root, ".cache/clang"),
   SWIFT_MODULECACHE_PATH: resolve(root, ".cache/swift"),
 };
+if (plan.signed) await assertEmptyReleaseArtifacts(root, environment);
 await prepareToolchain();
 if (plan.macNative) {
   await mkdir(resolve(root, ".cache/native"), { recursive: true });
@@ -92,6 +94,7 @@ async function signedBuild() {
     ELECTROBUN_APPLEIDPASS: process.env.APPLE_APP_PASSWORD,
     ELECTROBUN_TEAMID: process.env.APPLE_TEAM_ID,
   };
+  await assertEmptyReleaseArtifacts(root, environment);
   const child = Bun.spawn(
     ["node", "node_modules/electrobun/bin/electrobun.cjs", "build", "--env=stable"],
     {

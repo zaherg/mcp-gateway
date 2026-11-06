@@ -1,5 +1,5 @@
-// Shared by every endpoint and both protocol generations. A reservation lasts
-// until its process group or upstream transport has finished cleanup.
+// Shared by every endpoint. A reservation lasts until its process group or
+// upstream transport has finished cleanup.
 export class ResourceAdmission {
   private used = 0;
 

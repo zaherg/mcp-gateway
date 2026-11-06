@@ -18,7 +18,7 @@ The combined-source review run passed 591 unit/integration tests and all 32 expl
 No production correction was needed; the suspected dispatch-window finding was withdrawn after pinned-source tracing and runtime probes.
 That combined review is historical: a later direct review found native-signal and executable-access gaps.
 Their direct corrections are documented in [the boundary-correction checkpoint](../README.md#direct-review-boundary-corrections), with evidence under `.cache/review-boundary-fixes/20261104T184453Z/`.
-The later [updater validation record](../UPDATER-VALIDATION.md) reports unresolved packaged acceptance failures.
+The later [updater documentation validation](../README.md#updater-documentation-validation) reports unresolved packaged acceptance failures.
 The A8 fixture here tests JavaScript wiring, not OS signal delivery.
 Actual dirty/blocked-window signals and signed permission mutations are separate explicit suites documented in `tests/README.md`.
 

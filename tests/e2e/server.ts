@@ -41,6 +41,7 @@ const context = await setup(
   scenario === "jsonc" ? jsoncFixture(initialConfig) : undefined,
 );
 await chmod(context.directory, 0o700);
+const lockPath = `${context.path.endsWith(".jsonc") ? context.path.slice(0, -1) : context.path}.lock`;
 const pidFile = resolve(context.directory, "pids");
 const bundle = resolve(context.directory, "bundle");
 const secret = randomBytes(32).toString("hex");
@@ -129,7 +130,11 @@ try {
               copied,
               diskText: await readFile(context.path, "utf8"),
             });
-          if (params === "quit-hold") {
+          if (params === "config-lock") {
+            await writeFile(lockPath, "", { mode: 0o600, flag: "wx" });
+          } else if (params === "config-unlock") {
+            await rm(lockPath);
+          } else if (params === "quit-hold") {
             quitGate = new Promise((resolve) => {
               releaseQuit = resolve;
             });

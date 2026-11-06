@@ -3,7 +3,7 @@ import { ok } from "node:assert/strict";
 import { createServer, type IncomingHttpHeaders } from "node:http";
 import type { Socket } from "node:net";
 import { join } from "node:path";
-import { MAX_SESSIONS } from "../../src/core/ingress";
+import { MAX_BACKEND_RESOURCES } from "../../src/core/ingress";
 import { alive, configFor, eventually, mcpCall, pids, setup, stdio } from "../core/helpers";
 import { httpFixture } from "../fixtures/http-mcp";
 
@@ -198,7 +198,7 @@ test.each(["disconnect", "shutdown"] as const)(
   10_000,
 );
 
-test(`regression: global ${MAX_SESSIONS}-resource cap includes retained modern children across two endpoints`, async () => {
+test(`regression: global ${MAX_BACKEND_RESOURCES}-resource cap includes retained modern children across two endpoints`, async () => {
   const context = await setup(await configFor({}));
   const pidFile = join(context.directory, "pids");
   try {
@@ -212,7 +212,7 @@ test(`regression: global ${MAX_SESSIONS}-resource cap includes retained modern c
     );
     const { address } = await context.controller.start();
     const handles: Array<{ endpoint: string; state: string }> = [];
-    for (let i = 0; i < MAX_SESSIONS; i++) {
+    for (let i = 0; i < MAX_BACKEND_RESOURCES; i++) {
       const endpoint = i % 2 ? "other" : "echo";
       const result = await modern(address as string, endpoint);
       ok(result.message);
@@ -220,9 +220,11 @@ test(`regression: global ${MAX_SESSIONS}-resource cap includes retained modern c
       expect(result.message.result.requestState).toMatch(/^sgw:/);
       handles.push({ endpoint, state: result.message.result.requestState });
     }
-    await eventually(async () => (await pids(pidFile)).filter(alive).length === MAX_SESSIONS);
+    await eventually(
+      async () => (await pids(pidFile)).filter(alive).length === MAX_BACKEND_RESOURCES,
+    );
     expect((await modern(address as string, "other")).status).toBe(429);
-    expect((await pids(pidFile)).filter(alive).length).toBeLessThanOrEqual(MAX_SESSIONS);
+    expect((await pids(pidFile)).filter(alive).length).toBeLessThanOrEqual(MAX_BACKEND_RESOURCES);
     const retainedPid = (await pids(pidFile))[0];
     const resumed = await modern(address as string, handles[0].endpoint, handles[0].state);
     ok(resumed.message);
@@ -261,13 +263,13 @@ test("regression: completed modern requests release resources without continuati
       context.controller.snapshot().revision,
     );
     const { address } = await context.controller.start();
-    for (let i = 0; i < MAX_SESSIONS + 4; i++) {
+    for (let i = 0; i < MAX_BACKEND_RESOURCES + 4; i++) {
       const result = await modern(address as string, "echo", undefined, "echo");
       ok(result.message);
       expect(result.status).toBe(200);
       expect(result.message.error).toBeUndefined();
       expect(JSON.parse(result.message.result.content[0].text).value).toBe("resumed");
-      expect((await pids(pidFile)).filter(alive).length).toBeLessThanOrEqual(MAX_SESSIONS);
+      expect((await pids(pidFile)).filter(alive).length).toBeLessThanOrEqual(MAX_BACKEND_RESOURCES);
     }
     await eventually(async () => (await pids(pidFile)).every((pid) => !alive(pid)));
     expect(context.controller.snapshot().servers[0].status).toBe("mounted");
@@ -354,7 +356,7 @@ test.each(["json", "sse"])(
       ok(local.message);
       expect(local.message.result.requestState).toMatch(/^sgw:/);
       let state = "";
-      for (let i = 1; i < MAX_SESSIONS; i++) {
+      for (let i = 1; i < MAX_BACKEND_RESOURCES; i++) {
         const result = await modern(address as string, "remote");
         ok(result.message);
         expect(result.status).toBe(200);
@@ -418,7 +420,7 @@ test("regression: a completed modern response keeps its slot until child cleanup
     );
     const { address } = await context.controller.start();
     // Retained children fill every slot but one.
-    for (let i = 1; i < MAX_SESSIONS; i++)
+    for (let i = 1; i < MAX_BACKEND_RESOURCES; i++)
       expect((await modern(address as string, "echo")).message?.result.requestState).toMatch(
         /^sgw:/,
       );
@@ -431,13 +433,13 @@ test("regression: a completed modern response keeps its slot until child cleanup
     const [stoppingPid] = await pids(signalFile);
     expect(alive(stoppingPid)).toBe(true);
     expect((await modern(address as string, "modern", undefined, "echo")).status).toBe(429);
-    expect((await pids(pidFile)).filter(alive)).toHaveLength(MAX_SESSIONS);
+    expect((await pids(pidFile)).filter(alive)).toHaveLength(MAX_BACKEND_RESOURCES);
     await Bun.write(gate, "release");
     await eventually(() => !alive(stoppingPid));
     await eventually(
       async () => (await modern(address as string, "modern", undefined, "echo")).status === 200,
     );
-    expect((await pids(pidFile)).filter(alive).length).toBeLessThanOrEqual(MAX_SESSIONS);
+    expect((await pids(pidFile)).filter(alive).length).toBeLessThanOrEqual(MAX_BACKEND_RESOURCES);
     expect(context.controller.snapshot().servers.every((server) => server.error === null)).toBe(
       true,
     );

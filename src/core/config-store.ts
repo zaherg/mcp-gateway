@@ -146,7 +146,10 @@ export class ConfigStore {
       );
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "EEXIST")
-        throw failure("ConfigLocked", "Another writer holds the configuration lock.");
+        throw failure(
+          "ConfigLocked",
+          "Configuration is locked. If mcp.json.lock beside the configuration is stale, quit every app instance and confirm no writer is active before removing it and retrying.",
+        );
       throw error;
     }
     try {

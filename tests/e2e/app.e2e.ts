@@ -72,6 +72,34 @@ async function save(page: import("@playwright/test").Page) {
 }
 
 for (const width of [1280, 390]) {
+  test(`locked configuration guidance preserves the draft at ${width}px`, async ({
+    page,
+    bridge,
+  }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(`${bridge.url}/#${bridge.secret}`);
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    const toggle = page.getByRole("switch", { name: "Start gateway when the app opens" });
+    await expect(toggle).toBeEnabled();
+    const before = (await bridge.control<{ diskText: string }>("inspect")).diskText;
+    await bridge.control("config-lock");
+    await toggle.check();
+    await page.getByRole("button", { name: "Save changes", exact: true }).click();
+    const alert = page.getByRole("alert").filter({ hasText: "ConfigLocked" });
+    await expect(alert).toContainText(
+      "quit every app instance and confirm no writer is active before removing it and retrying",
+    );
+    await expect(toggle).toBeChecked();
+    expect((await bridge.control<{ diskText: string }>("inspect")).diskText).toBe(before);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await alert.scrollIntoViewIfNeeded();
+    await bridge.control("config-unlock");
+    await save(page);
+    expect((await bridge.control<{ diskText: string }>("inspect")).diskText).not.toBe(before);
+  });
+
   test(`interactive native Quit intent protects an open dialog at ${width}px`, async ({
     page,
     bridge,

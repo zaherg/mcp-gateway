@@ -24,9 +24,11 @@ Logs stay in memory until you quit. **Launch app at login** is off by default.
 
 ## Automatic updates
 
-Automatic checks and downloads are enabled by default for the signed macOS arm64 stable build. Updates come from `https://github.com/zaherg/mcp-gateway/releases/latest/download`.
+Automatic checks and downloads are enabled by default in signed macOS arm64 builds with updater support.
+Updates come from `https://github.com/zaherg/mcp-gateway/releases/latest/download`.
 Check manually in **Settings → Updates**. Installing requires **Restart to Update**. After confirmation, that stops the gateway and discards unsaved configuration.
-Automatic updates are not yet available: packaged acceptance for `0.3.1` is incomplete, and no updater-capable release has been published. Because `0.3.0` has no updater, install the first updater-capable release manually. See [validation results](tests/UPDATER-VALIDATION.md).
+No updater-capable release has been published yet, and packaged acceptance for `0.3.1` has not passed.
+Because `0.3.0` has no updater, install the first updater-capable release manually.
 
 ## Security
 
@@ -35,12 +37,17 @@ Automatic updates are not yet available: packaged acceptance for `0.3.1` is inco
 - Upstream credentials are configured separately, and client tokens are not forwarded.
 - `mcp.json` can start processes, so protect it. Logs and copied client configurations can expose tokens and note data.
 
-The gateway allows 32 concurrent requests and 240 admissions per minute. Request bodies and backend output are capped at 4 MiB, and requests time out after 30 seconds.
+The gateway allows 32 concurrent HTTP requests and 240 admissions per minute.
+At most 16 backend calls can be in flight across all servers; extra calls receive a capacity error.
+A slot is released on a matching reply or confirmed backend cleanup; cancelling a request does not necessarily release it immediately.
+Request bodies, backend stdout lines, and backend HTTP response bodies are capped at 4 MiB; successful SSE streams have a 4 MiB per-event limit instead.
+Requests time out after 30 seconds.
 
 ## Configuration
 
 Use one `mcp.json` or `mcp.jsonc`. On macOS it belongs in `~/Library/Application Support/MCP Gateway/`; on Linux, use `$XDG_CONFIG_HOME/MCP Gateway/`, or `~/.config/MCP Gateway/` when the variable is unset. An absolute `MCP_GATEWAY_DATA_DIR` overrides either location.
 A `.json` file must be strict JSON, while `.jsonc` allows comments and trailing commas. Having both files present is an error. Quit the app before renaming the file, then reopen it. Files are owner-only, and symlinks are refused.
+If a crash leaves `mcp.json.lock` beside the configuration, quit every app instance and confirm no writer is active before removing the lock and retrying.
 
 ```json
 {
@@ -57,8 +64,9 @@ A `.json` file must be strict JSON, while `.jsonc` allows comments and trailing 
 ```
 
 `${NAME}` reads the app environment, not your shell startup files. Missing variables are errors.
-Stdio entries accept `command`, `args`, `env`, and `cwd`; HTTP entries accept `url` and `headers`.
-Server names contain 1 to 64 ASCII letters, digits, `_`, or `-`. Tokens require 32 to 512 printable characters, and configuration is limited to 1 MiB and 64 servers.
+Stdio entries accept `command`, `args`, `env`, `cwd`, and `disabled`; HTTP entries accept `url`, `headers`, and `disabled`.
+Server names contain 1 to 64 ASCII letters, digits, `_`, or `-` and start with a letter or digit.
+Tokens require 32 to 512 non-space printable ASCII characters; configuration is limited to 1 MiB and 64 servers.
 
 ## Build from source
 
@@ -71,4 +79,21 @@ bun run dev    # Build and launch
 ```
 
 `bun run release` signs and notarizes the app. It requires exactly one Developer ID Application identity in Keychain, plus `APPLE_ID`, `APPLE_TEAM_ID`, and `APPLE_APP_PASSWORD` as environment variables or in `.env`.
+It writes to `build/` and `artifacts/` by default.
+The artifact directory must be absent or empty and cannot be a symlink.
+The check is not a lock, so concurrent builds must use separate directories.
+From the repository root, use a fresh project-local folder for each candidate to avoid replacing retained signed files or verifying stale assets:
+
+```sh
+mkdir -p .cache/release-candidate &&
+RC="$(mktemp -d ".cache/release-candidate/$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX")" &&
+MCP_GATEWAY_BUILD_ROOT="$RC/build" MCP_GATEWAY_ARTIFACTS_DIR="$RC/assets" bun run release &&
+MCP_GATEWAY_ARTIFACTS_DIR="$RC/assets" MCP_GATEWAY_VERIFICATION_OUTPUT="$RC/release-verification.json" \
+  bun scripts/verify-release.ts "$RC/build/stable-macos-arm64/MCP Gateway.app"
+```
+
+After verification passes, an updater-capable release must publish `macos-arm64-MCPGateway.dmg`, `stable-macos-arm64-update.json`, and `stable-macos-arm64-MCPGateway.app.tar.zst`, all matching the version in `package.json`.
+
 `bun run build:linux` and `bun run build:windows` produce experimental unsigned packages and must run on their target platform. Linux builds require GTK3, WebKitGTK 4.1, Ayatana AppIndicator, librsvg, and X11/XWayland. Windows builds require WebView2.
+
+Run `bun run test:unit`, `bun run test:components`, and `bun run test:e2e`; see [tests/README.md](tests/README.md) for the opt-in native and packaged suites.
