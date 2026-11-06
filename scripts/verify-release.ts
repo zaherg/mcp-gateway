@@ -12,13 +12,18 @@ import {
 import { readBuildIdentityResource, runCommand } from "../src/main/updater/verify";
 import { withDmgMount } from "./release-dmg";
 import { compareBundleInventories, inventoryBundle, inventoryDigest } from "./release-inventory";
+import { releaseOutputEnvironment } from "./release-output";
 
 const root = resolve(import.meta.dir, "..");
-const artifacts = resolve(process.env.MCP_GATEWAY_ARTIFACTS_DIR ?? join(root, "artifacts"));
+const environment = releaseOutputEnvironment(packageInfo.version, process.env);
+const artifacts = resolve(root, environment.MCP_GATEWAY_ARTIFACTS_DIR);
 const verificationOutput = resolve(
   process.env.MCP_GATEWAY_VERIFICATION_OUTPUT ?? join(artifacts, "release-verification.json"),
 );
-const wrapper = resolve(process.argv[2] ?? join(root, "build/stable-macos-arm64/MCP Gateway.app"));
+const wrapper = resolve(
+  process.argv[2] ??
+    join(root, environment.MCP_GATEWAY_BUILD_ROOT, "stable-macos-arm64/MCP Gateway.app"),
+);
 const DMG_FILE = "macos-arm64-MCPGateway.dmg";
 const MANIFEST_FILE = "stable-macos-arm64-update.json";
 const ARCHIVE_FILE = "stable-macos-arm64-MCPGateway.app.tar.zst";

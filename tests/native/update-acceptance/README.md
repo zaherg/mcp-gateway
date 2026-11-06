@@ -63,7 +63,7 @@ for variant in a b; do
     cd "$MCP_GATEWAY_FIXTURE_BUILD_ROOT/$variant" || exit 1
     MCP_GATEWAY_BUILD_ROOT=build MCP_GATEWAY_ARTIFACTS_DIR=artifacts \
       bun run release &&
-    MCP_GATEWAY_ARTIFACTS_DIR=artifacts \
+    MCP_GATEWAY_BUILD_ROOT=build MCP_GATEWAY_ARTIFACTS_DIR=artifacts \
     MCP_GATEWAY_VERIFICATION_OUTPUT=artifacts/release-verification.json \
       bun scripts/verify-release.ts
   ) || exit 1

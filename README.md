@@ -79,18 +79,17 @@ bun run dev    # Build and launch
 ```
 
 `bun run release` signs and notarizes the app. It requires exactly one Developer ID Application identity in Keychain, plus `APPLE_ID`, `APPLE_TEAM_ID`, and `APPLE_APP_PASSWORD` as environment variables or in `.env`.
-It writes to `build/` and `artifacts/` by default.
+By default, it writes to `build/v<version>/` and `artifacts/v<version>/`, using the version from `package.json`.
 The artifact directory must be absent or empty and cannot be a symlink.
 The check is not a lock, so concurrent builds must use separate directories.
-From the repository root, use a fresh project-local folder for each candidate to avoid replacing retained signed files or verifying stale assets:
+Build and verify the default release from the repository root:
 
 ```sh
-mkdir -p .cache/release-candidate &&
-RC="$(mktemp -d ".cache/release-candidate/$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX")" &&
-MCP_GATEWAY_BUILD_ROOT="$RC/build" MCP_GATEWAY_ARTIFACTS_DIR="$RC/assets" bun run release &&
-MCP_GATEWAY_ARTIFACTS_DIR="$RC/assets" MCP_GATEWAY_VERIFICATION_OUTPUT="$RC/release-verification.json" \
-  bun scripts/verify-release.ts "$RC/build/stable-macos-arm64/MCP Gateway.app"
+bun run release
+bun scripts/verify-release.ts
 ```
+
+To build another candidate of the same version without replacing existing files, set `MCP_GATEWAY_BUILD_ROOT` and `MCP_GATEWAY_ARTIFACTS_DIR` to fresh relative paths for both commands.
 
 After verification passes, an updater-capable release must publish `macos-arm64-MCPGateway.dmg`, `stable-macos-arm64-update.json`, and `stable-macos-arm64-MCPGateway.app.tar.zst`, all matching the version in `package.json`.
 

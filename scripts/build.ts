@@ -1,13 +1,16 @@
 import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import packageInfo from "../package.json";
 import { buildPlan } from "./build-platform";
-import { assertEmptyReleaseArtifacts } from "./release-output";
+import { assertEmptyReleaseArtifacts, releaseOutputEnvironment } from "./release-output";
 import { command, prepareToolchain, toolchainEnvironment } from "./toolchain";
 
 const root = resolve(import.meta.dir, "..");
 const plan = buildPlan(process.argv[2]);
 const environment = {
-  ...toolchainEnvironment,
+  ...(plan.signed
+    ? releaseOutputEnvironment(packageInfo.version, toolchainEnvironment)
+    : toolchainEnvironment),
   CLANG_MODULE_CACHE_PATH: resolve(root, ".cache/clang"),
   SWIFT_MODULECACHE_PATH: resolve(root, ".cache/swift"),
 };

@@ -1,7 +1,11 @@
 import { expect, test } from "bun:test";
 import { mkdir, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { assertEmptyReleaseArtifacts, releaseArtifactFolder } from "../../scripts/release-output";
+import {
+  assertEmptyReleaseArtifacts,
+  releaseArtifactFolder,
+  releaseOutputEnvironment,
+} from "../../scripts/release-output";
 import { testDirectory } from "../core/helpers";
 
 test("release output selection preserves default and configured folder names", () => {
@@ -9,6 +13,40 @@ test("release output selection preserves default and configured folder names", (
   expect(releaseArtifactFolder({ MCP_GATEWAY_ARTIFACTS_DIR: "candidate/assets" })).toBe(
     "candidate/assets",
   );
+});
+
+test("signed releases use versioned local defaults while preserving explicit overrides", () => {
+  expect(releaseOutputEnvironment("0.3.1", {})).toEqual({
+    MCP_GATEWAY_BUILD_ROOT: "build/v0.3.1",
+    MCP_GATEWAY_ARTIFACTS_DIR: "artifacts/v0.3.1",
+  });
+  expect(releaseOutputEnvironment("2.5.0", { PATH: "existing" })).toEqual({
+    PATH: "existing",
+    MCP_GATEWAY_BUILD_ROOT: "build/v2.5.0",
+    MCP_GATEWAY_ARTIFACTS_DIR: "artifacts/v2.5.0",
+  });
+  expect(
+    releaseOutputEnvironment("0.3.1", {
+      MCP_GATEWAY_BUILD_ROOT: "build/private",
+      MCP_GATEWAY_ARTIFACTS_DIR: "artifacts/private",
+    }),
+  ).toEqual({
+    MCP_GATEWAY_BUILD_ROOT: "build/private",
+    MCP_GATEWAY_ARTIFACTS_DIR: "artifacts/private",
+  });
+  expect(releaseOutputEnvironment("0.3.1", { MCP_GATEWAY_BUILD_ROOT: "build/private" })).toEqual({
+    MCP_GATEWAY_BUILD_ROOT: "build/private",
+    MCP_GATEWAY_ARTIFACTS_DIR: "artifacts/v0.3.1",
+  });
+  expect(
+    releaseOutputEnvironment("0.3.1", { MCP_GATEWAY_ARTIFACTS_DIR: "artifacts/private" }),
+  ).toEqual({
+    MCP_GATEWAY_BUILD_ROOT: "build/v0.3.1",
+    MCP_GATEWAY_ARTIFACTS_DIR: "artifacts/private",
+  });
+  for (const version of ["../outside", "0.3.1-beta", "01.2.3", ""]) {
+    expect(() => releaseOutputEnvironment(version, {})).toThrow("Invalid release version");
+  }
 });
 
 test("release guard accepts missing or empty destinations without modifying them", async () => {
@@ -46,6 +84,69 @@ test("release guard refuses populated default and custom destinations without ch
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("release guard preserves files in the versioned default directory", async () => {
+  const root = await testDirectory();
+  try {
+    const environment = releaseOutputEnvironment("0.3.1", {});
+    const folder = join(root, environment.MCP_GATEWAY_ARTIFACTS_DIR);
+    await mkdir(folder, { recursive: true });
+    await writeFile(join(folder, "retained"), "signed bytes");
+    await expect(assertEmptyReleaseArtifacts(root, environment)).rejects.toThrow("not empty");
+    expect(await readFile(join(folder, "retained"), "utf8")).toBe("signed bytes");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("signed build entrypoint selects versioned defaults before preparation", async () => {
+  const script = `
+    import { mock } from "bun:test";
+    import { resolve } from "node:path";
+    import packageInfo from "./package.json";
+    const output = await import("./scripts/release-output.ts");
+    mock.module(resolve("scripts/build-platform.ts"), () => ({
+      buildPlan: () => ({ signed: true, macNative: false, arguments: [] }),
+    }));
+    mock.module(resolve("scripts/toolchain.ts"), () => ({
+      toolchainEnvironment: {},
+      prepareToolchain: () => { throw new Error("PREPARATION_EXECUTED"); },
+      command: () => { throw new Error("COMMAND_EXECUTED"); },
+    }));
+    mock.module(resolve("scripts/release-output.ts"), () => ({
+      ...output,
+      assertEmptyReleaseArtifacts: async (_root, env) => {
+        if (env.MCP_GATEWAY_BUILD_ROOT !== "build/v" + packageInfo.version ||
+            env.MCP_GATEWAY_ARTIFACTS_DIR !== "artifacts/v" + packageInfo.version)
+          throw new Error("WRONG_OUTPUT_DEFAULTS");
+        throw new Error("VERSIONED_OUTPUT_CHECKED");
+      },
+    }));
+    process.argv[2] = "stable";
+    try {
+      await import("./scripts/build.ts");
+      throw new Error("BUILD_UNEXPECTEDLY_COMPLETED");
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== "VERSIONED_OUTPUT_CHECKED") throw error;
+      console.log("VERSIONED_OUTPUT_CHECKED");
+    }
+  `;
+  const child = Bun.spawn([process.execPath, "-e", script], {
+    cwd: resolve("."),
+    env: { PATH: process.env.PATH ?? "" },
+    stdout: "pipe",
+    stderr: "pipe",
+    signal: AbortSignal.timeout(10_000),
+  });
+  const [code, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+  expect(code).toBe(0);
+  expect(stdout.trim()).toBe("VERSIONED_OUTPUT_CHECKED");
+  expect(stderr).toBe("");
+}, 15_000);
 
 test("signed build entrypoint refuses populated output before toolchain preparation", async () => {
   const root = await testDirectory();

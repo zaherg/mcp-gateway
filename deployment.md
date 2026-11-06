@@ -83,20 +83,21 @@ Notarization requires network access to Apple.
 
 `bun run release` builds, signs, and notarizes the macOS release, using the version in `package.json`.
 It does not upload or publish the result.
-By default, it writes to `build/` and `artifacts/`.
+By default, it writes to `build/v<version>/` and `artifacts/v<version>/`.
 The artifact directory must be absent or empty and must not be a symlink.
 The artifact check is not a lock.
 
-Use fresh project-local build and artifact directories for every candidate to preserve existing signed files and avoid verifying stale assets:
+Build the default candidate from the repository root:
 
 ```sh
-mkdir -p .cache/release-candidate &&
-RC="$(mktemp -d ".cache/release-candidate/$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX")" &&
-MCP_GATEWAY_BUILD_ROOT="$RC/build" MCP_GATEWAY_ARTIFACTS_DIR="$RC/assets" bun run release
+bun run release
 ```
 
-The signed installer wrapper is `$RC/build/stable-macos-arm64/MCP Gateway.app`.
-The assets directory contains:
+For another candidate of the same version, set `MCP_GATEWAY_BUILD_ROOT` and `MCP_GATEWAY_ARTIFACTS_DIR` to fresh relative paths.
+Use a separate checkout for concurrent builds because intermediate files are shared.
+
+The signed installer wrapper is `build/v<version>/stable-macos-arm64/MCP Gateway.app`.
+The artifacts directory contains:
 
 - `macos-arm64-MCPGateway.dmg`
 - `stable-macos-arm64-update.json`
@@ -109,15 +110,16 @@ Do not remove retained artifacts to make a build proceed.
 
 ### Verify the candidate
 
-After a successful build, run the verifier in the same shell so that `RC` still identifies that candidate:
+After a successful default build, run the verifier:
 
 ```sh
-MCP_GATEWAY_ARTIFACTS_DIR="$RC/assets" MCP_GATEWAY_VERIFICATION_OUTPUT="$RC/release-verification.json" \
-  bun scripts/verify-release.ts "$RC/build/stable-macos-arm64/MCP Gateway.app"
+bun scripts/verify-release.ts
 ```
 
+For a candidate built with output overrides, pass the same `MCP_GATEWAY_BUILD_ROOT` and `MCP_GATEWAY_ARTIFACTS_DIR` values to the verifier.
 The verifier checks signatures, notarization tickets, Gatekeeper assessment, version and payload consistency, and the DMG contents.
-It writes a verification record outside the asset directory and extracts a separate signed payload under `.cache/signed-payload-*`.
+By default, it writes `release-verification.json` in the artifacts directory and extracts a separate signed payload under `.cache/signed-payload-*`.
+Set `MCP_GATEWAY_VERIFICATION_OUTPUT` to choose another record location.
 Check the command result and the record before using the candidate.
 
 Verification alone does not establish updater or packaged replacement acceptance.
@@ -129,10 +131,11 @@ Update candidates must match the installed app's identifier and Apple Developer 
 
 ### Install or distribute
 
-After the required verification and acceptance checks pass, open the DMG:
+After the required verification and acceptance checks pass, open the DMG for the selected version.
+For example, for version 0.3.1:
 
 ```sh
-open "$RC/assets/macos-arm64-MCPGateway.dmg"
+open artifacts/v0.3.1/macos-arm64-MCPGateway.dmg
 ```
 
 Copy the app from the mounted DMG to a writable location before opening it.
