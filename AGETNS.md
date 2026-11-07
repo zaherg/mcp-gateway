@@ -1,0 +1,2 @@
+- Dont write any tests for this project
+- Ignore github CI for this project.

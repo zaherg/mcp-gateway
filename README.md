@@ -95,4 +95,5 @@ After verification passes, an updater-capable release must publish `macos-arm64-
 
 `bun run build:linux` and `bun run build:windows` produce experimental unsigned packages and must run on their target platform. Linux builds require GTK3, WebKitGTK 4.1, Ayatana AppIndicator, librsvg, and X11/XWayland. Windows builds require WebView2.
 
-Run `bun run test:unit`, `bun run test:components`, and `bun run test:e2e`; see [tests/README.md](tests/README.md) for the opt-in native and packaged suites.
+Run `bun run typecheck` and `bun run lint` for source checks.
+See [deployment.md](deployment.md#tests) for native smoke checks and the current test coverage limits.

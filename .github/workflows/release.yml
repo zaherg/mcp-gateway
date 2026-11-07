@@ -1,0 +1,302 @@
+---
+name: macOS release
+
+"on":
+  push:
+    tags:
+      - "**"
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # Actionlint 1.7.12 does not support GitHub's newer "$/" syntax.
+  lint:
+    name: Lint
+    permissions:
+      contents: read
+    uses: ./.github/workflows/lint.yml
+
+  tests:
+    name: Tests
+    permissions:
+      contents: read
+    uses: ./.github/workflows/test.yml
+
+  build:
+    name: Sign and verify macOS arm64
+    needs: [lint, tests]
+    runs-on: macos-15
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs:
+      commit: ${{ steps.metadata.outputs.commit }}
+      artifact: ${{ steps.assets.outputs.artifact-id }}
+    env:
+      MCP_GATEWAY_BUILD_ROOT: build/ci-release
+      MCP_GATEWAY_ARTIFACTS_DIR: artifacts/ci-release
+      MCP_GATEWAY_VERIFICATION_OUTPUT: .cache/ci-release-verification.json
+
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38  # v6
+        with:
+          node-version: "26.13.0"
+          package-manager-cache: false
+
+      - name: Validate release tag and build host
+        id: metadata
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from "node:fs";
+          import { execFileSync } from "node:child_process";
+          const tag = process.env.RELEASE_TAG;
+          const { version } = JSON.parse(readFileSync("package.json", "utf8"));
+          const stableTag = /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+          if (!stableTag.test(tag ?? "") || tag.replace(/^v/, "") !== version) {
+            throw new Error(
+              "Tag must be X.Y.Z or vX.Y.Z and match package.json version.",
+            );
+          }
+          if (process.platform !== "darwin" || process.arch !== "arm64") {
+            throw new Error("The release requires a macOS arm64 runner.");
+          }
+          const commit = execFileSync("git", ["rev-parse", "HEAD"], {
+            encoding: "utf8",
+          }).trim();
+          appendFileSync(process.env.GITHUB_OUTPUT, `commit=${commit}\n`);
+          NODE
+
+      - name: Validate signing secret configuration
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: >-
+            ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          node --input-type=module <<'NODE'
+          const required = [
+            "MACOS_CERTIFICATE_P12_BASE64", "MACOS_CERTIFICATE_PASSWORD",
+            "APPLE_ID", "APPLE_TEAM_ID", "APPLE_APP_PASSWORD",
+          ];
+          for (const name of required) {
+            if (!process.env[name]) {
+              throw new Error(`Missing Actions secret: ${name}`);
+            }
+          }
+          NODE
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: "1.4.4"
+          no-cache: true
+
+      - name: Install dependencies and prepare SDK
+        run: |
+          bun install --frozen-lockfile --ignore-scripts --cache-dir .cache/bun
+          bun run prepare:sdk
+
+      - name: Check source
+        run: |
+          bun run typecheck
+          bun run lint
+
+      - name: Import Developer ID certificate into a temporary keychain
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: >-
+            ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          certificate="$RUNNER_TEMP/mcp-gateway-certificate.p12"
+          keychain="$RUNNER_TEMP/mcp-gateway-signing.keychain-db"
+          printf 'CI_SIGNING_KEYCHAIN=%s\n' "$keychain" >> "$GITHUB_ENV"
+          trap 'rm -f "$certificate"' EXIT
+          printf '%s' "$MACOS_CERTIFICATE_P12_BASE64" |
+            /usr/bin/base64 --decode > "$certificate"
+          keychain_password="$(openssl rand -hex 32)"
+          printf '::add-mask::%s\n' "$keychain_password"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$certificate" -P "$MACOS_CERTIFICATE_PASSWORD" \
+            -k "$keychain" -T /usr/bin/codesign >/dev/null
+          security set-key-partition-list -S apple-tool:,apple: \
+            -k "$keychain_password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain"
+
+      - name: Build, sign, notarize and verify
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          bun run release
+          bun scripts/verify-release.ts
+
+      - name: Verify updater integrity metadata and create checksums
+        run: |
+          node --input-type=module <<'NODE'
+          import { createHash } from "node:crypto";
+          import {
+            createReadStream, lstatSync, readFileSync,
+          } from "node:fs";
+          import { join } from "node:path";
+          import { pipeline } from "node:stream/promises";
+          import { createZstdDecompress } from "node:zlib";
+          import {
+            MAX_EXPANDED_ARCHIVE_BYTES,
+          } from "./src/main/updater/constants.ts";
+          const directory = process.env.MCP_GATEWAY_ARTIFACTS_DIR;
+          const read = (name) =>
+            JSON.parse(readFileSync(join(directory, name), "utf8"));
+          const legacy = read("stable-macos-arm64-update.json");
+          const integrity = read("stable-macos-arm64-update-v2.json");
+          const fields = [
+            "schemaVersion", "identifier", "channel", "version",
+            "hash", "platform", "arch",
+          ];
+          for (const key of fields) {
+            if (integrity[key] !== legacy[key]) {
+              throw new Error(`Update manifests disagree on ${key}.`);
+            }
+          }
+          const artifact = integrity.artifact;
+          if (
+            !artifact || artifact.file !== legacy.artifact.file ||
+            artifact.file !== "stable-macos-arm64-MCPGateway.app.tar.zst" ||
+            typeof artifact.tarSha256 !== "string" ||
+            !/^[a-f0-9]{64}$/.test(artifact.tarSha256) ||
+            !Number.isSafeInteger(artifact.tarSize) ||
+            artifact.tarSize <= 0 ||
+            artifact.tarSize > MAX_EXPANDED_ARCHIVE_BYTES
+          ) {
+            throw new Error("Invalid v2 archive integrity metadata.");
+          }
+          const archive = join(directory, artifact.file);
+          const info = lstatSync(archive);
+          if (!info.isFile() || info.isSymbolicLink()) {
+            throw new Error("Unsafe updater archive.");
+          }
+          const digest = createHash("sha256");
+          let bytes = 0;
+          await pipeline(
+            createReadStream(archive), createZstdDecompress(),
+            async (chunks) => {
+              for await (const chunk of chunks) {
+                bytes += chunk.length;
+                if (bytes > artifact.tarSize) {
+                  throw new Error("Update archive exceeds its declared size.");
+                }
+                digest.update(chunk);
+              }
+            },
+          );
+          if (
+            bytes !== artifact.tarSize ||
+            digest.digest("hex") !== artifact.tarSha256
+          ) {
+            throw new Error("Update archive integrity metadata mismatch.");
+          }
+          NODE
+          cd "$MCP_GATEWAY_ARTIFACTS_DIR"
+          files=(
+            macos-arm64-MCPGateway.dmg
+            stable-macos-arm64-update.json
+            stable-macos-arm64-update-v2.json
+            stable-macos-arm64-MCPGateway.app.tar.zst
+          )
+          for file in "${files[@]}"; do
+            if [[ ! -f "$file" || ! -s "$file" || -L "$file" ]]; then
+              printf 'Invalid release asset: %s\n' "$file" >&2
+              exit 1
+            fi
+          done
+          shasum -a 256 "${files[@]}" > SHA256SUMS
+
+      - name: Transfer only verified release assets
+        id: assets
+        # v7.0.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: macos-arm64-release-${{ github.run_attempt }}
+          path: |
+            artifacts/ci-release/macos-arm64-MCPGateway.dmg
+            artifacts/ci-release/stable-macos-arm64-update.json
+            artifacts/ci-release/stable-macos-arm64-update-v2.json
+            artifacts/ci-release/stable-macos-arm64-MCPGateway.app.tar.zst
+            artifacts/ci-release/SHA256SUMS
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+      - name: Remove signing keychain
+        if: always()
+        run: |
+          if [[ -n "${CI_SIGNING_KEYCHAIN:-}" &&
+                -f "$CI_SIGNING_KEYCHAIN" ]]; then
+            security delete-keychain "$CI_SIGNING_KEYCHAIN"
+          fi
+
+  publish:
+    name: Publish verified release
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download this run's verified assets
+        # v8.0.2
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact }}
+          path: release-assets
+          merge-multiple: true
+          digest-mismatch: error
+
+      - name: Verify transfer and publish without replacing an existing release
+        working-directory: release-assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          EXPECTED_COMMIT: ${{ needs.build.outputs.commit }}
+        run: |
+          set -euo pipefail
+          sha256sum --check --strict SHA256SUMS
+          remote_commit="$(
+            gh api "repos/$GH_REPO/commits/refs%2Ftags%2F$RELEASE_TAG" \
+              --jq .sha
+          )"
+          if [[ "$remote_commit" != "$EXPECTED_COMMIT" ]]; then
+            echo 'Release tag moved after the build.' >&2
+            exit 1
+          fi
+          gh release create "$RELEASE_TAG" \
+            macos-arm64-MCPGateway.dmg \
+            stable-macos-arm64-update.json \
+            stable-macos-arm64-update-v2.json \
+            stable-macos-arm64-MCPGateway.app.tar.zst \
+            SHA256SUMS \
+            --verify-tag --title "$RELEASE_TAG" --generate-notes

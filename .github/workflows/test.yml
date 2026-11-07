@@ -1,15 +1,19 @@
+---
 name: Tests
 
-on:
+"on":
   push:
+    branches:
+      - "**"
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: tests-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -47,23 +51,11 @@ jobs:
       - name: Prepare Electrobun SDK
         run: bun run prepare:sdk
 
-      - name: Check browser availability
-        run: test -x /opt/google/chrome/chrome
-
       - name: Typecheck
         run: bun run typecheck
 
       - name: Lint
         run: bun run lint
-
-      - name: E2E tests
-        run: bun run test:e2e
-
-      - name: Component tests
-        run: bun run test:components
-
-      - name: Unit and integration tests
-        run: bun run test:unit
 
       - name: Build native development app
         env:

@@ -1,9 +1,8 @@
 import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import packageInfo from "../package.json";
-import { buildPlan } from "./build-platform";
-import { assertEmptyReleaseArtifacts, releaseOutputEnvironment } from "./release-output";
-import { command, prepareToolchain, toolchainEnvironment } from "./toolchain";
+import { assertEmptyReleaseArtifacts, releaseOutputEnvironment } from "./build-config";
+import { buildPlan, command, prepareToolchain, toolchainEnvironment } from "./toolchain";
 
 const root = resolve(import.meta.dir, "..");
 const plan = buildPlan(process.argv[2]);

@@ -10,9 +10,9 @@ import {
   UPDATER_IDENTIFIER,
 } from "../src/main/updater/constants";
 import { readBuildIdentityResource, runCommand } from "../src/main/updater/verify";
+import { releaseOutputEnvironment } from "./build-config";
 import { withDmgMount } from "./release-dmg";
 import { compareBundleInventories, inventoryBundle, inventoryDigest } from "./release-inventory";
-import { releaseOutputEnvironment } from "./release-output";
 
 const root = resolve(import.meta.dir, "..");
 const environment = releaseOutputEnvironment(packageInfo.version, process.env);

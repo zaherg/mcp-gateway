@@ -1,0 +1,99 @@
+---
+name: Lint
+
+"on":
+  push:
+    branches:
+      - "**"
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lint-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
+        with:
+          persist-credentials: false
+
+      - name: Install checksum-pinned linters
+        id: tools
+        env:
+          ACTIONLINT_VERSION: "1.7.12"
+          ACTIONLINT_SHA256: >-
+            8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+          SHELLCHECK_VERSION: "0.11.0"
+          SHELLCHECK_SHA256: >-
+            8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+          TYPOS_VERSION: "1.52.0"
+          TYPOS_SHA256: >-
+            6155d4114f9a0f5b8f6d4fda96266c9d5f6add71df80da7f684ee5e72eb14588
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/mcp-gateway-linters"
+          mkdir -p "$tools"
+          cd "$tools"
+          fetch_archive() {
+            curl --proto '=https' --proto-redir '=https' \
+              --fail --location --silent --show-error \
+              --connect-timeout 15 --max-time 60 \
+              --retry 3 --retry-max-time 120 "$1" -o "$2"
+            printf '%s  %s\n' "$3" "$2" | sha256sum --check --strict
+          }
+          github="https://github.com"
+          base="$github/rhysd/actionlint/releases/download"
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          fetch_archive "$base/v$ACTIONLINT_VERSION/$archive" \
+            actionlint.tar.gz "$ACTIONLINT_SHA256"
+          base="$github/koalaman/shellcheck/releases/download"
+          archive="shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          fetch_archive "$base/v$SHELLCHECK_VERSION/$archive" \
+            shellcheck.tar.xz "$SHELLCHECK_SHA256"
+          base="$github/crate-ci/typos/releases/download"
+          archive="typos-v${TYPOS_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+          fetch_archive "$base/v$TYPOS_VERSION/$archive" \
+            typos.tar.gz "$TYPOS_SHA256"
+          tar -xzf actionlint.tar.gz actionlint
+          tar -xJf shellcheck.tar.xz --strip-components=1 \
+            "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
+          tar -xzf typos.tar.gz ./typos
+          printf '%s\n' "$tools" >> "$GITHUB_PATH"
+
+      - name: Actionlint
+        if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
+        run: actionlint -color
+
+      - name: ShellCheck
+        if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          git ls-files -z -- '*.sh' '*.bash' \
+            ':(exclude).agents/**' \
+            ':(exclude).cache/**' \
+            ':(exclude).hutch/**' \
+            ':(exclude).hutch-home/**' \
+            ':(exclude)node_modules/**' \
+            ':(exclude)build/**' \
+            ':(exclude)artifacts/**' \
+            ':(exclude)dist/**' \
+            ':(exclude)release/**' |
+            xargs -0 --no-run-if-empty shellcheck --
+
+      - name: Spelling
+        if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
+        run: typos --config _typos.toml --force-exclude .

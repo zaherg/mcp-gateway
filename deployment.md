@@ -37,8 +37,9 @@ Running the app can read or change its configuration; see [Configuration](README
 The build prepares the toolchain automatically and writes generated files under `.cache/`, `.hutch-home/`, `dist/`, `assets/`, and the selected build directory.
 Use a separate checkout for concurrent builds because these intermediate paths are shared.
 
-The current `hutch.config.ts` requests Electrobun 2.0.6, while `scripts/toolchain.ts` supplies the 2.0.5 macOS devkit.
-On macOS arm64, this mismatch stops the build with `ElectrobunDevkitVersionMismatch`.
+`hutch.config.ts` pins Electrobun 2.0.6 and its paired Hutch 0.29.0.
+`bun run prepare:sdk` uses the installed Electrobun bootstrap to download and verify the selected toolchain under `.hutch-home/` and project the SDK into `.hutch/devkit/`.
+A global `hutch` installation is not required.
 
 ### Tests
 
@@ -49,8 +50,21 @@ bun run typecheck
 bun run lint
 ```
 
-The test suites and packaged-acceptance fixtures are absent from this checkout.
-The test commands in `package.json` cannot run the deleted suites.
+`.github/workflows/lint.yml` runs on branch pushes, pull requests, manual dispatches and calls from the release workflow.
+It uses checksum-pinned Actionlint 1.7.12, ShellCheck 0.11.0 and Typos 1.52.0.
+Actionlint checks the workflows and their inline shell commands; ShellCheck also checks tracked `.sh` and `.bash` files.
+Typos checks first-party source and documentation using `_typos.toml`, excluding generated outputs, dependencies, private environment files and vendored skills.
+Each check still runs if another linter fails, provided tool installation succeeded.
+The workflow reports findings without editing files and does not run test suites.
+
+After building a development app, run the native smoke check on macOS:
+
+```sh
+bun scripts/check-native.ts "build/dev-macos-arm64/MCP Gateway-dev.app"
+```
+
+On Linux, use `bash scripts/check-native-linux.sh <development-bundle>` to provide an isolated display and session bus.
+The unit, component, browser, and packaged-acceptance suites are absent from this checkout.
 
 ## Signed and notarized release
 
@@ -100,10 +114,11 @@ The signed installer wrapper is `build/v<version>/stable-macos-arm64/MCP Gateway
 The artifacts directory contains:
 
 - `macos-arm64-MCPGateway.dmg` is the installer for manual installation.
-- `stable-macos-arm64-update.json` is the updater manifest.
+- `stable-macos-arm64-update.json` is the legacy updater manifest.
+- `stable-macos-arm64-update-v2.json` adds the expanded archive digest and size used by Electrobun 2.0.6.
 - `stable-macos-arm64-MCPGateway.app.tar.zst` is the updater payload.
 
-After the verification and acceptance checks pass, upload all three files to the same GitHub release without renaming them.
+After the verification and acceptance checks pass, upload all four files to the same GitHub release without renaming them.
 Their version must match `package.json`.
 The existing `artifacts/v0.3.1/` files predate the current dependency changes and do not verify the current checkout.
 If the build fails, inspect the command output and use a new candidate directory for the next attempt.
@@ -146,3 +161,56 @@ Copy the app from the mounted DMG to a writable location before opening it.
 The DMG contains an installer wrapper that replaces itself on first launch.
 Keep a candidate separate from an existing installation unless replacement is intended.
 Publishing the release assets is a separate operation from building and verification.
+
+## Automatic releases from tags
+
+`.github/workflows/release.yml` builds a signed, notarized macOS arm64 release when a tag is pushed.
+Tags must be `X.Y.Z` or `vX.Y.Z`, with a version matching `package.json` exactly.
+Other tags and prerelease versions fail validation without publishing.
+The release, lint and test workflow definitions must all be present in the tagged commit.
+
+Do not tag the current source for distribution until the Electrobun 2.0.6 updater migration and required packaged acceptance are complete.
+The migration remains pending: the SDK prepares version-2 staged bundles, while the app still expects version-1 retained archives.
+The release workflow verifies build artifacts, not a complete in-app update cycle.
+
+### Required GitHub Actions secrets
+
+Add these repository secrets in GitHub Settings → Secrets and variables → Actions:
+
+- `MACOS_CERTIFICATE_P12_BASE64`: Base64-encoded PKCS#12 export containing the Developer ID Application certificate and its private key.
+- `MACOS_CERTIFICATE_PASSWORD`: Password protecting that PKCS#12 export.
+- `APPLE_ID`: Apple Account email used for notarization.
+- `APPLE_TEAM_ID`: Apple Developer team ID matching the signing certificate.
+- `APPLE_APP_PASSWORD`: App-specific password for the notarization account.
+
+Use the existing publisher identity so installed copies can verify future updates.
+Keep the certificate and its password out of Git and workflow logs.
+The runner generates its temporary keychain password; no separate secret is needed for it.
+Missing secrets stop the workflow rather than producing an unsigned release.
+
+### Build and publication
+
+The release workflow first calls `lint.yml` and `test.yml` from the same tagged commit.
+Both must succeed before the macOS build can start; a failure, cancellation or skipped check blocks signing and publication.
+The test workflow retains its source checks, Linux development build and native smoke check.
+Standalone lint and test runs still cover branch pushes, pull requests and manual dispatches; tag checks run through the release workflow to avoid duplicate runs.
+Their concurrency groups are separate so a called workflow cannot cancel its caller.
+Signing secrets are not passed to either check workflow.
+
+The build job uses GitHub's `macos-15` arm64 runner, Node 26.13.0 and Bun 1.4.4.
+It installs the locked dependencies, prepares the SDK, runs typecheck and lint, then signs, notarizes and verifies the release.
+It also checks the v2 manifest's expanded archive digest and size before generating `SHA256SUMS`.
+No unit, component, browser or packaged-update test suites run.
+
+CI uses fresh `build/ci-release/` and `artifacts/ci-release/` directories.
+Only the four release files and `SHA256SUMS` pass to the publication job; signing credentials and private build state are excluded.
+The temporary signing keychain is removed even when the build fails.
+
+A separate Ubuntu job verifies the transferred checksums and confirms that the tag still points to the built commit.
+It uses the repository's `GITHUB_TOKEN` to create the release with generated notes, uploads all five assets, then publishes it.
+No personal access token is needed.
+Existing releases and their assets are never overwritten.
+If an upload failure leaves a draft release, inspect and remove that draft before retrying publication.
+
+After the source and updater acceptance are ready, update `package.json`, commit the release changes, and push the matching version tag.
+Creating this workflow locally does not create or push a tag, configure signing secrets, or publish a release.
