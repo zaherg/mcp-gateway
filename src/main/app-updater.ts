@@ -2,8 +2,8 @@ import { randomBytes } from "node:crypto";
 import { lstat, open, readFile, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { Updater, type UpdateStatusEntry } from "electrobun/main";
+import { ensureParent } from "../core/config";
 import { RequestError } from "../core/errors";
-import { ensureParent } from "../core/private-parent";
 import type { QuitStatus, UpdateStatus } from "../shared/rpc";
 import type { QuitCoordinator } from "./lifecycle";
 

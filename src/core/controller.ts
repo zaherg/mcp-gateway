@@ -11,8 +11,7 @@ import type {
   LogQuery,
   VisibleError,
 } from "../shared/types";
-import { isHttpServer, parseConfig } from "./config";
-import { type ConfigDocument, ConfigStore } from "./config-store";
+import { type ConfigDocument, ConfigStore, isHttpServer, parseConfig } from "./config";
 import { failure, operational, visible } from "./errors";
 import { GatewayIngress } from "./ingress";
 import { LogBuffer } from "./logs";
