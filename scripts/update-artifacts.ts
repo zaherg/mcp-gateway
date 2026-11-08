@@ -14,7 +14,7 @@ export const UPDATE_FILES = {
 const MAX_ARCHIVE_BYTES = 512 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 64 * 1024;
 
-export interface UpdateManifest {
+interface UpdateManifest {
   schemaVersion: 1;
   identifier: string;
   channel: "stable";

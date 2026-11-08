@@ -5,7 +5,7 @@ import type {
   GatewayLogger,
 } from "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js";
 
-export interface CommandResult {
+interface CommandResult {
   stdout: string;
   stderr: string;
   exitCode: number;
@@ -18,7 +18,7 @@ export type CommandRunner = (
   signal?: AbortSignal,
 ) => Promise<CommandResult>;
 
-export interface CommandChild {
+interface CommandChild {
   readonly pid?: number;
   readonly stdout: { on(event: "data", listener: (chunk: Buffer) => void): unknown } | null;
   readonly stderr: { on(event: "data", listener: (chunk: Buffer) => void): unknown } | null;
@@ -27,9 +27,9 @@ export interface CommandChild {
   on(event: "close", listener: (code: number | null) => void): unknown;
 }
 
-export type CommandStart = (command: string, args: readonly string[]) => CommandChild;
+type CommandStart = (command: string, args: readonly string[]) => CommandChild;
 
-export interface CreateCommandRunnerOptions {
+interface CreateCommandRunnerOptions {
   defaultTimeoutMs?: number;
   maxOutputBytes?: number;
   start?: CommandStart;
@@ -137,21 +137,19 @@ export const createCommandRunner = (options?: CreateCommandRunnerOptions): Comma
 
 export const runCommand = createCommandRunner();
 
-export interface GroupMember {
+interface GroupMember {
   pid: number;
   start: string;
 }
-export type BackendGroup =
+type BackendGroup =
   | { status: "absent" }
   | { status: "unknown" }
   | { status: "present"; members: GroupMember[] };
 
 const runInspection = createCommandRunner({ defaultTimeoutMs: 2_000, maxOutputBytes: 16 * 1024 });
 
-export const inspectBackendGroup = async (
-  pgid: number,
-  run: CommandRunner = runInspection,
-): Promise<BackendGroup> => {
+const inspectBackendGroup = async (pgid: number): Promise<BackendGroup> => {
+  const run = runInspection;
   try {
     const listed = await run("/usr/bin/pgrep", ["-g", String(pgid)]);
     if (listed.exitCode === 1 && !listed.stdout.trim() && !listed.stderr.trim())
@@ -195,6 +193,17 @@ export const inspectBackendGroup = async (
     return { status: "present", members };
   } catch {
     return { status: "unknown" };
+  }
+};
+
+// Signal 0 checks existence without spawning pgrep; ESRCH means no process is
+// left in the group. Any other answer falls through to the identity inspection.
+const groupGone = (pgid: number): boolean => {
+  try {
+    process.kill(-pgid, 0);
+    return false;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ESRCH";
   }
 };
 
@@ -258,6 +267,10 @@ export class BackendProcesses implements ChildrenOwner {
       const deadline = Date.now() + TERMINATION_GRACE_MS;
       let reported = false;
       for (;;) {
+        if (groupGone(pid)) {
+          await exited;
+          return;
+        }
         const state = await inspectBackendGroup(pid);
         if (state.status === "absent") {
           await exited;

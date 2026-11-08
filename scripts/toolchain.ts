@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 
 const root = resolve(import.meta.dir, "..");
 
-export const validateBuildHost = (platform: NodeJS.Platform, architecture: string): void => {
+const validateBuildHost = (platform: NodeJS.Platform, architecture: string): void => {
   if (platform !== "darwin" || architecture !== "arm64")
     throw new Error(`Unsupported build host: ${platform}/${architecture}.`);
 };
@@ -23,7 +23,7 @@ export const buildPlan = (
   };
 };
 
-export const createToolchainEnvironment = (
+const createToolchainEnvironment = (
   environment: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv & {
   HUTCH_HOME: string;

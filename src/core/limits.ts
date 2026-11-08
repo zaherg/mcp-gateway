@@ -73,7 +73,7 @@ export const readBackendLines = (
 };
 
 /** SSE fields share one event budget; CR/LF framing does not count toward it. */
-export class BackendEventBudget {
+class BackendEventBudget {
   private bytes = 0;
   private lineBytes = 0;
   private afterCR = false;
@@ -186,10 +186,6 @@ export class BackendCalls {
   private readonly owned = new Map<WorkOwner, Map<string | number, true>>();
 
   constructor(private readonly limit = MAX_BACKEND_CALLS) {}
-
-  get outstanding(): number {
-    return this.used;
-  }
 
   /** A fresh ownership identity; never reused after its cleanup. */
   owner(): WorkOwner {

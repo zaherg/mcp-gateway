@@ -12,7 +12,7 @@ const rpc = Electroview.defineRPC<AppRPC>({
     messages: {},
   },
 });
-export const electroview = new Electroview({ rpc });
+new Electroview({ rpc });
 export const client: AppClient = {
   readLogs: (params) => rpc.request.readLogs(params),
   clearLogs: () => rpc.request.clearLogs(),

@@ -5,12 +5,12 @@ import type { LoginManager } from "@mcp-gateway/main/service";
 import { PRODUCTION_IDENTIFIER, TEST_IDENTIFIER } from "@mcp-gateway/shared/identity";
 import type { LoginStatus } from "@mcp-gateway/shared/rpc";
 
-export interface LoginNative {
+interface LoginNative {
   status(): number;
   set(enabled: boolean): number;
 }
 
-export class MacLoginManager implements LoginManager {
+class MacLoginManager implements LoginManager {
   private occurrence = 0;
   private lastStatusError: string | null = null;
   private operationError: string | null = null;
@@ -112,7 +112,7 @@ const absolutePath = (path: string, name: string): string => {
   return path;
 };
 
-export type AppIdentifier = typeof PRODUCTION_IDENTIFIER | typeof TEST_IDENTIFIER;
+type AppIdentifier = typeof PRODUCTION_IDENTIFIER | typeof TEST_IDENTIFIER;
 
 export const installedIdentifier = (resourcesFolder: string): AppIdentifier => {
   let identifier: unknown;

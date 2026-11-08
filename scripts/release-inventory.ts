@@ -3,7 +3,7 @@ import { constants } from "node:fs";
 import { lstat, open, readdir, readlink } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 
-export interface BundleInventoryEntry {
+interface BundleInventoryEntry {
   path: string;
   type: "directory" | "file" | "symlink";
   mode: number;
@@ -12,7 +12,7 @@ export interface BundleInventoryEntry {
   link?: string;
 }
 
-export class ReleaseInventoryError extends Error {
+class ReleaseInventoryError extends Error {
   readonly differences: string[];
   constructor(differences: string[]) {
     super(`Bundle inventories differ: ${differences.slice(0, 8).join(", ")}`);

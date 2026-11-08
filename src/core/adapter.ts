@@ -31,6 +31,7 @@ import type {
 } from "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js";
 import { spawnCommand } from "supergateway/dist/lib/childCommand.js";
 import { getVersion } from "supergateway/dist/lib/getVersion.js";
+import { HeaderMismatch } from "supergateway/dist/lib/headerMismatch.js";
 import {
   admit,
   headerValue,
@@ -57,10 +58,10 @@ import {
 
 export type GatewayMount = StatefulMount;
 
-export const SHUTDOWN_MS = 8_000;
+const SHUTDOWN_MS = 8_000;
 
 /** Session-based (pre-2026-07-28) MCP is served only by endpoints that opt in. */
-export const UNSUPPORTED_PROTOCOL_ERROR = {
+const UNSUPPORTED_PROTOCOL_ERROR = {
   code: -32600,
   message: "Only MCP protocol version 2026-07-28 is supported.",
 } as const;
@@ -80,6 +81,18 @@ const createLineFeed = (push: (text: string) => void): ((text: string) => void) 
 };
 
 class CapacityError extends Error {}
+
+// Pinned Supergateway 4.2.1 logs these at error level, but the client caused
+// them: its own HTTP transport failed, or its headers did not mirror the body.
+// They stay in Logs and never mark the backend as failed, as in sessions.ts.
+const CLIENT_TRANSPORT_ERRORS = new Set([
+  "Modern HTTP transport error:",
+  "Modern HTTP adapter error:",
+  "Failed to send MCP error:",
+]);
+const clientCaused = (args: readonly unknown[]): boolean =>
+  (typeof args[0] === "string" && CLIENT_TRANSPORT_ERRORS.has(args[0])) ||
+  args.some((value) => value instanceof HeaderMismatch);
 
 // Only the owned close promise proves that backend work ended.
 const cleanupConfirmed = (child: ModernChild): boolean => {
@@ -126,7 +139,14 @@ export const createMount = (
     // on close. Preserve that log without replacing the actual HTTP failure.
     const upstreamClosed =
       isHttpServer(server) && args[0] === "Child exited: code=null, signal=null";
-    if (diagnose && !closing && level === "error" && !stderr && !upstreamClosed)
+    if (
+      diagnose &&
+      !closing &&
+      level === "error" &&
+      !stderr &&
+      !upstreamClosed &&
+      !clientCaused(args)
+    )
       onDiagnostic(backendSummary(args));
   };
   const diagnostic = (...args: unknown[]) => capture("error", args);
@@ -571,7 +591,7 @@ const discoveryResult = (data: string): boolean | undefined => {
 /** Pinned Supergateway capability check with explicit cancellation and bounded input.
  * Its original remoteSpeaksModern helper provides neither a signal nor a close hook.
  */
-export class UpstreamDiscovery {
+class UpstreamDiscovery {
   private readonly lifetime = new AbortController();
   private last: { at: number; result: Promise<boolean> } | undefined;
 

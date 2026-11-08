@@ -60,6 +60,7 @@ export class McpGatewayController implements GatewayController {
   private validation = new AbortController();
   private closePromise: Promise<void> | undefined;
   private closeWatcher: (() => void) | undefined;
+  private interfaceRecovery: ReturnType<typeof setInterval> | undefined;
 
   private constructor(configPath: string) {
     this.store = new ConfigStore(configPath);
@@ -193,13 +194,17 @@ export class McpGatewayController implements GatewayController {
     await this.stopOwned();
     const config = this.config;
     try {
-      const ingress = await GatewayIngress.open(config, this.report, this.logs, control).catch(
-        (error) => {
-          throw error instanceof GatewayError
-            ? error
-            : failure("ListenerFailure", "The listener could not start.");
-        },
-      );
+      const ingress = await GatewayIngress.open(
+        config,
+        this.report,
+        this.logs,
+        control,
+        this.awaitInterface,
+      ).catch((error) => {
+        throw error instanceof GatewayError
+          ? error
+          : failure("ListenerFailure", "The listener could not start.");
+      });
       this.closingIngress = ingress;
       this.ensureOpen();
       if (!this.watchHealthy)
@@ -209,6 +214,7 @@ export class McpGatewayController implements GatewayController {
         );
       this.ingress = ingress;
       this.closingIngress = undefined;
+      this.cancelInterfaceRecovery();
       this.operationalError = null;
       this.event("info", "Gateway listener started; backends initialize on client requests.");
     } catch (error) {
@@ -250,8 +256,45 @@ export class McpGatewayController implements GatewayController {
     });
   }
 
+  // The listener closes when its address disappears (fail closed). The user
+  // still wants it running, so reopen it once the configured address returns.
+  // A Stop or close aborts the captured lifetime and ends the wait.
+  private awaitInterface = (lost: GatewayIngress): void => {
+    if (this.closed || this.closing || (this.ingress !== lost && this.closingIngress !== lost))
+      return;
+    this.cancelInterfaceRecovery();
+    const signal = this.validationLifetime();
+    const timer = setInterval(() => {
+      if (signal.aborted) {
+        this.cancelInterfaceRecovery();
+        return;
+      }
+      try {
+        selectInterface(this.config?.gateway.host ?? "");
+      } catch {
+        return;
+      }
+      this.cancelInterfaceRecovery();
+      void this.serial(async () => {
+        if (signal.aborted || this.ingress?.running) return;
+        await this.startOwned(this.control(signal));
+        this.event("info", "The selected interface returned; the gateway listener restarted.");
+      }).catch((error) => {
+        if (!isSelfProxyCancelled(error)) this.report(visible(error));
+      });
+    }, 1_000);
+    timer.unref();
+    this.interfaceRecovery = timer;
+  };
+
+  private cancelInterfaceRecovery(): void {
+    if (this.interfaceRecovery) clearInterval(this.interfaceRecovery);
+    this.interfaceRecovery = undefined;
+  }
+
   stop(): Promise<GatewaySnapshot> {
     this.cancelValidation();
+    this.cancelInterfaceRecovery();
     return this.serial(async () => {
       this.ensureOpen();
       await this.stopOwned();
@@ -439,6 +482,7 @@ export class McpGatewayController implements GatewayController {
     if (this.closePromise) return this.closePromise;
     this.closing = true;
     this.cancelValidation();
+    this.cancelInterfaceRecovery();
     this.closePromise = this.serial(async () => {
       try {
         this.closeWatcher?.();

@@ -23,10 +23,10 @@ export type Editor = {
 export const isRecord = (value: unknown): value is Record<string, unknown> => {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 };
-export const stringMap = (value: unknown): value is Record<string, string> => {
+const stringMap = (value: unknown): value is Record<string, string> => {
   return isRecord(value) && Object.values(value).every((item) => typeof item === "string");
 };
-export const isBackend = (value: unknown): value is Backend => {
+const isBackend = (value: unknown): value is Backend => {
   if (
     !isRecord(value) ||
     (value.disabled !== undefined && typeof value.disabled !== "boolean") ||

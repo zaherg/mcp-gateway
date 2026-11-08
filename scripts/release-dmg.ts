@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, realpath, rm, rmdir, writeFile } from "node:fs/promises
 import { join } from "node:path";
 import { type CommandRunner, runCommand } from "@mcp-gateway/core/process";
 
-export interface DmgCleanup {
+interface DmgCleanup {
   ok: boolean;
   mount: string;
   detail: string;

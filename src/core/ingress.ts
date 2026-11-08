@@ -26,15 +26,15 @@ import type {
   VisibleError,
 } from "@mcp-gateway/shared/types";
 
-export const MAX_BODY_BYTES = 4 * 1024 * 1024;
-export const MAX_CONCURRENT_REQUESTS = 32;
-export const MAX_BACKEND_RESOURCES = 16;
+const MAX_BODY_BYTES = 4 * 1024 * 1024;
+const MAX_CONCURRENT_REQUESTS = 32;
+const MAX_BACKEND_RESOURCES = 16;
 // Each session holds a backend resource and at most one open event stream, so
 // this cap also bounds the long-lived requests counted against concurrency.
-export const MAX_SESSIONS = 8;
-export const REQUEST_DEADLINE_MS = 30_000;
+const MAX_SESSIONS = 8;
+const REQUEST_DEADLINE_MS = 30_000;
 const MAX_CONNECTIONS = 64;
-export const MAX_REQUESTS_PER_MINUTE = 240;
+const MAX_REQUESTS_PER_MINUTE = 240;
 interface Endpoint {
   mount: GatewayMount;
   fingerprint: string;
@@ -67,6 +67,7 @@ export class GatewayIngress {
     private config: GatewayConfig,
     private readonly report: (error: VisibleError) => void,
     private readonly logs: LogBuffer,
+    private readonly onInterfaceLost?: (ingress: GatewayIngress) => void,
   ) {
     this.selected = selectInterface(config.gateway.host);
     this.server = createServer(
@@ -97,9 +98,10 @@ export class GatewayIngress {
     report: (error: VisibleError) => void,
     logs = new LogBuffer(),
     control?: SelfProxyOptions,
+    onInterfaceLost?: (ingress: GatewayIngress) => void,
   ): Promise<GatewayIngress> {
     await rejectSelfProxy(config, control);
-    const ingress = new GatewayIngress(config, report, logs);
+    const ingress = new GatewayIngress(config, report, logs, onInterfaceLost);
     try {
       await ingress.reconcile(config, control);
       await new Promise<void>((resolve, reject) => {
@@ -161,7 +163,16 @@ export class GatewayIngress {
 
   private lostInterface(): void {
     if (this.closed) return;
-    this.report(visible(failure("NetworkPolicy", "The selected interface is no longer assigned.")));
+    this.report(
+      visible(
+        failure(
+          "NetworkPolicy",
+          "The selected interface is no longer assigned. The listener stopped and restarts when the address returns.",
+        ),
+      ),
+    );
+    // The owner decides whether to reopen; this listener stays closed either way.
+    this.onInterfaceLost?.(this);
     void this.close().catch((error) => this.report(visible(error)));
   }
 

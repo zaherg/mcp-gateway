@@ -16,7 +16,7 @@ export const configFormat = (path: string): ConfigFormat =>
   path.endsWith(".jsonc") ? "jsonc" : "json";
 
 // Fixed messages only: parser diagnostics must not echo configuration credentials.
-export class ConfigSyntaxError extends Error {
+class ConfigSyntaxError extends Error {
   constructor() {
     super("Configuration syntax is invalid or contains duplicate keys.");
   }

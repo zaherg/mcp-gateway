@@ -6,7 +6,7 @@ export { PRODUCTION_IDENTIFIER, TEST_IDENTIFIER };
 
 export const STABLE_VERSION_PATTERN = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
 export const PRODUCTION_FEED = "https://github.com/zaherg/mcp-gateway/releases/latest/download";
-export type BuildKind = "production" | "test";
+type BuildKind = "production" | "test";
 
 export const validateFeedUrl = (value: string | undefined): string => {
   if (

@@ -258,6 +258,12 @@ declare module "supergateway/dist/lib/upstreamModernChild.js" {
 declare module "supergateway/dist/lib/getVersion.js" {
   export function getVersion(): string;
 }
+declare module "supergateway/dist/lib/headerMismatch.js" {
+  export class HeaderMismatch extends Error {
+    readonly header: string;
+    readonly code: number;
+  }
+}
 declare module "supergateway/dist/lib/modernRequest.js" {
   import type {
     InboundModernRoute,

@@ -5,7 +5,7 @@ import { isHttpServer } from "@mcp-gateway/core/config";
 import { failure, GatewayError } from "@mcp-gateway/core/errors";
 import type { GatewayConfig, InterfaceChoice } from "@mcp-gateway/shared/types";
 
-export const ipv4 = (value: string): string | null => {
+const ipv4 = (value: string): string | null => {
   if (isIP(value) === 4) return value;
   if (/^::ffff:/i.test(value)) {
     const suffix = value.slice(7);
@@ -19,8 +19,8 @@ export const ipv4 = (value: string): string | null => {
 };
 const numeric = (address: string) =>
   address.split(".").reduce((n, part) => (n * 256 + Number(part)) >>> 0, 0);
-export const isLoopback = (address: string) => ipv4(address)?.startsWith("127.") === true;
-export const isPrivate = (address: string): boolean => {
+const isLoopback = (address: string) => ipv4(address)?.startsWith("127.") === true;
+const isPrivate = (address: string): boolean => {
   const ip = ipv4(address);
   if (!ip) return false;
   const [a, b] = ip.split(".").map(Number);

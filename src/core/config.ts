@@ -182,7 +182,7 @@ export const serverFingerprint = (server: StdioServerConfig | HttpServerConfig):
   );
 };
 
-export const newConfigText = (host = "127.0.0.1"): string => {
+const newConfigText = (host = "127.0.0.1"): string => {
   return `${JSON.stringify(
     {
       gateway: {
@@ -198,19 +198,12 @@ export const newConfigText = (host = "127.0.0.1"): string => {
     2,
   )}\n`;
 };
-export const safeParent = async (path: string, allowMissing = false): Promise<void> => {
+const safeParent = async (path: string): Promise<void> => {
   const parent = dirname(path);
   let current = parse(parent).root;
   for (const part of parent.slice(current.length).split("/").filter(Boolean)) {
     current = join(current, part);
-    let stat: Stats;
-    try {
-      stat = await fs.lstat(current);
-    } catch (error) {
-      if (!allowMissing || !missing(error)) throw error;
-      await safeParent(current);
-      return;
-    }
+    const stat = await fs.lstat(current);
     if (!stat.isDirectory() || stat.isSymbolicLink())
       throw failure("UnsafeFile", "Configuration paths must not contain symlinks.");
   }
@@ -250,7 +243,7 @@ export interface ConfigDocument {
   text: string;
   revision: string;
 }
-export const revisionOf = (bytes: string | Uint8Array): string =>
+const revisionOf = (bytes: string | Uint8Array): string =>
   createHash("sha256").update(bytes).digest("hex");
 
 const guarded = async <A>(work: () => Promise<A>): Promise<A> => {
