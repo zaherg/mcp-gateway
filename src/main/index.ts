@@ -12,11 +12,14 @@ import { McpGatewayController } from "../core/controller";
 import { GatewayError } from "../core/errors";
 import type { AppRPC, QuitStatus } from "../shared/rpc";
 import { AppUpdater, resolveUpdateSupport, unsupportedUpdateStatus } from "./app-updater";
-import { InteractiveQuitGate } from "./interactive-quit";
-import { QuitCoordinator } from "./lifecycle";
-import { openLoginManager } from "./login";
-import { observeNativeQuitSignals } from "./native-signals";
-import { configurationDirectory, restoreWindow, startsInBackground } from "./platform";
+import { InteractiveQuitGate, QuitCoordinator } from "./lifecycle";
+import {
+  configurationDirectory,
+  observeNativeQuitSignals,
+  openLoginManager,
+  restoreWindow,
+  startsInBackground,
+} from "./native";
 import { AppService } from "./service";
 
 const dataDirectory = configurationDirectory(Utils.paths.config);

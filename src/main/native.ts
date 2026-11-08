@@ -1,4 +1,5 @@
 import { dlopen, FFIType } from "bun:ffi";
+import { isAbsolute, join } from "node:path";
 import type { LoginStatus } from "../shared/rpc";
 import type { LoginManager } from "./service";
 
@@ -89,4 +90,44 @@ export function openLoginManager(path: string) {
       library.close();
     },
   };
+}
+
+export function observeNativeQuitSignals(path: string): () => boolean {
+  const library = dlopen(path, {
+    mcp_quit_signal_install: { args: [], returns: FFIType.i32 },
+    mcp_quit_signal_requested: { args: [], returns: FFIType.i32 },
+  });
+  // This separate reference lives until process exit: signal handlers must remain
+  // mapped even after the login owner closes its own reference during cleanup.
+  if (library.symbols.mcp_quit_signal_install() !== 0)
+    throw new Error("Native Quit signal observation could not be installed.");
+  return () => library.symbols.mcp_quit_signal_requested() !== 0;
+}
+
+function absolutePath(path: string, name: string): string {
+  if (!isAbsolute(path) || path.includes("\0"))
+    throw new Error(`${name} must be an absolute path.`);
+  return path;
+}
+
+export function configurationDirectory(configBase: string): string {
+  return join(absolutePath(configBase, "Configuration base"), "MCP Gateway");
+}
+
+export function startsInBackground(
+  requested: boolean,
+  login: { supported: boolean; enabled: boolean },
+  savedLoginPreference: boolean,
+): boolean {
+  return requested || login.enabled || savedLoginPreference;
+}
+
+export function restoreWindow(window: {
+  unminimize(): void;
+  show(): void;
+  activate(): void;
+}): void {
+  window.unminimize();
+  window.show();
+  window.activate();
 }
