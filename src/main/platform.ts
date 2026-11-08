@@ -6,17 +6,8 @@ function absolutePath(path: string, name: string): string {
   return path;
 }
 
-export function configurationDirectory(
-  home: string,
-  environment: NodeJS.ProcessEnv,
-  configBase?: string,
-): string {
-  if (environment.MCP_GATEWAY_DATA_DIR !== undefined)
-    return absolutePath(environment.MCP_GATEWAY_DATA_DIR, "MCP_GATEWAY_DATA_DIR");
-  if (configBase !== undefined)
-    return join(absolutePath(configBase, "Configuration base"), "MCP Gateway");
-  absolutePath(home, "Home directory");
-  return join(home, "Library/Application Support/MCP Gateway");
+export function configurationDirectory(configBase: string): string {
+  return join(absolutePath(configBase, "Configuration base"), "MCP Gateway");
 }
 
 export function startsInBackground(

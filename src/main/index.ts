@@ -1,4 +1,3 @@
-import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import Electrobun, {
   ApplicationMenu,
@@ -34,7 +33,7 @@ if (updaterWorkerMode) {
   process.exit(await runUpdaterWorker(updaterWorkerMode));
 }
 
-const dataDirectory = configurationDirectory(homedir(), process.env, Utils.paths.config);
+const dataDirectory = configurationDirectory(Utils.paths.config);
 const nativeQuitSignal = observeNativeQuitSignals(
   join(PATHS.RESOURCES_FOLDER, "app/native/login.dylib"),
 );
