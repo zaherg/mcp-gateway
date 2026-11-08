@@ -1,10 +1,8 @@
 import type { ElectrobunConfig } from "electrobun";
 import packageInfo from "./package.json";
-import { prepareBuildIdentity, releaseArtifactFolder } from "./scripts/build-config";
+import { releaseArtifactFolder } from "./scripts/build-config";
 
-const UPDATER_FEED_URL = "https://github.com/zaherg/mcp-gateway/releases/latest/download";
-
-const executingBuild = prepareBuildIdentity(import.meta.dir, packageInfo.version);
+const UPDATE_FEED_URL = "https://github.com/zaherg/mcp-gateway/releases/latest/download";
 
 export default {
   app: {
@@ -18,11 +16,9 @@ export default {
     mainProcess: "bun",
     bun: {
       entrypoint: "src/main/index.ts",
-      define: executingBuild.define,
       external: ["supergateway", "supergateway/*", "jsonc-parser"],
     },
     copy: {
-      ...executingBuild.copy,
       "dist/index.html": "views/mainview/index.html",
       "dist/assets": "views/mainview/assets",
       "assets/tray.png": "views/assets/tray.png",
@@ -39,5 +35,5 @@ export default {
     },
   },
   runtime: { exitOnLastWindowClosed: false },
-  release: { baseUrl: UPDATER_FEED_URL },
+  release: { baseUrl: UPDATE_FEED_URL },
 } satisfies ElectrobunConfig;
