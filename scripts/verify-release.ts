@@ -5,7 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { createZstdDecompress } from "node:zlib";
 import packageInfo from "../package.json";
-import { runCommand } from "../src/core/command";
+import { runCommand } from "../src/core/process";
 import { releaseOutputEnvironment } from "./build-config";
 import { withDmgMount } from "./release-dmg";
 import { compareBundleInventories, inventoryBundle, inventoryDigest } from "./release-inventory";

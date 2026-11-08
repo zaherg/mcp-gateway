@@ -4,13 +4,17 @@ import type { Socket } from "node:net";
 import type { GatewayConfig, InterfaceChoice, ServerSnapshot, VisibleError } from "../shared/types";
 import type { GatewayMount } from "./adapter";
 import { backendSummary, closeMount, createMount } from "./adapter";
-import { BackendCalls, MAX_BACKEND_CALLS } from "./backend-work";
 import { isHttpServer, serverFingerprint } from "./config";
 import { failure, visible } from "./errors";
+import {
+  BackendCalls,
+  MAX_BACKEND_CALLS,
+  RequestBodyError,
+  ResourceAdmission,
+  readRequestBody,
+} from "./limits";
 import { LogBuffer } from "./logs";
 import { peerAllowed, rejectSelfProxy, type SelfProxyOptions, selectInterface } from "./network";
-import { RequestBodyError, readRequestBody } from "./request-body";
-import { ResourceAdmission } from "./resource-admission";
 
 export const MAX_BODY_BYTES = 4 * 1024 * 1024;
 export const MAX_CONCURRENT_REQUESTS = 32;
