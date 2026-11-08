@@ -64,13 +64,6 @@ export interface AppSnapshot {
   update: UpdateStatus;
 }
 
-export interface ViewportPolicy {
-  supported: boolean;
-  documentOverscroll: string;
-  bodyOverscroll: string;
-  bodyBackground: string;
-}
-
 export type AppResult<T> =
   | { ok: true; value: T }
   | { ok: false; error: { code: string; message: string; occurrenceId?: string } };
@@ -108,8 +101,6 @@ export type AppRPC = {
   };
   webview: {
     requests: {
-      viewportPolicy: { params: undefined; response: ViewportPolicy };
-      smokeQuit: { params: undefined; response: boolean };
       interactiveQuit: { params: undefined; response: boolean };
     };
     messages: Record<string, never>;

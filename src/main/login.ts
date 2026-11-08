@@ -12,10 +12,7 @@ export class MacLoginManager implements LoginManager {
   private lastStatusError: string | null = null;
   private operationError: string | null = null;
   private requestedState: 0 | 1 | undefined;
-  constructor(
-    private readonly native: LoginNative,
-    private readonly allowChanges = true,
-  ) {}
+  constructor(private readonly native: LoginNative) {}
 
   status(): LoginStatus {
     const status = this.native.status();
@@ -23,18 +20,16 @@ export class MacLoginManager implements LoginManager {
     if (status === this.requestedState) this.operationError = null;
     const result: LoginStatus = {
       enabled: status === 1,
-      supported: status >= 0 && this.allowChanges,
+      supported: status >= 0,
       error:
         this.operationError ??
-        (!this.allowChanges
-          ? "Login registration is disabled in isolated verification."
-          : status === -1
-            ? "Login startup requires the signed release on macOS 13 or newer."
-            : status === 2
-              ? "Approve MCP Gateway under System Settings > General > Login Items."
-              : status === 3
-                ? "macOS could not locate this app for login startup."
-                : null),
+        (status === -1
+          ? "Login startup requires the signed release on macOS 13 or newer."
+          : status === 2
+            ? "Approve MCP Gateway under System Settings > General > Login Items."
+            : status === 3
+              ? "macOS could not locate this app for login startup."
+              : null),
     };
     if (result.error !== this.lastStatusError) this.occurrence++;
     this.lastStatusError = result.error;
@@ -66,7 +61,7 @@ function closedError(): never {
   throw new Error("closed");
 }
 
-export function openLoginManager(platform: DesktopPlatform, path: string, allowChanges: boolean) {
+export function openLoginManager(platform: DesktopPlatform, path: string) {
   if (platform === "linux") {
     const status = (): LoginStatus => ({
       enabled: false,
@@ -75,21 +70,12 @@ export function openLoginManager(platform: DesktopPlatform, path: string, allowC
     });
     return {
       manager: { status, setEnabled: (_enabled: boolean) => status() } satisfies LoginManager,
-      statusCode: () => null,
-      requestCloseShortcut: () => {
-        throw new Error("Cocoa shortcuts are unavailable on Linux.");
-      },
-      requestQuitShortcut: () => {
-        throw new Error("Cocoa shortcuts are unavailable on Linux.");
-      },
       close: () => {},
     };
   }
   const library = dlopen(path, {
     mcp_login_status: { args: [], returns: FFIType.i32 },
     mcp_login_set: { args: [FFIType.i32], returns: FFIType.i32 },
-    mcp_test_close_shortcut: { args: [], returns: FFIType.void },
-    mcp_test_quit_shortcut: { args: [], returns: FFIType.void },
   });
   let closed = false;
   let cachedStatus: number | undefined;
@@ -105,13 +91,9 @@ export function openLoginManager(platform: DesktopPlatform, path: string, allowC
       return library.symbols.mcp_login_set(enabled ? 1 : 0);
     },
   };
-  const manager = new MacLoginManager(native, allowChanges);
+  const manager = new MacLoginManager(native);
   return {
     manager,
-    statusCode: () => (closed ? closedError() : library.symbols.mcp_login_status()),
-    requestCloseShortcut: () =>
-      closed ? closedError() : library.symbols.mcp_test_close_shortcut(),
-    requestQuitShortcut: () => (closed ? closedError() : library.symbols.mcp_test_quit_shortcut()),
     close: () => {
       if (closed) return;
       closed = true;

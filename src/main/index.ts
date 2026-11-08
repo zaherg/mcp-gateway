@@ -1,4 +1,3 @@
-import { writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import Electrobun, {
@@ -12,7 +11,7 @@ import Electrobun, {
 import { parseConfig } from "../core/config";
 import { McpGatewayController } from "../core/controller";
 import { GatewayError } from "../core/errors";
-import type { AppRPC, QuitStatus, ViewportPolicy } from "../shared/rpc";
+import type { AppRPC, QuitStatus } from "../shared/rpc";
 import { InteractiveQuitGate } from "./interactive-quit";
 import { QuitCoordinator } from "./lifecycle";
 import { openLoginManager } from "./login";
@@ -42,26 +41,19 @@ if (updaterWorkerMode) {
 }
 
 const platform = desktopPlatform(process.platform);
-const isolated = process.env.MCP_GATEWAY_ISOLATED === "1";
 const dataDirectory = configurationDirectory(platform, homedir(), process.env, Utils.paths.config);
 const nativeQuitSignal = observeNativeQuitSignals(
   platform,
   join(PATHS.RESOURCES_FOLDER, "app/native/login.dylib"),
 );
-const login = openLoginManager(
-  platform,
-  join(PATHS.RESOURCES_FOLDER, "app/native/login.dylib"),
-  !isolated,
-);
+const login = openLoginManager(platform, join(PATHS.RESOURCES_FOLDER, "app/native/login.dylib"));
 const controller = await McpGatewayController.open(join(dataDirectory, "mcp.json"));
-let quitRequested = false;
 const idleQuitStatus: QuitStatus = { attempt: 0, phase: "idle", error: null };
 let quit: QuitCoordinator | undefined;
 const quitStatus = (): QuitStatus => quit?.status() ?? idleQuitStatus;
 const appBundlePath = resolve(dirname(process.execPath), "..", "..");
 const updateSupport = await readUpdateSupport({
   platform,
-  isolated,
   appBundlePath,
 });
 const boundary = updateSupport.supported
@@ -108,7 +100,6 @@ const service = new AppService(
   {
     platform,
     requestQuit: () => {
-      quitRequested = true;
       asOrdinaryQuit(() => {
         quit?.armQuit();
         Utils.quit();
@@ -127,23 +118,7 @@ let updateStartup: Promise<void> | undefined;
 let menuState = "";
 let trayRemoved = false;
 let loginClosed = false;
-let smokeTimer: ReturnType<typeof setTimeout> | undefined;
-let renderedWindows = 0;
-let viewportPolicy: ViewportPolicy | undefined;
-let inspectViewport: (() => Promise<ViewportPolicy>) | undefined;
-let requestRendererQuit: (() => Promise<boolean>) | undefined;
 let requestInteractiveRendererQuit: (() => Promise<boolean>) | undefined;
-let minimizeObserved = false;
-let restoreObserved = false;
-let closeRequestedHandled = false;
-let smokeError: string | null = null;
-const smokeSignal = process.env.MCP_GATEWAY_SMOKE_QUIT === "signal";
-let closeShortcutRequested = false;
-let closeShortcutHandled = false;
-let closePreservedState = false;
-let shortcutRequested = false;
-let shortcutHandled = false;
-const smoke = isolated && process.env.MCP_GATEWAY_SMOKE === "1";
 
 function menuAction(event: unknown): string | undefined {
   if (typeof event !== "object" || event === null || !("data" in event)) return;
@@ -230,9 +205,7 @@ function openWindow(): void {
           if (!ready) {
             ready = true;
             windowReady = true;
-            renderedWindows++;
             void completeUpdateStartup();
-            if (smoke) scheduleSmoke();
           }
           if (pendingShowUpdates) {
             pendingShowUpdates = false;
@@ -244,8 +217,6 @@ function openWindow(): void {
       messages: {},
     },
   });
-  inspectViewport = () => rpc.request.viewportPolicy();
-  requestRendererQuit = () => rpc.request.smokeQuit();
   requestInteractiveRendererQuit = () =>
     rpc.request.interactiveQuit(undefined, { maxRequestTime: 5_000 });
   const created = new BrowserWindow({
@@ -261,133 +232,14 @@ function openWindow(): void {
   window = created;
   created.on("will-close", (event) => {
     handleWindowClose(platform, event, created);
-    if (smoke && platform === "linux") closeRequestedHandled = true;
   });
   created.on("close", () => {
     if (window === created) {
       window = undefined;
       windowReady = false;
-      inspectViewport = undefined;
-      requestRendererQuit = undefined;
       requestInteractiveRendererQuit = undefined;
       if (platform === "macos") Utils.setDockIconVisible(false);
     }
-  });
-}
-
-async function reportSmoke(phase: string): Promise<void> {
-  await writeFile(
-    join(dataDirectory, "native-smoke.json"),
-    JSON.stringify({
-      phase,
-      platform,
-      renderer: platform === "linux" ? "WebKitGTK" : "WKWebView",
-      shortcuts: platform === "linux" ? "not-tested" : "Cocoa app-local",
-      quitMethod: smokeSignal ? "SIGTERM" : platform === "linux" ? "renderer" : "Cocoa Cmd+Q",
-      quitRequested,
-      smokeError,
-      closeRequestedHandled,
-      minimizeObserved,
-      restoreObserved,
-      configFormat: controller.snapshot().configFormat,
-      viewportPolicy,
-      shortcutHandled,
-      closeShortcutHandled,
-      closePreservedState,
-      logCount: controller.readLogs({ after: 0 }).entries.length,
-      renderedWindows,
-      running: controller.snapshot().running,
-      serverCount: controller.snapshot().servers.length,
-      configError: controller.snapshot().configError?.code ?? null,
-      loginSupported: !loginClosed && login.manager.status().supported,
-      nativeLoginStatus: loginClosed ? null : login.statusCode(),
-    }),
-    { mode: 0o600 },
-  );
-}
-
-// Isolated, opt-in native acceptance. The harness holds its MCP session before
-// releasing this gate, so both window transitions and shutdown cover live resources.
-function scheduleSmoke(): void {
-  smokeTimer = setTimeout(() => {
-    void (async () => {
-      if (!inspectViewport) throw new Error("Native viewport probe unavailable.");
-      viewportPolicy = await inspectViewport();
-      if (renderedWindows === 1) {
-        await reportSmoke("window-ready");
-        while (!(await Bun.file(join(dataDirectory, "native-smoke-continue")).exists()))
-          await Bun.sleep(100);
-        const history = controller.readLogs({ after: 0 });
-        const beforeClose = {
-          running: controller.snapshot().running,
-          cursor: history.cursor,
-          generation: history.generation,
-          firstId: history.entries[0]?.id,
-        };
-        if (platform === "macos") {
-          closeShortcutRequested = true;
-          login.requestCloseShortcut();
-        } else {
-          const current = window;
-          if (!current) throw new Error("Native window unavailable.");
-          current.requestClose();
-          await waitForNativeWindow(
-            () => window === current && closeRequestedHandled && current.isMinimized(),
-          );
-          minimizeObserved = true;
-          openWindow();
-          await waitForNativeWindow(() => window === current && !current.isMinimized());
-          restoreObserved = true;
-          await inspectViewport(); // Real RPC through the restored WebKitGTK view.
-          current.close(); // Also exercise actual destruction/recreation, without a tray host.
-        }
-        await Bun.sleep(500);
-        const after = controller.readLogs({ after: 0 });
-        closePreservedState =
-          !window &&
-          (platform === "linux" ? restoreObserved : closeShortcutHandled) &&
-          controller.snapshot().running === beforeClose.running &&
-          after.cursor >= beforeClose.cursor &&
-          after.generation === beforeClose.generation &&
-          after.entries.some((entry) => entry.id === beforeClose.firstId);
-        if (!closePreservedState) throw new Error("Native close lost application state.");
-        openWindow();
-      } else if (renderedWindows === 2) {
-        await reportSmoke("ready");
-        if (!smokeSignal)
-          smokeTimer = setTimeout(() => {
-            if (platform === "macos") {
-              shortcutRequested = true;
-              login.requestQuitShortcut();
-            } else {
-              if (!requestRendererQuit) {
-                smokeFailure(new Error("Native Quit RPC unavailable."));
-                return;
-              }
-              void requestRendererQuit()
-                .then((clicked) => {
-                  if (!clicked) throw new Error("Native Quit control unavailable.");
-                })
-                .catch(smokeFailure);
-            }
-          }, 3_000);
-      }
-    })().catch(smokeFailure);
-  }, 600);
-}
-async function waitForNativeWindow(check: () => boolean): Promise<void> {
-  const deadline = Date.now() + 5_000;
-  while (!check()) {
-    if (Date.now() >= deadline) throw new Error("Native window did not reach its expected state.");
-    await Bun.sleep(50);
-  }
-}
-function smokeFailure(error: unknown): void {
-  smokeError = "Native lifecycle verification failed.";
-  console.error(smokeError, error instanceof Error ? error.message : "Unknown native failure.");
-  asOrdinaryQuit(() => {
-    quit?.armQuit();
-    Utils.quit();
   });
 }
 
@@ -396,9 +248,7 @@ quit = new QuitCoordinator(
   async () => {
     updates.stop();
     clearInterval(refresh);
-    if (smokeTimer) clearTimeout(smokeTimer);
     await controller.close();
-    if (smoke) await reportSmoke("closed");
     if (!trayRemoved) {
       tray.remove();
       trayRemoved = true;
@@ -502,14 +352,9 @@ async function dispatch(event: unknown): Promise<void> {
     }
     case "close-window":
       window?.close();
-      if (smoke && closeShortcutRequested) {
-        closeShortcutHandled = true;
-        closeRequestedHandled = true;
-      }
       break;
     case "quit":
       Utils.quit();
-      if (smoke && shortcutRequested) shortcutHandled = true;
       break;
   }
 }
@@ -570,13 +415,5 @@ const background = startsInBackground(
   login.manager.status(),
   savedLoginPreference,
 );
-if (!background || smoke) openWindow();
+if (!background) openWindow();
 if (!window) await completeUpdateStartup();
-if (smoke)
-  setTimeout(() => {
-    smokeError = "Native verification timed out.";
-    asOrdinaryQuit(() => {
-      quit?.armQuit();
-      Utils.quit();
-    });
-  }, 50_000).unref();

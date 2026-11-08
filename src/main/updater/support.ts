@@ -49,7 +49,6 @@ export interface UpdateSupport {
 
 export interface UpdateSupportOptions {
   platform: "macos" | "linux";
-  isolated: boolean;
   appBundlePath: string;
   architecture?: string;
   verifier?: Pick<ApplicationVerifier, "readPublisher">;
@@ -60,11 +59,7 @@ function unsupported(installedVersion: string | null = null): UpdateSupport {
 }
 
 export async function readUpdateSupport(options: UpdateSupportOptions): Promise<UpdateSupport> {
-  if (
-    options.platform !== "macos" ||
-    options.isolated ||
-    (options.architecture ?? process.arch) !== "arm64"
-  )
+  if (options.platform !== "macos" || (options.architecture ?? process.arch) !== "arm64")
     return unsupported();
   try {
     const document = JSON.parse(

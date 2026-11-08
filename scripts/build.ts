@@ -31,7 +31,6 @@ if (plan.macNative) {
       "-framework",
       "AppKit",
       "src/native/login.m",
-      "src/native/probe.m",
       "src/native/signals.m",
       "-o",
       ".cache/native/login.dylib",

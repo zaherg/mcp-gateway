@@ -384,7 +384,7 @@ try {
   cancellation.signal.throwIfAborted();
   evidence.ok = true;
   console.log(
-    `Verified app, DMG and signed payload signatures, tickets and Gatekeeper acceptance.\nSigned runtime for smoke test: ${payload}`,
+    `Verified app, DMG and signed payload signatures, tickets and Gatekeeper acceptance.\nSigned runtime: ${payload}`,
   );
 } catch (error) {
   evidence.ok = false;
