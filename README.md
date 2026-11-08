@@ -91,7 +91,7 @@ bun scripts/verify-release.ts
 
 To build another candidate of the same version without replacing existing files, set `MCP_GATEWAY_BUILD_ROOT` and `MCP_GATEWAY_ARTIFACTS_DIR` to fresh relative paths for both commands.
 
-After verification passes, an updater-capable release must publish `macos-arm64-MCPGateway.dmg`, `stable-macos-arm64-update.json`, and `stable-macos-arm64-MCPGateway.app.tar.zst`, all matching the version in `package.json`.
+After verification passes, an updater-capable release must publish `macos-arm64-MCPGateway.dmg`, `stable-macos-arm64-update.json`, `stable-macos-arm64-update-v2.json`, and `stable-macos-arm64-MCPGateway.app.tar.zst`, all matching the version in `package.json`.
 
 Run `bun run typecheck` and `bun run lint` for source checks.
 See [deployment.md](deployment.md#tests) for the current test coverage limits.

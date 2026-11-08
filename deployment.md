@@ -136,8 +136,8 @@ Verification alone does not establish updater or packaged replacement acceptance
 The recorded `0.3.1` packaged acceptance has not passed: the signed late-start case failed twice, and the original HTTP 503 fixture had unresolved failures.
 The packaged-acceptance fixtures and their guides are absent from this checkout, so those checks cannot currently be rerun using the deleted suite.
 
-The updater feed is fixed to `https://github.com/zaherg/mcp-gateway/releases/latest/download` in `src/main/updater/constants.ts`.
-Update candidates must match the installed app's identifier and Apple Developer team, so a build signed by a different team cannot update the official build.
+The updater feed is fixed to `https://github.com/zaherg/mcp-gateway/releases/latest/download` in `electrobun.config.ts` (`release.baseUrl`); `src/main/app-updater.ts` resolves support from the installed channel, version and feed.
+Update candidates must match the installed app's identifier, channel and version metadata; the built-in updater does not compare the signing team.
 Version `0.3.0` has no updater and requires a manual upgrade using the DMG.
 
 ### Install or distribute
@@ -161,9 +161,8 @@ Tags must be `X.Y.Z` or `vX.Y.Z`, with a version matching `package.json` exactly
 Other tags and prerelease versions fail validation without publishing.
 The release, lint and test workflow definitions must all be present in the tagged commit.
 
-Do not tag the current source for distribution until the Electrobun 2.0.6 updater migration and required packaged acceptance are complete.
-The migration remains pending: the SDK prepares version-2 staged bundles, while the app still expects version-1 retained archives.
-The release workflow verifies build artifacts, not a complete in-app update cycle.
+Do not tag the current source for distribution until packaged acceptance is complete.
+The built-in Electrobun updater is wired, but the release workflow verifies build artifacts, not a complete in-app update cycle.
 
 ### Required GitHub Actions secrets
 
@@ -175,7 +174,7 @@ Add these repository secrets in GitHub Settings → Secrets and variables → Ac
 - `APPLE_TEAM_ID`: Apple Developer team ID matching the signing certificate.
 - `APPLE_APP_PASSWORD`: App-specific password for the notarization account.
 
-Use the existing publisher identity so installed copies can verify future updates.
+Use a consistent signing identity for notarization and Gatekeeper acceptance; the built-in updater does not compare the signing team.
 Keep the certificate and its password out of Git and workflow logs.
 The runner generates its temporary keychain password; no separate secret is needed for it.
 Missing secrets stop the workflow rather than producing an unsigned release.
@@ -191,7 +190,7 @@ Signing secrets are not passed to either check workflow.
 
 The build job uses GitHub's `macos-15` arm64 runner, Node 26.13.0 and Bun 1.4.4.
 It installs the locked dependencies, prepares the SDK, runs typecheck and lint, then signs, notarizes and verifies the release.
-It also checks the v2 manifest's expanded archive digest and size before generating `SHA256SUMS`.
+The verifier checks the v2 manifest's expanded archive digest and size; the workflow then generates `SHA256SUMS`.
 No unit, component, browser or packaged-update test suites run.
 
 CI uses fresh `build/ci-release/` and `artifacts/ci-release/` directories.
@@ -204,5 +203,5 @@ No personal access token is needed.
 Existing releases and their assets are never overwritten.
 If an upload failure leaves a draft release, inspect and remove that draft before retrying publication.
 
-After the source and updater acceptance are ready, update `package.json`, commit the release changes, and push the matching version tag.
+After packaged acceptance is ready, update `package.json`, commit the release changes, and push the matching version tag.
 Creating this workflow locally does not create or push a tag, configure signing secrets, or publish a release.
