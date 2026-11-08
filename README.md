@@ -2,8 +2,6 @@
 
 A macOS menu-bar app that exposes local stdio and remote Streamable HTTP MCP servers on a trusted LAN.
 
-> Built with Codex (GPT 6 Astra) for Linux-hosted Hermes agents using [Bear](https://bear.app/?src=https://github.com/zaherg/mcp-gateway).
-
 ## Platform status
 
 macOS on Apple silicon (arm64) is supported. The binaries require macOS 14.0 or newer; behavior on the minimum version has not been tested.
