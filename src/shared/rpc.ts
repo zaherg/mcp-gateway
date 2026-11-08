@@ -12,8 +12,6 @@ export function needsLoginRetry(status: LoginStatus, wanted: boolean): boolean {
   return status.supported && (status.error !== null || status.enabled !== wanted);
 }
 
-export type DesktopPlatform = "macos" | "linux";
-
 export type QuitStatus =
   | { attempt: number; phase: "idle" | "pending" | "ready"; error: null }
   | { attempt: number; phase: "failed"; error: string };
@@ -58,7 +56,6 @@ export interface UpdateStatus {
 }
 
 export interface AppSnapshot {
-  platform: DesktopPlatform;
   gateway: GatewaySnapshot;
   login: LoginStatus;
   update: UpdateStatus;

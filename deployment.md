@@ -1,7 +1,6 @@
 # Deployment
 
 This guide covers source builds and signed, notarized releases for macOS arm64.
-See the [platform status](README.md#platform-status) for Linux and Windows limitations.
 Run the commands from the repository root unless a step says otherwise.
 
 ## Prerequisites
@@ -57,13 +56,6 @@ Typos checks first-party source and documentation using `_typos.toml`, excluding
 Each check still runs if another linter fails, provided tool installation succeeded.
 The workflow reports findings without editing files and does not run test suites.
 
-After building a development app, run the native smoke check on macOS:
-
-```sh
-bun scripts/check-native.ts "build/dev-macos-arm64/MCP Gateway-dev.app"
-```
-
-On Linux, use `bash scripts/check-native-linux.sh <development-bundle>` to provide an isolated display and session bus.
 The unit, component, browser, and packaged-acceptance suites are absent from this checkout.
 
 ## Signed and notarized release
@@ -192,7 +184,7 @@ Missing secrets stop the workflow rather than producing an unsigned release.
 
 The release workflow first calls `lint.yml` and `test.yml` from the same tagged commit.
 Both must succeed before the macOS build can start; a failure, cancellation or skipped check blocks signing and publication.
-The test workflow retains its source checks, Linux development build and native smoke check.
+The test workflow retains its source checks and development build.
 Standalone lint and test runs still cover branch pushes, pull requests and manual dispatches; tag checks run through the release workflow to avoid duplicate runs.
 Their concurrency groups are separate so a called workflow cannot cancel its caller.
 Signing secrets are not passed to either check workflow.

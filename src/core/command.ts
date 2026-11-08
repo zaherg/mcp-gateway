@@ -45,7 +45,6 @@ export function createCommandRunner(options?: CreateCommandRunnerOptions): Comma
       spawn(command, [...args], {
         shell: false,
         stdio: ["ignore", "pipe", "pipe"],
-        windowsHide: true,
       }));
 
   return (command, args, timeoutMs = defaultTimeoutMs, signal) =>

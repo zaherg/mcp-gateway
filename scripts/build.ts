@@ -15,42 +15,40 @@ const environment = {
 };
 if (plan.signed) await assertEmptyReleaseArtifacts(root, environment);
 await prepareToolchain();
-if (plan.macNative) {
-  await mkdir(resolve(root, ".cache/native"), { recursive: true });
-  await command(
-    [
-      "/usr/bin/xcrun",
-      "clang",
-      "-dynamiclib",
-      "-fobjc-arc",
-      "-mmacosx-version-min=13.0",
-      "-framework",
-      "Foundation",
-      "-framework",
-      "ServiceManagement",
-      "-framework",
-      "AppKit",
-      "src/native/login.m",
-      "src/native/signals.m",
-      "-o",
-      ".cache/native/login.dylib",
-    ],
-    environment,
-  );
-  await command(
-    [
-      "/usr/bin/xcrun",
-      "swiftc",
-      "-module-cache-path",
-      environment.SWIFT_MODULECACHE_PATH,
-      "scripts/icons.swift",
-      "-o",
-      ".cache/native/icons",
-    ],
-    environment,
-  );
-  await command([resolve(root, ".cache/native/icons"), resolve(root, "assets")], environment);
-}
+await mkdir(resolve(root, ".cache/native"), { recursive: true });
+await command(
+  [
+    "/usr/bin/xcrun",
+    "clang",
+    "-dynamiclib",
+    "-fobjc-arc",
+    "-mmacosx-version-min=13.0",
+    "-framework",
+    "Foundation",
+    "-framework",
+    "ServiceManagement",
+    "-framework",
+    "AppKit",
+    "src/native/login.m",
+    "src/native/signals.m",
+    "-o",
+    ".cache/native/login.dylib",
+  ],
+  environment,
+);
+await command(
+  [
+    "/usr/bin/xcrun",
+    "swiftc",
+    "-module-cache-path",
+    environment.SWIFT_MODULECACHE_PATH,
+    "scripts/icons.swift",
+    "-o",
+    ".cache/native/icons",
+  ],
+  environment,
+);
+await command([resolve(root, ".cache/native/icons"), resolve(root, "assets")], environment);
 
 // Preserve the pinned adapter's module/package boundaries and runtime metadata.
 const runtime = resolve(root, ".cache/runtime-deps");

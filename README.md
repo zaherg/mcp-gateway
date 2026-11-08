@@ -6,7 +6,7 @@ A macOS menu-bar app that exposes local stdio and remote Streamable HTTP MCP ser
 
 ## Platform status
 
-macOS 14+ on arm64 is supported. Linux builds are unverified. Windows packaging is experimental, and its runtime is unsupported.
+macOS 14+ on arm64 is supported.
 
 ## Use
 
@@ -45,7 +45,7 @@ Requests time out after 30 seconds.
 
 ## Configuration
 
-Use one `mcp.json` or `mcp.jsonc`. On macOS it belongs in `~/Library/Application Support/MCP Gateway/`; on Linux, use `$XDG_CONFIG_HOME/MCP Gateway/`, or `~/.config/MCP Gateway/` when the variable is unset. An absolute `MCP_GATEWAY_DATA_DIR` overrides either location.
+Use one `mcp.json` or `mcp.jsonc`. On macOS it belongs in `~/Library/Application Support/MCP Gateway/`. An absolute `MCP_GATEWAY_DATA_DIR` overrides that location.
 A `.json` file must be strict JSON, while `.jsonc` allows comments and trailing commas. Having both files present is an error. Quit the app before renaming the file, then reopen it. Files are owner-only, and symlinks are refused.
 If a crash leaves `mcp.json.lock` beside the configuration, quit every app instance and confirm no writer is active before removing the lock and retrying.
 
@@ -93,7 +93,5 @@ To build another candidate of the same version without replacing existing files,
 
 After verification passes, an updater-capable release must publish `macos-arm64-MCPGateway.dmg`, `stable-macos-arm64-update.json`, and `stable-macos-arm64-MCPGateway.app.tar.zst`, all matching the version in `package.json`.
 
-`bun run build:linux` and `bun run build:windows` produce experimental unsigned packages and must run on their target platform. Linux builds require GTK3, WebKitGTK 4.1, Ayatana AppIndicator, librsvg, and X11/XWayland. Windows builds require WebView2.
-
 Run `bun run typecheck` and `bun run lint` for source checks.
-See [deployment.md](deployment.md#tests) for native smoke checks and the current test coverage limits.
+See [deployment.md](deployment.md#tests) for the current test coverage limits.

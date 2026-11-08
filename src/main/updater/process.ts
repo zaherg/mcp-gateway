@@ -119,7 +119,6 @@ export async function runOwnedWorker(options: OwnedWorkerOptions): Promise<Owned
     shell: false,
     detached: true,
     stdio: [options.requireGrant ? "pipe" : "ignore", "pipe", "pipe"],
-    windowsHide: true,
   });
   const pid = child.pid;
   let stdoutBytes = 0;

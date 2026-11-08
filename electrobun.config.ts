@@ -25,9 +25,7 @@ export default {
       "dist/index.html": "views/mainview/index.html",
       "dist/assets": "views/mainview/assets",
       "assets/tray.png": "views/assets/tray.png",
-      ...(process.platform === "darwin"
-        ? { ".cache/native/login.dylib": "native/login.dylib" }
-        : {}),
+      ".cache/native/login.dylib": "native/login.dylib",
       ".cache/runtime-deps/node_modules": "node_modules",
     },
     watchIgnore: ["dist/**", ".cache/**", "node_modules/**", "release/**"],
@@ -38,8 +36,6 @@ export default {
       notarize: true,
       createDmg: true,
     },
-    win: { bundleCEF: false, icon: "assets/App.iconset/icon_256x256.png" },
-    linux: { bundleCEF: false, icon: "assets/App.iconset/icon_256x256.png" },
   },
   runtime: { exitOnLastWindowClosed: false },
   release: { baseUrl: UPDATER_FEED_URL },

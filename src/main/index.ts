@@ -16,13 +16,7 @@ import { InteractiveQuitGate } from "./interactive-quit";
 import { QuitCoordinator } from "./lifecycle";
 import { openLoginManager } from "./login";
 import { observeNativeQuitSignals } from "./native-signals";
-import {
-  configurationDirectory,
-  desktopPlatform,
-  handleWindowClose,
-  restoreWindow,
-  startsInBackground,
-} from "./platform";
+import { configurationDirectory, restoreWindow, startsInBackground } from "./platform";
 import { AppService } from "./service";
 import { applyVerifiedUpdate, loadApplySdk } from "./updater/apply";
 import { INSTALLATION_ENABLED, UpdaterSafetyBoundary } from "./updater/boundary";
@@ -40,20 +34,17 @@ if (updaterWorkerMode) {
   process.exit(await runUpdaterWorker(updaterWorkerMode));
 }
 
-const platform = desktopPlatform(process.platform);
-const dataDirectory = configurationDirectory(platform, homedir(), process.env, Utils.paths.config);
+const dataDirectory = configurationDirectory(homedir(), process.env, Utils.paths.config);
 const nativeQuitSignal = observeNativeQuitSignals(
-  platform,
   join(PATHS.RESOURCES_FOLDER, "app/native/login.dylib"),
 );
-const login = openLoginManager(platform, join(PATHS.RESOURCES_FOLDER, "app/native/login.dylib"));
+const login = openLoginManager(join(PATHS.RESOURCES_FOLDER, "app/native/login.dylib"));
 const controller = await McpGatewayController.open(join(dataDirectory, "mcp.json"));
 const idleQuitStatus: QuitStatus = { attempt: 0, phase: "idle", error: null };
 let quit: QuitCoordinator | undefined;
 const quitStatus = (): QuitStatus => quit?.status() ?? idleQuitStatus;
 const appBundlePath = resolve(dirname(process.execPath), "..", "..");
 const updateSupport = await readUpdateSupport({
-  platform,
   appBundlePath,
 });
 const boundary = updateSupport.supported
@@ -98,7 +89,6 @@ const service = new AppService(
   login.manager,
   Utils.clipboardWriteText,
   {
-    platform,
     requestQuit: () => {
       asOrdinaryQuit(() => {
         quit?.armQuit();
@@ -194,7 +184,7 @@ function openWindow(): void {
     restoreWindow(window);
     return;
   }
-  if (platform === "macos") Utils.setDockIconVisible(true);
+  Utils.setDockIconVisible(true);
   let ready = false;
   const rpc = BrowserView.defineRPC<AppRPC>({
     handlers: {
@@ -230,15 +220,12 @@ function openWindow(): void {
     navigationRules: JSON.stringify(["^*", "views://mainview/index.html"]),
   });
   window = created;
-  created.on("will-close", (event) => {
-    handleWindowClose(platform, event, created);
-  });
   created.on("close", () => {
     if (window === created) {
       window = undefined;
       windowReady = false;
       requestInteractiveRendererQuit = undefined;
-      if (platform === "macos") Utils.setDockIconVisible(false);
+      Utils.setDockIconVisible(false);
     }
   });
 }
@@ -361,38 +348,37 @@ async function dispatch(event: unknown): Promise<void> {
 tray.on("tray-clicked", (event) => {
   void dispatch(event).catch(() => console.error("Tray action failed."));
 });
-if (platform === "macos")
-  ApplicationMenu.setApplicationMenu([
-    {
-      label: "MCP Gateway",
-      submenu: [
-        { label: "Settings…", action: "open", accelerator: "Cmd+," },
-        ...(updateSupport.supported ? [{ label: "Check for Updates…", action: "updates" }] : []),
-        { type: "divider" },
-        { label: "Quit MCP Gateway", action: "quit", accelerator: "Cmd+Q" },
-      ],
-    },
-    {
-      label: "File",
-      submenu: [{ label: "Close Window", action: "close-window", accelerator: "Cmd+W" }],
-    },
-    {
-      label: "Edit",
-      submenu: [
-        { role: "undo" },
-        { role: "redo" },
-        { type: "divider" },
-        { role: "cut" },
-        { role: "copy" },
-        { role: "paste" },
-        { role: "selectAll" },
-      ],
-    },
-  ]);
+ApplicationMenu.setApplicationMenu([
+  {
+    label: "MCP Gateway",
+    submenu: [
+      { label: "Settings…", action: "open", accelerator: "Cmd+," },
+      ...(updateSupport.supported ? [{ label: "Check for Updates…", action: "updates" }] : []),
+      { type: "divider" },
+      { label: "Quit MCP Gateway", action: "quit", accelerator: "Cmd+Q" },
+    ],
+  },
+  {
+    label: "File",
+    submenu: [{ label: "Close Window", action: "close-window", accelerator: "Cmd+W" }],
+  },
+  {
+    label: "Edit",
+    submenu: [
+      { role: "undo" },
+      { role: "redo" },
+      { type: "divider" },
+      { role: "cut" },
+      { role: "copy" },
+      { role: "paste" },
+      { role: "selectAll" },
+    ],
+  },
+]);
 ApplicationMenu.on("application-menu-clicked", (event) => {
   void dispatch(event).catch(() => console.error("Menu action failed."));
 });
-if (platform === "macos") Utils.setDockIconVisible(false);
+Utils.setDockIconVisible(false);
 updateMenu();
 try {
   await updates.start({ reconcile: false });
@@ -410,7 +396,6 @@ try {
   if (!(error instanceof GatewayError)) throw error;
 }
 const background = startsInBackground(
-  platform,
   process.argv.includes("--background"),
   login.manager.status(),
   savedLoginPreference,

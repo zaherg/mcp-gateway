@@ -5,7 +5,6 @@ import { LOG_LEVELS, LOG_LIMITS } from "../shared/logs";
 import {
   type AppResult,
   type AppSnapshot,
-  type DesktopPlatform,
   type LoginStatus,
   needsLoginRetry,
   type QuitStatus,
@@ -95,7 +94,6 @@ export class AppService {
     private readonly login: LoginManager,
     private readonly copyText: (text: string) => void,
     private readonly desktop: {
-      platform: DesktopPlatform;
       requestQuit: () => QuitStatus;
       quitStatus: () => QuitStatus;
     },
@@ -108,7 +106,6 @@ export class AppService {
     // A later cleanup step can fail after the login library has been released.
     if (this.desktop.quitStatus().phase === "idle") this.loginStatus = this.login.status();
     return {
-      platform: this.desktop.platform,
       gateway: this.controller.snapshot(),
       login: this.loginStatus,
       update: this.updates?.statusValue() ?? unsupportedUpdateStatus(),

@@ -786,9 +786,7 @@ export function App({ client }: { client: AppClient }) {
             </p>
           </div>
           <div>
-            <span className="mac-badge">
-              {snapshot ? (snapshot.platform === "linux" ? "Linux" : "macOS") : "Desktop"} · local
-            </span>
+            <span className="mac-badge">{snapshot ? "macOS" : "Desktop"} · local</span>
             <button
               type="button"
               className="button"
@@ -1345,12 +1343,8 @@ export function App({ client }: { client: AppClient }) {
                       <div className="startup-settings">
                         <Toggle
                           label="Launch app at login"
-                          description={
-                            snapshot.platform === "linux"
-                              ? "Automatic login registration is unavailable on Linux."
-                              : "Open MCP Gateway in the background when you sign in to macOS."
-                          }
-                          disabled={configurationLocked || snapshot.platform === "linux"}
+                          description="Open MCP Gateway in the background when you sign in to macOS."
+                          disabled={configurationLocked}
                           checked={config.gateway.launchAtLogin ?? false}
                           onChange={(value) =>
                             update({
@@ -1372,9 +1366,8 @@ export function App({ client }: { client: AppClient }) {
                             <p className="inline-error">{snapshot.login.error}</p>
                           )}
                           <small>
-                            {snapshot.platform === "linux"
-                              ? "Gateway automatic start remains available below."
-                              : "Desired setting above is separate from the actual macOS registration shown here."}
+                            Desired setting above is separate from the actual macOS registration
+                            shown here.
                           </small>
                         </div>
                         <Toggle
@@ -1629,11 +1622,7 @@ export function App({ client }: { client: AppClient }) {
                 <span className={`dot ${gateway?.running ? "online" : ""}`} />
                 {gateway?.running ? "Listener active" : "No active listener"}
               </span>
-              <span>
-                {snapshot.platform === "linux"
-                  ? "Closing minimizes to the taskbar; the gateway and logs keep running. Use Quit to stop the app."
-                  : "Closing this window keeps the app running. Use Quit to stop it."}
-              </span>
+              <span>Closing this window keeps the app running. Use Quit to stop it.</span>
             </footer>
           </>
         )}

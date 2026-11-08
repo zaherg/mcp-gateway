@@ -1,8 +1,6 @@
 import { dlopen, FFIType } from "bun:ffi";
-import type { DesktopPlatform } from "../shared/rpc";
 
-export function observeNativeQuitSignals(platform: DesktopPlatform, path: string): () => boolean {
-  if (platform !== "macos") return () => false;
+export function observeNativeQuitSignals(path: string): () => boolean {
   const library = dlopen(path, {
     mcp_quit_signal_install: { args: [], returns: FFIType.i32 },
     mcp_quit_signal_requested: { args: [], returns: FFIType.i32 },

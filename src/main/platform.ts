@@ -1,11 +1,4 @@
 import { isAbsolute, join } from "node:path";
-import type { DesktopPlatform } from "../shared/rpc";
-
-export function desktopPlatform(platform: string): DesktopPlatform {
-  if (platform === "darwin") return "macos";
-  if (platform === "linux") return "linux";
-  throw new Error("Desktop runtime is supported only on macOS and Linux.");
-}
 
 function absolutePath(path: string, name: string): string {
   if (!isAbsolute(path) || path.includes("\0"))
@@ -14,7 +7,6 @@ function absolutePath(path: string, name: string): string {
 }
 
 export function configurationDirectory(
-  platform: DesktopPlatform,
   home: string,
   environment: NodeJS.ProcessEnv,
   configBase?: string,
@@ -24,35 +16,15 @@ export function configurationDirectory(
   if (configBase !== undefined)
     return join(absolutePath(configBase, "Configuration base"), "MCP Gateway");
   absolutePath(home, "Home directory");
-  return platform === "macos"
-    ? join(home, "Library/Application Support/MCP Gateway")
-    : join(
-        environment.XDG_CONFIG_HOME === undefined
-          ? join(home, ".config")
-          : absolutePath(environment.XDG_CONFIG_HOME, "XDG_CONFIG_HOME"),
-        "MCP Gateway",
-      );
+  return join(home, "Library/Application Support/MCP Gateway");
 }
 
 export function startsInBackground(
-  platform: DesktopPlatform,
   requested: boolean,
   login: { supported: boolean; enabled: boolean },
   savedLoginPreference: boolean,
 ): boolean {
-  // Linux has no native reopen action and must remain reachable without a tray host.
-  return platform === "macos" && (requested || login.enabled || savedLoginPreference);
-}
-
-export function handleWindowClose(
-  platform: DesktopPlatform,
-  event: unknown,
-  window: { minimize(): void },
-): void {
-  if (platform !== "linux") return;
-  if (typeof event !== "object" || event === null) throw new Error("Invalid native close event.");
-  Object.assign(event, { response: { allow: false } });
-  window.minimize();
+  return requested || login.enabled || savedLoginPreference;
 }
 
 export function restoreWindow(window: {

@@ -11,12 +11,10 @@
         "prepare:sdk": "bun scripts/toolchain.ts prepare",
         "dev": "bun scripts/build.ts dev",
         "build": "bun scripts/build.ts dev-build",
-        "build:linux": "bun scripts/build.ts linux",
-        "build:windows": "bun scripts/build.ts windows",
         "release": "bun scripts/build.ts stable",
         "typecheck": "tsc --noEmit",
         "lint": "biome check src tests scripts *.ts",
-        "fix" : "biome format src tests scripts *.ts package.json",
+        "fix": "biome format src tests scripts *.ts package.json",
         "ui:build": "vite build"
     },
     "dependencies": {

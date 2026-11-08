@@ -1,5 +1,5 @@
 import { dlopen, FFIType } from "bun:ffi";
-import type { DesktopPlatform, LoginStatus } from "../shared/rpc";
+import type { LoginStatus } from "../shared/rpc";
 import type { LoginManager } from "./service";
 
 export interface LoginNative {
@@ -61,18 +61,7 @@ function closedError(): never {
   throw new Error("closed");
 }
 
-export function openLoginManager(platform: DesktopPlatform, path: string) {
-  if (platform === "linux") {
-    const status = (): LoginStatus => ({
-      enabled: false,
-      supported: false,
-      error: "Automatic login registration is unavailable on Linux.",
-    });
-    return {
-      manager: { status, setEnabled: (_enabled: boolean) => status() } satisfies LoginManager,
-      close: () => {},
-    };
-  }
+export function openLoginManager(path: string) {
   const library = dlopen(path, {
     mcp_login_status: { args: [], returns: FFIType.i32 },
     mcp_login_set: { args: [FFIType.i32], returns: FFIType.i32 },

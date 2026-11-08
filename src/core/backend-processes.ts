@@ -3,7 +3,6 @@ import type {
   ChildrenOwner,
   GatewayLogger,
 } from "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js";
-import { OwnedChildProcesses } from "supergateway/dist/lib/ownedChildProcesses.js";
 import { type CommandRunner, createCommandRunner } from "./command";
 
 export interface GroupMember {
@@ -77,7 +76,7 @@ interface ProcessOptions {
 /** A cleanup stays owned through uncertain inspection or refused termination. */
 export class BackendProcesses implements ChildrenOwner {
   closing = false;
-  readonly spawnOptions: SpawnOptions = { shell: false, detached: process.platform !== "win32" };
+  readonly spawnOptions: SpawnOptions = { shell: false, detached: true };
   private readonly stops = new Set<() => Promise<void>>();
 
   constructor(
@@ -98,9 +97,6 @@ export class BackendProcesses implements ChildrenOwner {
   }
 
   own(child: ChildProcess): () => Promise<void> {
-    // Windows runtime support is unchanged; this correction owns POSIX groups.
-    if (process.platform === "win32")
-      return this.track(new OwnedChildProcesses(this.logger).own(child));
     const pid = child.pid;
     const inspect = this.options.inspect ?? inspectBackendGroup;
     const signal =
