@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, realpath, rm, rmdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { type CommandRunner, runCommand } from "../src/main/updater/verify";
+import { type CommandRunner, runCommand } from "../src/core/command";
 
 export interface DmgCleanup {
   ok: boolean;

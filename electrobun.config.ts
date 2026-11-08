@@ -1,7 +1,8 @@
 import type { ElectrobunConfig } from "electrobun";
 import packageInfo from "./package.json";
 import { prepareBuildIdentity, releaseArtifactFolder } from "./scripts/build-config";
-import { UPDATER_FEED_URL } from "./src/main/updater/constants";
+
+const UPDATER_FEED_URL = "https://github.com/zaherg/mcp-gateway/releases/latest/download";
 
 const executingBuild = prepareBuildIdentity(import.meta.dir, packageInfo.version);
 
