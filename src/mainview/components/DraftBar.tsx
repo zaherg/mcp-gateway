@@ -1,7 +1,7 @@
-import type { AppSnapshot } from "../../shared/rpc";
-import type { Document } from "../dialogs/ServerEditor";
+import type { Document } from "@mcp-gateway/mainview/dialogs/ServerEditor";
+import type { AppSnapshot } from "@mcp-gateway/shared/rpc";
 
-export function DraftBar({
+export const DraftBar = ({
   dirty,
   retryLogin,
   configurationLocked,
@@ -17,7 +17,7 @@ export function DraftBar({
   setDoc: (doc: Document) => void;
   setError: (error: string | null) => void;
   save: () => Promise<boolean>;
-}) {
+}) => {
   if (!dirty && !retryLogin) return null;
   return (
     <div className="draft-bar">
@@ -63,4 +63,4 @@ export function DraftBar({
       </div>
     </div>
   );
-}
+};

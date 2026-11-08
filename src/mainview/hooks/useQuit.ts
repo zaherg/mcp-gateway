@@ -1,8 +1,8 @@
+import type { Editor } from "@mcp-gateway/mainview/dialogs/ServerEditor";
+import type { AppClient, AppSnapshot, QuitStatus } from "@mcp-gateway/shared/rpc";
 import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
-import type { AppClient, AppSnapshot, QuitStatus } from "../../shared/rpc";
-import type { Editor } from "../dialogs/ServerEditor";
 
-export function useQuit({
+export const useQuit = ({
   client,
   snapshot,
   updateRestarting,
@@ -30,7 +30,7 @@ export function useQuit({
   dirty: boolean;
   editor: Editor | null;
   deleting: string | null;
-}) {
+}) => {
   const [quitStatus, setQuitStatus] = useState<QuitStatus>({
     attempt: 0,
     phase: "idle",
@@ -61,7 +61,7 @@ export function useQuit({
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
-    async function pollQuit() {
+    const pollQuit = async () => {
       const current = quitGeneration.current;
       try {
         const result = await client.quitStatus();
@@ -73,7 +73,7 @@ export function useQuit({
       } finally {
         if (!cancelled) timer = setTimeout(pollQuit, 2000);
       }
-    }
+    };
     void pollQuit();
     return () => {
       cancelled = true;
@@ -81,7 +81,7 @@ export function useQuit({
     };
   }, [client, acceptQuitStatus]);
 
-  async function requestQuit() {
+  const requestQuit = async () => {
     if (quitRequestPending.current) return;
     setConfirmQuit(false);
     setRequestingQuit(true);
@@ -105,9 +105,9 @@ export function useQuit({
       quitRequestPending.current = false;
       setRequestingQuit(false);
     }
-  }
+  };
 
-  async function requestUpdateRestart() {
+  const requestUpdateRestart = async () => {
     if (quitting || updateRestarting) return;
     if (snapshot?.update.phase !== "ready") return;
     setConfirmUpdate(false);
@@ -133,7 +133,7 @@ export function useQuit({
       quitRequestPending.current = false;
       setRequestingQuit(false);
     }
-  }
+  };
 
   const interactiveQuit = useRef<() => boolean>(() => false);
   interactiveQuit.current = () => {
@@ -170,4 +170,4 @@ export function useQuit({
     quitRequestPending,
     quitGeneration,
   };
-}
+};

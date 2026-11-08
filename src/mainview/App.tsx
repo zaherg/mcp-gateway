@@ -1,30 +1,30 @@
-import { Activity } from "lucide-react";
-import { type FormEvent, useEffect, useRef, useState } from "react";
-import { editConfigDocument } from "../shared/config-document";
-import type { AppClient, AppSnapshot } from "../shared/rpc";
-import { needsLoginRetry } from "../shared/rpc";
-import type { GatewayConfig } from "../shared/types";
-import { Banners } from "./components/Banners";
-import { DraftBar } from "./components/DraftBar";
-import { GatewayStrip } from "./components/GatewayStrip";
-import { Shell } from "./components/Shell";
-import { ConfirmDialogs } from "./dialogs/ConfirmDialogs";
+import { Banners } from "@mcp-gateway/mainview/components/Banners";
+import { DraftBar } from "@mcp-gateway/mainview/components/DraftBar";
+import { GatewayStrip } from "@mcp-gateway/mainview/components/GatewayStrip";
+import { Shell } from "@mcp-gateway/mainview/components/Shell";
+import { ConfirmDialogs } from "@mcp-gateway/mainview/dialogs/ConfirmDialogs";
 import {
   type Document,
   type Editor,
   emptyEditor,
   formConfig,
   ServerEditor,
-} from "./dialogs/ServerEditor";
-import { useOperations } from "./hooks/useOperations";
-import { useQuit } from "./hooks/useQuit";
-import { Logs } from "./Logs";
-import { Overview } from "./views/Overview";
-import { RawConfig } from "./views/RawConfig";
-import { Settings } from "./views/Settings";
-import { Updates } from "./views/Updates";
+} from "@mcp-gateway/mainview/dialogs/ServerEditor";
+import { useOperations } from "@mcp-gateway/mainview/hooks/useOperations";
+import { useQuit } from "@mcp-gateway/mainview/hooks/useQuit";
+import { Logs } from "@mcp-gateway/mainview/Logs";
+import { Overview } from "@mcp-gateway/mainview/views/Overview";
+import { RawConfig } from "@mcp-gateway/mainview/views/RawConfig";
+import { Settings } from "@mcp-gateway/mainview/views/Settings";
+import { Updates } from "@mcp-gateway/mainview/views/Updates";
+import { editConfigDocument } from "@mcp-gateway/shared/config-document";
+import type { AppClient, AppSnapshot } from "@mcp-gateway/shared/rpc";
+import { needsLoginRetry } from "@mcp-gateway/shared/rpc";
+import type { GatewayConfig } from "@mcp-gateway/shared/types";
+import { Activity } from "lucide-react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 
-export function App({ client }: { client: AppClient }) {
+export const App = ({ client }: { client: AppClient }) => {
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null);
   const [doc, setDoc] = useState<Document | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -117,18 +117,18 @@ export function App({ client }: { client: AppClient }) {
     });
   }, [snapshot, quitStatus.attempt]);
 
-  function dismissLocalError() {
+  const dismissLocalError = () => {
     setError(null);
     if (errorOccurrence) {
       dismiss(`operation-${errorOccurrence}`);
       dismiss(`config-${errorOccurrence}`);
     }
-  }
+  };
 
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
-    async function poll() {
+    const poll = async () => {
       const current = generation.current;
       try {
         const result = await client.snapshot();
@@ -156,7 +156,7 @@ export function App({ client }: { client: AppClient }) {
       } finally {
         if (!cancelled) timer = setTimeout(poll, 2000);
       }
-    }
+    };
     void poll();
     return () => {
       cancelled = true;
@@ -175,7 +175,7 @@ export function App({ client }: { client: AppClient }) {
 
   const format = snapshot?.gateway.configFormat ?? "json";
   const filename = snapshot?.gateway.configPath.split("/").at(-1) ?? "mcp.json";
-  function update(config: GatewayConfig, rename?: { from: string; to: string }) {
+  const update = (config: GatewayConfig, rename?: { from: string; to: string }) => {
     if (configurationLocked) return;
     setDoc((previous) => {
       if (!previous) return previous;
@@ -188,7 +188,7 @@ export function App({ client }: { client: AppClient }) {
       return { ...previous, text, dirty: previous.dirty || text !== previous.text };
     });
     setNotice("");
-  }
+  };
   const parsed = doc ? formConfig(doc.text, format) : null;
   const config = snapshot?.gateway.configError && !doc?.dirty ? null : parsed;
   const gateway = snapshot?.gateway;
@@ -201,19 +201,19 @@ export function App({ client }: { client: AppClient }) {
     !stale &&
     needsLoginRetry(snapshot.login, config.gateway.launchAtLogin ?? false)
   );
-  async function save(text = doc?.text) {
+  const save = async (text = doc?.text) => {
     if (configurationLocked || !doc || text === undefined) return false;
     return run(
       () => client.saveConfig({ text, expectedRevision: doc.revision }),
       "Configuration saved.",
       true,
     );
-  }
-  function changeEditor(patch: Partial<Editor>) {
+  };
+  const changeEditor = (patch: Partial<Editor>) => {
     if (configurationLocked) return;
     setEditor((previous) => (previous ? { ...previous, ...patch } : null));
-  }
-  function openEditor(name?: string) {
+  };
+  const openEditor = (name?: string) => {
     if (configurationLocked) return;
     const next = emptyEditor();
     if (name && config) {
@@ -236,10 +236,14 @@ export function App({ client }: { client: AppClient }) {
     }
     setEditorError(null);
     setEditor(next);
-  }
-  function applyServer(event: FormEvent) {
+  };
+  const applyServer = (event: FormEvent) => {
     event.preventDefault();
     if (!editor || !config || configurationLocked) return;
+    if (editor.name !== editor.original && Object.hasOwn(config.mcpServers, editor.name)) {
+      setEditorError("A server with this name already exists.");
+      return;
+    }
     let args: string[] | undefined;
     let env: Record<string, string> | undefined;
     let headers: Record<string, string> | undefined;
@@ -300,14 +304,20 @@ export function App({ client }: { client: AppClient }) {
         : undefined,
     );
     setEditor(null);
-  }
-  async function toggleEndpoint(name: string, disabled: boolean) {
-    if (!config || configurationLocked) return;
+  };
+  const toggleEndpoint = async (name: string, disabled: boolean) => {
+    if (configurationLocked || !config || !doc || dirty) return;
     const server = config.mcpServers[name];
     if (!server) return;
-    update({ ...config, mcpServers: { ...config.mcpServers, [name]: { ...server, disabled } } });
-    await save();
-  }
+    const text = editConfigDocument(
+      doc.text,
+      { ...config, mcpServers: { ...config.mcpServers, [name]: { ...server, disabled } } },
+      format,
+    );
+    // Save this text: `doc` in this closure still holds the text from before the change.
+    setDoc({ ...doc, text, dirty: true });
+    await save(text);
+  };
 
   return (
     <Shell
@@ -480,4 +490,4 @@ export function App({ client }: { client: AppClient }) {
       )}
     </Shell>
   );
-}
+};

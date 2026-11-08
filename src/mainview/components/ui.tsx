@@ -10,7 +10,7 @@ import {
   useRef,
 } from "react";
 
-export function Alert({
+export const Alert = ({
   children,
   kind = "error",
   onDismiss,
@@ -22,7 +22,7 @@ export function Alert({
   onDismiss: () => void;
   label?: string;
   role?: "alert" | "status";
-}) {
+}) => {
   return (
     <div className={`alert ${kind}`} role={role ?? (kind === "success" ? "status" : "alert")}>
       <span>{children}</span>
@@ -31,9 +31,9 @@ export function Alert({
       </button>
     </div>
   );
-}
+};
 
-export function Field({
+export const Field = ({
   label,
   help,
   children,
@@ -41,9 +41,9 @@ export function Field({
   label: string;
   help?: string;
   children: ReactNode;
-}) {
+}) => {
   const id = useId();
-  function associate(node: ReactNode): ReactNode {
+  const associate = (node: ReactNode): ReactNode => {
     if (!isValidElement<{ id?: string; "aria-describedby"?: string; children?: ReactNode }>(node))
       return node;
     if (typeof node.type === "string" && ["input", "select", "textarea"].includes(node.type)) {
@@ -52,7 +52,7 @@ export function Field({
     return node.props.children
       ? cloneElement(node, { children: Children.map(node.props.children, associate) })
       : node;
-  }
+  };
   return (
     <div className="field">
       <label htmlFor={id}>{label}</label>
@@ -60,9 +60,9 @@ export function Field({
       {help && <small id={`${id}-help`}>{help}</small>}
     </div>
   );
-}
+};
 
-export function Toggle({
+export const Toggle = ({
   label,
   description,
   checked,
@@ -74,7 +74,7 @@ export function Toggle({
   checked: boolean;
   disabled?: boolean;
   onChange: (checked: boolean) => void;
-}) {
+}) => {
   return (
     <label className="toggle-row">
       <span>
@@ -91,9 +91,9 @@ export function Toggle({
       />
     </label>
   );
-}
+};
 
-export function Modal({
+export const Modal = ({
   title,
   children,
   onClose,
@@ -103,7 +103,7 @@ export function Modal({
   children: ReactNode;
   onClose: () => void;
   fallbackFocus: RefObject<HTMLElement | null>;
-}) {
+}) => {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   useEffect(() => {
@@ -135,4 +135,4 @@ export function Modal({
       {children}
     </dialog>
   );
-}
+};

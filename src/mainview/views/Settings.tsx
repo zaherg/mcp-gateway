@@ -1,9 +1,9 @@
+import { Field, Toggle } from "@mcp-gateway/mainview/components/ui";
+import type { AppSnapshot } from "@mcp-gateway/shared/rpc";
+import type { GatewayConfig, GatewaySnapshot } from "@mcp-gateway/shared/types";
 import { Eye, EyeOff, Settings2 } from "lucide-react";
-import type { AppSnapshot } from "../../shared/rpc";
-import type { GatewayConfig, GatewaySnapshot } from "../../shared/types";
-import { Field, Toggle } from "../components/ui";
 
-export function Settings({
+export const Settings = ({
   config,
   gateway,
   snapshot,
@@ -21,7 +21,7 @@ export function Settings({
   showToken: boolean;
   setShowToken: (show: boolean) => void;
   filename: string;
-}) {
+}) => {
   return (
     <section className="panel settings-panel">
       <div className="section-heading">
@@ -167,4 +167,4 @@ export function Settings({
       )}
     </section>
   );
-}
+};

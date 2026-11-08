@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, realpath, rm, rmdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { type CommandRunner, runCommand } from "../src/core/process";
+import { type CommandRunner, runCommand } from "@mcp-gateway/core/process";
 
 export interface DmgCleanup {
   ok: boolean;
@@ -8,14 +8,14 @@ export interface DmgCleanup {
   detail: string;
 }
 
-function object(value: unknown): Record<string, unknown> {
+const object = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw new Error("DMG mount inspection returned invalid data.");
   return value as Record<string, unknown>;
-}
+};
 
 /** Own the attach attempt, including a mount that appears after cancellation. */
-export async function withDmgMount<T>(
+export const withDmgMount = async <T>(
   imagePath: string,
   scratch: string,
   verify: (mount: string) => Promise<T>,
@@ -24,7 +24,7 @@ export async function withDmgMount<T>(
     signal?: AbortSignal;
     onCleanup?: (result: DmgCleanup) => void;
   } = {},
-): Promise<T> {
+): Promise<T> => {
   const run = options.run ?? runCommand;
   const image = await realpath(imagePath);
   options.signal?.throwIfAborted();
@@ -36,7 +36,7 @@ export async function withDmgMount<T>(
   let attachConfirmed = false;
   let outcome: { ok: true; value: T } | { ok: false; error: unknown };
 
-  async function mounted(): Promise<boolean> {
+  const mounted = async (): Promise<boolean> => {
     const info = await run("/usr/bin/hdiutil", ["info", "-plist"], 15_000);
     if (info.exitCode !== 0) throw new Error("DMG mount inspection failed.");
     await writeFile(plist, info.stdout, { mode: 0o600 });
@@ -60,7 +60,7 @@ export async function withDmgMount<T>(
     }
     if (matches > 1) throw new Error("Owned DMG mount identity is ambiguous.");
     return matches === 1;
-  }
+  };
 
   try {
     await mkdir(mount);
@@ -123,4 +123,4 @@ export async function withDmgMount<T>(
   if (!cleanup.ok) throw new Error(cleanup.detail);
   if (!outcome.ok) throw outcome.error;
   return outcome.value;
-}
+};

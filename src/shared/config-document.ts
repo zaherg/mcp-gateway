@@ -22,7 +22,7 @@ export class ConfigSyntaxError extends Error {
   }
 }
 
-function checkedTree(text: string, format: ConfigFormat): Node {
+const checkedTree = (text: string, format: ConfigFormat): Node => {
   const errors: ParseError[] = [];
   const root = parseTree(text, errors, {
     disallowComments: format === "json",
@@ -30,7 +30,7 @@ function checkedTree(text: string, format: ConfigFormat): Node {
     allowEmptyContent: false,
   });
   if (!root || errors.length) throw new ConfigSyntaxError();
-  function check(node: Node): void {
+  const check = (node: Node): void => {
     if (node.type === "object") {
       const keys = new Set<string>();
       for (const property of node.children ?? []) {
@@ -40,25 +40,25 @@ function checkedTree(text: string, format: ConfigFormat): Node {
       }
     }
     for (const child of node.children ?? []) check(child);
-  }
+  };
   check(root);
   return root;
-}
+};
 
-export function parseConfigDocument(text: string, format: ConfigFormat = "json"): unknown {
+export const parseConfigDocument = (text: string, format: ConfigFormat = "json"): unknown => {
   return getNodeValue(checkedTree(text, format));
-}
+};
 
 const record = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 
 /** Change only differing leaves. Retained blocks and source environment references stay intact. */
-export function editConfigDocument(
+export const editConfigDocument = (
   text: string,
   next: unknown,
   format: ConfigFormat = "json",
   rename?: { path: JSONPath; from: string; to: string },
-): string {
+): string => {
   let root = checkedTree(text, format);
   if (rename && rename.from !== rename.to) {
     const parent = findNodeAtLocation(root, rename.path);
@@ -75,7 +75,7 @@ export function editConfigDocument(
   const original: unknown = getNodeValue(root);
   // No formatting pass: jsonc-parser's edit ranges include neighboring comments/lines.
   // Direct value edits and unformatted structural edits leave retained trivia byte-identical.
-  function change(path: JSONPath, before: unknown, after: unknown): void {
+  const change = (path: JSONPath, before: unknown, after: unknown): void => {
     if (Object.is(before, after)) return;
     if (record(before) && record(after)) {
       for (const key of Object.keys(before)) {
@@ -88,8 +88,8 @@ export function editConfigDocument(
       for (let index = 0; index < after.length; index++)
         change([...path, index], before[index], after[index]);
     } else set(path, after);
-  }
-  function set(path: JSONPath, value: unknown): void {
+  };
+  const set = (path: JSONPath, value: unknown): void => {
     if (value !== undefined) {
       text = applyEdits(text, modify(text, path, value, {}));
       return;
@@ -116,8 +116,8 @@ export function editConfigDocument(
       { offset: node.offset, length: node.length, content: "" },
       ...(comma === undefined ? [] : [{ offset: comma, length: 1, content: "" }]),
     ]);
-  }
+  };
   change([], original, next);
   checkedTree(text, format);
   return text;
-}
+};

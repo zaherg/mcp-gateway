@@ -1,9 +1,9 @@
 import { dlopen, FFIType } from "bun:ffi";
 import { readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
-import { PRODUCTION_IDENTIFIER, TEST_IDENTIFIER } from "../shared/identity";
-import type { LoginStatus } from "../shared/rpc";
-import type { LoginManager } from "./service";
+import type { LoginManager } from "@mcp-gateway/main/service";
+import { PRODUCTION_IDENTIFIER, TEST_IDENTIFIER } from "@mcp-gateway/shared/identity";
+import type { LoginStatus } from "@mcp-gateway/shared/rpc";
 
 export interface LoginNative {
   status(): number;
@@ -60,11 +60,11 @@ export class MacLoginManager implements LoginManager {
   }
 }
 
-function closedError(): never {
+const closedError: () => never = () => {
   throw new Error("closed");
-}
+};
 
-export function openLoginManager(path: string) {
+export const openLoginManager = (path: string) => {
   const library = dlopen(path, {
     mcp_login_status: { args: [], returns: FFIType.i32 },
     mcp_login_set: { args: [FFIType.i32], returns: FFIType.i32 },
@@ -92,9 +92,9 @@ export function openLoginManager(path: string) {
       library.close();
     },
   };
-}
+};
 
-export function observeNativeQuitSignals(path: string): () => boolean {
+export const observeNativeQuitSignals = (path: string): (() => boolean) => {
   const library = dlopen(path, {
     mcp_quit_signal_install: { args: [], returns: FFIType.i32 },
     mcp_quit_signal_requested: { args: [], returns: FFIType.i32 },
@@ -104,17 +104,17 @@ export function observeNativeQuitSignals(path: string): () => boolean {
   if (library.symbols.mcp_quit_signal_install() !== 0)
     throw new Error("Native Quit signal observation could not be installed.");
   return () => library.symbols.mcp_quit_signal_requested() !== 0;
-}
+};
 
-function absolutePath(path: string, name: string): string {
+const absolutePath = (path: string, name: string): string => {
   if (!isAbsolute(path) || path.includes("\0"))
     throw new Error(`${name} must be an absolute path.`);
   return path;
-}
+};
 
 export type AppIdentifier = typeof PRODUCTION_IDENTIFIER | typeof TEST_IDENTIFIER;
 
-export function installedIdentifier(resourcesFolder: string): AppIdentifier {
+export const installedIdentifier = (resourcesFolder: string): AppIdentifier => {
   let identifier: unknown;
   try {
     identifier = JSON.parse(readFileSync(join(resourcesFolder, "version.json"), "utf8")).identifier;
@@ -124,31 +124,31 @@ export function installedIdentifier(resourcesFolder: string): AppIdentifier {
   if (identifier !== PRODUCTION_IDENTIFIER && identifier !== TEST_IDENTIFIER)
     throw new Error("Unsupported app identifier in version.json.");
   return identifier;
-}
+};
 
 // Utils.paths.config does not include the bundle identifier, so test builds need
 // their own folder to stay off the production configuration.
-export function configurationDirectory(configBase: string, identifier: AppIdentifier): string {
+export const configurationDirectory = (configBase: string, identifier: AppIdentifier): string => {
   return join(
     absolutePath(configBase, "Configuration base"),
     identifier === TEST_IDENTIFIER ? "MCP Gateway Test" : "MCP Gateway",
   );
-}
+};
 
-export function startsInBackground(
+export const startsInBackground = (
   requested: boolean,
   login: { supported: boolean; enabled: boolean },
   savedLoginPreference: boolean,
-): boolean {
+): boolean => {
   return requested || login.enabled || savedLoginPreference;
-}
+};
 
-export function restoreWindow(window: {
+export const restoreWindow = (window: {
   unminimize(): void;
   show(): void;
   activate(): void;
-}): void {
+}): void => {
   window.unminimize();
   window.show();
   window.activate();
-}
+};

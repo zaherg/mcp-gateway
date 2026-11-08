@@ -1,5 +1,5 @@
+import type { AppClient, AppRPC } from "@mcp-gateway/shared/rpc";
 import { Electroview } from "electrobun/view";
-import type { AppClient, AppRPC } from "../shared/rpc";
 
 // One native bridge for the lifetime of the renderer. No HTTP administration API.
 const rpc = Electroview.defineRPC<AppRPC>({

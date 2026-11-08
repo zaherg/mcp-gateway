@@ -1,4 +1,23 @@
 import { join } from "node:path";
+import { parseConfig } from "@mcp-gateway/core/config";
+import { McpGatewayController } from "@mcp-gateway/core/controller";
+import { GatewayError } from "@mcp-gateway/core/errors";
+import {
+  AppUpdater,
+  resolveUpdateSupport,
+  unsupportedUpdateStatus,
+} from "@mcp-gateway/main/app-updater";
+import { InteractiveQuitGate, QuitCoordinator } from "@mcp-gateway/main/lifecycle";
+import {
+  configurationDirectory,
+  installedIdentifier,
+  observeNativeQuitSignals,
+  openLoginManager,
+  restoreWindow,
+  startsInBackground,
+} from "@mcp-gateway/main/native";
+import { AppService } from "@mcp-gateway/main/service";
+import type { AppRPC, QuitStatus } from "@mcp-gateway/shared/rpc";
 import Electrobun, {
   ApplicationMenu,
   BrowserView,
@@ -7,21 +26,6 @@ import Electrobun, {
   Tray,
   Utils,
 } from "electrobun/main";
-import { parseConfig } from "../core/config";
-import { McpGatewayController } from "../core/controller";
-import { GatewayError } from "../core/errors";
-import type { AppRPC, QuitStatus } from "../shared/rpc";
-import { AppUpdater, resolveUpdateSupport, unsupportedUpdateStatus } from "./app-updater";
-import { InteractiveQuitGate, QuitCoordinator } from "./lifecycle";
-import {
-  configurationDirectory,
-  installedIdentifier,
-  observeNativeQuitSignals,
-  openLoginManager,
-  restoreWindow,
-  startsInBackground,
-} from "./native";
-import { AppService } from "./service";
 
 const dataDirectory = configurationDirectory(
   Utils.paths.config,
@@ -46,14 +50,14 @@ let trayRemoved = false;
 let loginClosed = false;
 let requestInteractiveRendererQuit: (() => Promise<boolean>) | undefined;
 
-function menuAction(event: unknown): string | undefined {
+const menuAction = (event: unknown): string | undefined => {
   if (typeof event !== "object" || event === null || !("data" in event)) return;
   const data = event.data;
   if (typeof data !== "object" || data === null || !("action" in data)) return;
   return typeof data.action === "string" ? data.action : undefined;
-}
+};
 
-function updateMenu(): void {
+const updateMenu = (): void => {
   if (trayRemoved) return;
   const quitFailed = quitStatus().phase === "failed";
   const snapshot = controller.snapshot();
@@ -90,9 +94,9 @@ function updateMenu(): void {
     { type: "divider" },
     { type: "normal", label: "Quit MCP Gateway", action: "quit" },
   ]);
-}
+};
 
-function showUpdatesSection(): void {
+const showUpdatesSection = (): void => {
   if (!support.supported) return;
   pendingShowUpdates = true;
   openWindow();
@@ -101,13 +105,13 @@ function showUpdatesSection(): void {
     pendingShowUpdates = false;
     dispatchShowUpdates();
   }
-}
+};
 
-function dispatchShowUpdates(): void {
+const dispatchShowUpdates = (): void => {
   window?.webview.executeJavascript('window.dispatchEvent(new Event("mcp-gateway:show-updates"))');
-}
+};
 
-function openWindow(): void {
+const openWindow = (): void => {
   if (window) {
     restoreWindow(window);
     return;
@@ -155,7 +159,7 @@ function openWindow(): void {
       Utils.setDockIconVisible(false);
     }
   });
-}
+};
 
 const refresh = setInterval(updateMenu, 1_000);
 quit = new QuitCoordinator(
@@ -245,7 +249,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const)
     Utils.quit();
   });
 
-async function dispatch(event: unknown): Promise<void> {
+const dispatch = async (event: unknown): Promise<void> => {
   switch (menuAction(event)) {
     case "open":
       openWindow();
@@ -268,7 +272,7 @@ async function dispatch(event: unknown): Promise<void> {
       Utils.quit();
       break;
   }
-}
+};
 tray.on("tray-clicked", (event) => {
   void dispatch(event).catch(() => console.error("Tray action failed."));
 });

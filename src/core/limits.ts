@@ -13,12 +13,12 @@ export class BackendOutputLimitError extends Error {
 }
 
 /** Bound raw line storage before decoding or invoking either pinned JSON parser. */
-export function readBackendLines(
+export const readBackendLines = (
   stdout: Readable,
   deliver: (line: string) => void,
   fail: (error: Error) => void,
   output: () => Promise<void> | undefined,
-): void {
+): void => {
   let buffer = Buffer.alloc(0);
   let length = 0;
   let failed = false;
@@ -70,7 +70,7 @@ export function readBackendLines(
   stdout.once("close", () => {
     buffer = Buffer.alloc(0);
   });
-}
+};
 
 /** SSE fields share one event budget; CR/LF framing does not count toward it. */
 export class BackendEventBudget {
@@ -97,10 +97,10 @@ export class BackendEventBudget {
 }
 
 /** Guard decoded HTTP body bytes before the SDK can collect JSON or SSE fields. */
-export function boundedBackendResponse(
+export const boundedBackendResponse = (
   response: Response,
   onLimit?: (error: BackendOutputLimitError) => void,
-): Response {
+): Response => {
   if (!response.body) return response;
   const reader = response.body.getReader();
   const type = response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
@@ -161,7 +161,7 @@ export function boundedBackendResponse(
     redirected: { value: response.redirected },
   });
   return bounded;
-}
+};
 // A shared budget for client requests whose backend work has not ended.
 //
 // Separate from HTTP request admission and from backend resource ownership: a
@@ -241,11 +241,14 @@ export class BackendCalls {
  * Run `release` only when the owned cleanup fulfilled. A rejected cleanup is
  * unconfirmed and keeps its work charged for a retry.
  */
-export async function releaseAfterCleanup<T>(cleanup: Promise<T>, release: () => void): Promise<T> {
+export const releaseAfterCleanup = async <T>(
+  cleanup: Promise<T>,
+  release: () => void,
+): Promise<T> => {
   const value = await cleanup;
   release();
   return value;
-}
+};
 // Shared by every endpoint. A reservation lasts until its process group or
 // upstream transport has finished cleanup.
 export class ResourceAdmission {
@@ -278,11 +281,11 @@ export class RequestBodyError extends Error {
 }
 
 /** One bounded read. The caller owns the deadline and aborts on response/endpoint closure. */
-export async function readRequestBody(
+export const readRequestBody = async (
   request: IncomingMessage,
   limit: number,
   signal: AbortSignal,
-): Promise<readonly JSONRPCMessage[]> {
+): Promise<readonly JSONRPCMessage[]> => {
   try {
     const mime = new MIMEType(request.headers["content-type"] ?? "");
     if (
@@ -347,4 +350,4 @@ export async function readRequestBody(
   // value and skip only its second byte read, never the transport's validation.
   Object.assign(request, { body: Array.isArray(body) ? messages : messages[0], _body: true });
   return messages;
-}
+};

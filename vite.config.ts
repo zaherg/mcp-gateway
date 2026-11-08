@@ -8,7 +8,15 @@ export default defineConfig({
   root: "src/mainview",
   base: "./",
   plugins: [react(), tailwindcss()],
-  resolve: { alias: electrobunViteAliases(".hutch/devkit") },
+  resolve: {
+    alias: [
+      ...electrobunViteAliases(".hutch/devkit"),
+      {
+        find: /^@mcp-gateway\//,
+        replacement: `${resolve(import.meta.dirname, "src")}/`,
+      },
+    ],
+  },
   build: {
     outDir: resolve(import.meta.dirname, "dist"),
     emptyOutDir: true,

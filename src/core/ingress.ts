@@ -1,20 +1,30 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Socket } from "node:net";
-import type { GatewayConfig, InterfaceChoice, ServerSnapshot, VisibleError } from "../shared/types";
-import type { GatewayMount } from "./adapter";
-import { backendSummary, closeMount, createMount } from "./adapter";
-import { isHttpServer, serverFingerprint } from "./config";
-import { failure, visible } from "./errors";
+import type { GatewayMount } from "@mcp-gateway/core/adapter";
+import { backendSummary, closeMount, createMount } from "@mcp-gateway/core/adapter";
+import { isHttpServer, serverFingerprint } from "@mcp-gateway/core/config";
+import { failure, visible } from "@mcp-gateway/core/errors";
 import {
   BackendCalls,
   MAX_BACKEND_CALLS,
   RequestBodyError,
   ResourceAdmission,
   readRequestBody,
-} from "./limits";
-import { LogBuffer } from "./logs";
-import { peerAllowed, rejectSelfProxy, type SelfProxyOptions, selectInterface } from "./network";
+} from "@mcp-gateway/core/limits";
+import { LogBuffer } from "@mcp-gateway/core/logs";
+import {
+  peerAllowed,
+  rejectSelfProxy,
+  type SelfProxyOptions,
+  selectInterface,
+} from "@mcp-gateway/core/network";
+import type {
+  GatewayConfig,
+  InterfaceChoice,
+  ServerSnapshot,
+  VisibleError,
+} from "@mcp-gateway/shared/types";
 
 export const MAX_BODY_BYTES = 4 * 1024 * 1024;
 export const MAX_CONCURRENT_REQUESTS = 32;
@@ -253,7 +263,9 @@ export class GatewayIngress {
       reject(403);
       return;
     }
-    if (req.headers.origin !== undefined && req.headers.origin !== new URL(this.address).origin) {
+    // The host is a validated IPv4 address; a URL origin omits the default port.
+    const origin = port === 80 ? `http://${host}` : this.address;
+    if (req.headers.origin !== undefined && req.headers.origin !== origin) {
       reject(403);
       return;
     }

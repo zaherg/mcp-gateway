@@ -1,17 +1,17 @@
+import { Toggle } from "@mcp-gateway/mainview/components/ui";
+import type { Editor } from "@mcp-gateway/mainview/dialogs/ServerEditor";
+import type { AppClient, AppResult, QuitStatus, UpdateStatus } from "@mcp-gateway/shared/rpc";
 import { ArrowDownToLine, ArrowUpRight, CircleHelp, RefreshCw } from "lucide-react";
 import type { RefObject } from "react";
-import type { AppClient, AppResult, QuitStatus, UpdateStatus } from "../../shared/rpc";
-import { Toggle } from "../components/ui";
-import type { Editor } from "../dialogs/ServerEditor";
 
-function updateCheckedLabel(value: string | null): string {
+const updateCheckedLabel = (value: string | null): string => {
   if (!value) return "Not checked yet.";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Last check time is unavailable.";
   return `Last checked ${date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`;
-}
+};
 
-function updateStatusText(update: UpdateStatus): string {
+const updateStatusText = (update: UpdateStatus): string => {
   switch (update.phase) {
     case "checking":
       return "Checking the fixed GitHub stable feed…";
@@ -34,9 +34,9 @@ function updateStatusText(update: UpdateStatus): string {
     case "idle":
       return update.checkedAt ? "You are up to date." : "No update check has run yet.";
   }
-}
+};
 
-export function Updates({
+export const Updates = ({
   updateState,
   updateBusy,
   configurationLocked,
@@ -65,7 +65,7 @@ export function Updates({
   client: AppClient;
   setConfirmUpdate: (confirm: boolean) => void;
   updatesHeading: RefObject<HTMLHeadingElement | null>;
-}) {
+}) => {
   const updateReady = updateState.phase === "ready";
   return (
     <section className="panel updates-panel" aria-labelledby="updates-heading">
@@ -198,4 +198,4 @@ export function Updates({
       )}
     </section>
   );
-}
+};

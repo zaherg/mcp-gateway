@@ -1,8 +1,8 @@
-import type { AppSnapshot, QuitStatus, UpdateStatus } from "../../shared/rpc";
-import type { GatewayConfig, GatewaySnapshot } from "../../shared/types";
-import { Alert } from "./ui";
+import { Alert } from "@mcp-gateway/mainview/components/ui";
+import type { AppSnapshot, QuitStatus, UpdateStatus } from "@mcp-gateway/shared/rpc";
+import type { GatewayConfig, GatewaySnapshot } from "@mcp-gateway/shared/types";
 
-export function Banners({
+export const Banners = ({
   error,
   dismissLocalError,
   updateState,
@@ -48,7 +48,7 @@ export function Banners({
   snapshot: AppSnapshot | undefined;
   loginWanted: boolean;
   stale: boolean;
-}) {
+}) => {
   return (
     <div className="announcements" aria-live="polite">
       {error && <Alert onDismiss={dismissLocalError}>{error}</Alert>}
@@ -145,4 +145,4 @@ export function Banners({
       )}
     </div>
   );
-}
+};

@@ -1,21 +1,6 @@
 import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import type { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
-import { StatefulSession } from "supergateway/dist/gateways/statefulSession.js";
-import { StatefulSessions } from "supergateway/dist/gateways/statefulSessions.js";
-import type {
-  ChildrenOwner,
-  GatewayLogger,
-  GatewayResponse,
-  PeerFactory,
-  Source,
-} from "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js";
-import { spawnCommand } from "supergateway/dist/lib/childCommand.js";
-import { readWhile } from "supergateway/dist/lib/outputBackpressure.js";
-import type { LogLevel } from "../shared/types";
-import { failure } from "./errors";
+import { failure } from "@mcp-gateway/core/errors";
 import {
   BACKEND_CAPACITY_ERROR,
   type BackendCalls,
@@ -24,8 +9,24 @@ import {
   readBackendLines,
   releaseAfterCleanup,
   type WorkOwner,
-} from "./limits";
-import type { BackendProcesses } from "./process";
+} from "@mcp-gateway/core/limits";
+import type { BackendProcesses } from "@mcp-gateway/core/process";
+import type { LogLevel } from "@mcp-gateway/shared/types";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { isInitializeRequest, isJSONRPCRequest } from "@modelcontextprotocol/sdk/types.js";
+import { StatefulSession } from "supergateway/dist/gateways/statefulSession.js";
+import { StatefulSessions } from "supergateway/dist/gateways/statefulSessions.js";
+import type {
+  ChildrenOwner,
+  GatewayLogger,
+  GatewayRequest,
+  GatewayResponse,
+  PeerFactory,
+  Source,
+} from "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js";
+import { spawnCommand } from "supergateway/dist/lib/childCommand.js";
+import { readWhile } from "supergateway/dist/lib/outputBackpressure.js";
 
 // Session-based MCP (2025-11-25 and earlier) for endpoints that opt in.
 // Supergateway 4.2.1's StatefulSessions owns the protocol: initialize,
@@ -58,7 +59,7 @@ interface SessionOptions {
 // session closed is the expected end.
 const BACKEND_FAILURE = /^Child (exited|process failure|non-JSON)/;
 
-function sessionLogger(log: SessionLog, ended: () => boolean): GatewayLogger {
+const sessionLogger = (log: SessionLog, ended: () => boolean): GatewayLogger => {
   return {
     info: (...args) => log("info", args, false),
     debug: (...args) => log("debug", args, false),
@@ -66,13 +67,39 @@ function sessionLogger(log: SessionLog, ended: () => boolean): GatewayLogger {
     error: (...args) =>
       log("error", args, !ended() && typeof args[0] === "string" && BACKEND_FAILURE.test(args[0])),
   };
-}
+};
 
-export function createSessions(options: SessionOptions): StatefulSessions {
+export const createSessions = (options: SessionOptions): StatefulSessions => {
   const { source, children, calls, reserve, log } = options;
   const localFailure = (error: unknown) => log("error", [error], false);
 
   class LeasedSessions extends StatefulSessions {
+    private readonly work = new WeakMap<StreamableHTTPServerTransport, WorkOwner>();
+
+    // A request whose response ended early (the request deadline or a client
+    // disconnect) is cancelled the way a client cancel is, so it stops holding
+    // the shared call budget while the session's event stream keeps it alive.
+    override async post(req: GatewayRequest, res: GatewayResponse): Promise<void> {
+      const sessionId = req.headers["mcp-session-id"];
+      const transport = typeof sessionId === "string" ? this.transports.get(sessionId) : undefined;
+      const work = transport && this.work.get(transport);
+      const messages: unknown[] = Array.isArray(req.body) ? req.body : [req.body];
+      const ids = messages.flatMap((message) => (isJSONRPCRequest(message) ? [message.id] : []));
+      if (transport && work && ids.length)
+        res.once("close", () => {
+          if (res.writableFinished || this.transports.get(sessionId as string) !== transport)
+            return;
+          for (const requestId of ids)
+            if (calls.holds(work, requestId))
+              transport.onmessage?.({
+                jsonrpc: "2.0",
+                method: "notifications/cancelled",
+                params: { requestId, reason: "The HTTP request ended before its reply." },
+              });
+        });
+      await super.post(req, res);
+    }
+
     override async open(res: GatewayResponse): Promise<StreamableHTTPServerTransport> {
       if (children.closing) throw failure("Closed", "The backend is closing.");
       const leases = reserve();
@@ -112,6 +139,7 @@ export function createSessions(options: SessionOptions): StatefulSessions {
           },
         );
         transport = session.transport;
+        this.work.set(transport, work);
         const onclose = transport.onclose;
         transport.onclose = () => {
           // Set before the session stops its child, so that exit is not a failure.
@@ -131,22 +159,24 @@ export function createSessions(options: SessionOptions): StatefulSessions {
     }
   }
 
-  return new LeasedSessions(
-    source,
-    children,
-    sessionLogger(log, () => true),
-    SESSION_IDLE_MS,
-  );
-}
+  // Session bookkeeping logs several info lines per request; they would push
+  // useful entries out of the bounded Logs buffer. Keep its warnings and errors.
+  const bookkeeping: GatewayLogger = {
+    ...sessionLogger(log, () => true),
+    info: () => {},
+    debug: () => {},
+  };
+  return new LeasedSessions(source, children, bookkeeping, SESSION_IDLE_MS);
+};
 
 // Release happens only after confirmed process-group absence or upstream
 // session cleanup; an unconfirmed cleanup keeps its leases for a retry.
-function leasedOwner(
+const leasedOwner = (
   children: BackendProcesses,
   release: () => void,
   report: (error: unknown) => void,
   registered: (stop: () => Promise<void>) => void,
-): ChildrenOwner {
+): ChildrenOwner => {
   const track = (stop: () => Promise<void>) => {
     const owned = children.track(() => releaseAfterCleanup(stop(), release));
     registered(owned);
@@ -166,13 +196,13 @@ function leasedOwner(
     },
     track,
   };
-}
+};
 
 // Charges each client request to the shared budget when it reaches the backend
 // and settles it on the backend's reply, a forwarded cancellation, or the
 // session's confirmed cleanup. Refusals go through the session's own message
 // path so its pending-request bookkeeping is cleared.
-function charged(factory: PeerFactory, work: WorkOwner, calls: BackendCalls): PeerFactory {
+const charged = (factory: PeerFactory, work: WorkOwner, calls: BackendCalls): PeerFactory => {
   return (owner) => {
     const refuse = (id: string | number, error: { code: number; message: string }) => {
       const response = { jsonrpc: "2.0" as const, id, error };
@@ -213,11 +243,15 @@ function charged(factory: PeerFactory, work: WorkOwner, calls: BackendCalls): Pe
       },
     };
   };
-}
+};
 
 // Supergateway's processPeer and upstreamPeer, with the 4 MiB output bound
 // applied before their otherwise unbounded readers.
-function startBackend(source: Source, children: ChildrenOwner, logger: GatewayLogger): PeerFactory {
+const startBackend = (
+  source: Source,
+  children: ChildrenOwner,
+  logger: GatewayLogger,
+): PeerFactory => {
   if (source.stdioCmd) {
     const child = spawnCommand(spawn, source.stdioCmd, { ...children.spawnOptions, stdio: "pipe" });
     const stop = children.own(child);
@@ -320,4 +354,4 @@ function startBackend(source: Source, children: ChildrenOwner, logger: GatewayLo
       },
     };
   };
-}
+};

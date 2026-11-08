@@ -1,4 +1,4 @@
-import type { QuitStatus } from "../shared/rpc";
+import type { QuitStatus } from "@mcp-gateway/shared/rpc";
 
 type Intent = "quit" | "update" | undefined;
 

@@ -1,6 +1,6 @@
+import { App } from "@mcp-gateway/mainview/App";
+import { client } from "@mcp-gateway/mainview/client";
 import { createRoot } from "react-dom/client";
-import { App } from "./App";
-import { client } from "./client";
 import "./styles.css";
 
 const root = document.getElementById("root");

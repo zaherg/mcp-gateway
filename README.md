@@ -122,3 +122,11 @@ Published releases also include a `SHA256SUMS` file; `bun run release` does not 
 
 Run `bun run typecheck` and `bun run lint` for source checks. This repository has no test suites.
 See [deployment.md](deployment.md#tests) for the lint workflow checks.
+
+## Source conventions
+
+Use named `const` arrow functions for ordinary implementations, including React components, hooks, and scripts.
+Keep class and object methods, constructors, accessors, and declaration-only signatures in their existing forms to preserve their semantics.
+Import TypeScript and JavaScript under `src/` through `@mcp-gateway/...`, including same-folder imports; the alias is configured for TypeScript, Bun, and Vite.
+Imports outside `src/`, such as script helpers and root `package.json`, remain relative, as do CSS and resource paths.
+Do not use parent traversal inside the alias or add a second root alias.

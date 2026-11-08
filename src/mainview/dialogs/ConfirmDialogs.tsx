@@ -1,9 +1,9 @@
+import { Modal } from "@mcp-gateway/mainview/components/ui";
+import type { UpdateStatus } from "@mcp-gateway/shared/rpc";
+import type { GatewayConfig } from "@mcp-gateway/shared/types";
 import type { RefObject } from "react";
-import type { UpdateStatus } from "../../shared/rpc";
-import type { GatewayConfig } from "../../shared/types";
-import { Modal } from "../components/ui";
 
-export function ConfirmDialogs({
+export const ConfirmDialogs = ({
   confirmQuit,
   setConfirmQuit,
   quitting,
@@ -39,7 +39,7 @@ export function ConfirmDialogs({
   parsed: GatewayConfig | null;
   update: (config: GatewayConfig) => void;
   fallbackFocus: RefObject<HTMLElement | null>;
-}) {
+}) => {
   return (
     <>
       {confirmQuit && (
@@ -128,4 +128,4 @@ export function ConfirmDialogs({
       )}
     </>
   );
-}
+};

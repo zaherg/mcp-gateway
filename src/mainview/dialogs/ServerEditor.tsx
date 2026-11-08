@@ -1,8 +1,8 @@
+import { Alert, Field, Modal } from "@mcp-gateway/mainview/components/ui";
+import type { ConfigFormat } from "@mcp-gateway/shared/config-document";
+import { parseConfigDocument } from "@mcp-gateway/shared/config-document";
+import type { GatewayConfig, HttpServerConfig, StdioServerConfig } from "@mcp-gateway/shared/types";
 import type { FormEvent, RefObject } from "react";
-import type { ConfigFormat } from "../../shared/config-document";
-import { parseConfigDocument } from "../../shared/config-document";
-import type { GatewayConfig, HttpServerConfig, StdioServerConfig } from "../../shared/types";
-import { Alert, Field, Modal } from "../components/ui";
 
 export type Backend = StdioServerConfig | HttpServerConfig;
 export type Document = { text: string; revision: string; dirty: boolean };
@@ -20,13 +20,13 @@ export type Editor = {
   legacyProtocol: boolean;
 };
 
-export function isRecord(value: unknown): value is Record<string, unknown> {
+export const isRecord = (value: unknown): value is Record<string, unknown> => {
   return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-export function stringMap(value: unknown): value is Record<string, string> {
+};
+export const stringMap = (value: unknown): value is Record<string, string> => {
   return isRecord(value) && Object.values(value).every((item) => typeof item === "string");
-}
-export function isBackend(value: unknown): value is Backend {
+};
+export const isBackend = (value: unknown): value is Backend => {
   if (
     !isRecord(value) ||
     (value.disabled !== undefined && typeof value.disabled !== "boolean") ||
@@ -44,9 +44,9 @@ export function isBackend(value: unknown): value is Backend {
     (value.env === undefined || stringMap(value.env)) &&
     (value.cwd === undefined || typeof value.cwd === "string")
   );
-}
+};
 // This guard is for rendering only. Native validation remains authoritative on every save.
-export function formConfig(text: string, format: ConfigFormat): GatewayConfig | null {
+export const formConfig = (text: string, format: ConfigFormat): GatewayConfig | null => {
   try {
     const value = parseConfigDocument(text, format);
     if (!isRecord(value) || !isRecord(value.gateway) || !isRecord(value.mcpServers)) return null;
@@ -73,7 +73,7 @@ export function formConfig(text: string, format: ConfigFormat): GatewayConfig | 
   } catch {
     return null;
   }
-}
+};
 export const emptyEditor = (): Editor => ({
   original: null,
   name: "",
@@ -88,7 +88,7 @@ export const emptyEditor = (): Editor => ({
   legacyProtocol: false,
 });
 
-export function ServerEditor({
+export const ServerEditor = ({
   editor,
   editorError,
   configurationLocked,
@@ -106,7 +106,7 @@ export function ServerEditor({
   onClose: () => void;
   onSubmit: (event: FormEvent) => void;
   onDismissError: () => void;
-}) {
+}) => {
   return (
     <Modal
       title={editor.original ? "Edit server" : "Add a server"}
@@ -254,4 +254,4 @@ export function ServerEditor({
       </form>
     </Modal>
   );
-}
+};

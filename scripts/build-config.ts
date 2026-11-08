@@ -1,6 +1,6 @@
 import { lstat, readdir } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { PRODUCTION_IDENTIFIER, TEST_IDENTIFIER } from "../src/shared/identity";
+import { PRODUCTION_IDENTIFIER, TEST_IDENTIFIER } from "@mcp-gateway/shared/identity";
 
 export { PRODUCTION_IDENTIFIER, TEST_IDENTIFIER };
 
@@ -8,7 +8,7 @@ export const STABLE_VERSION_PATTERN = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-
 export const PRODUCTION_FEED = "https://github.com/zaherg/mcp-gateway/releases/latest/download";
 export type BuildKind = "production" | "test";
 
-export function validateFeedUrl(value: string | undefined): string {
+export const validateFeedUrl = (value: string | undefined): string => {
   if (
     !value ||
     /\s/.test(value) ||
@@ -36,9 +36,9 @@ export function validateFeedUrl(value: string | undefined): string {
       "Update feeds require HTTPS (or loopback HTTP), without credentials, query or fragment.",
     );
   return value;
-}
+};
 
-export function buildIdentity(environment: NodeJS.ProcessEnv = process.env) {
+export const buildIdentity = (environment: NodeJS.ProcessEnv = process.env) => {
   const kind = environment.MCP_GATEWAY_BUILD_KIND ?? "production";
   if (kind !== "production" && kind !== "test") throw new Error("Invalid build kind.");
   return {
@@ -47,13 +47,13 @@ export function buildIdentity(environment: NodeJS.ProcessEnv = process.env) {
     feed: kind === "test" ? validateFeedUrl(environment.MCP_GATEWAY_TEST_FEED) : PRODUCTION_FEED,
     notarize: kind === "production",
   };
-}
+};
 
-export function releaseOutputEnvironment<T extends NodeJS.ProcessEnv>(
+export const releaseOutputEnvironment = <T extends NodeJS.ProcessEnv>(
   version: string,
   environment: T,
   kind: BuildKind = "production",
-): T & { MCP_GATEWAY_BUILD_ROOT: string; MCP_GATEWAY_ARTIFACTS_DIR: string } {
+): T & { MCP_GATEWAY_BUILD_ROOT: string; MCP_GATEWAY_ARTIFACTS_DIR: string } => {
   if (!STABLE_VERSION_PATTERN.test(version)) throw new Error("Invalid release version.");
   const prefix = kind === "test" ? "test-v" : "v";
   return {
@@ -62,17 +62,17 @@ export function releaseOutputEnvironment<T extends NodeJS.ProcessEnv>(
     MCP_GATEWAY_ARTIFACTS_DIR:
       environment.MCP_GATEWAY_ARTIFACTS_DIR ?? `artifacts/${prefix}${version}`,
   };
-}
+};
 
-export function releaseArtifactFolder(environment: NodeJS.ProcessEnv = process.env): string {
+export const releaseArtifactFolder = (environment: NodeJS.ProcessEnv = process.env): string => {
   return environment.MCP_GATEWAY_ARTIFACTS_DIR ?? "artifacts";
-}
+};
 
-export async function assertEmptyReleaseOutputs(
+export const assertEmptyReleaseOutputs = async (
   root: string,
   environment: NodeJS.ProcessEnv,
   kind: BuildKind,
-): Promise<void> {
+): Promise<void> => {
   const paths = [environment.MCP_GATEWAY_BUILD_ROOT, environment.MCP_GATEWAY_ARTIFACTS_DIR];
   const directories = paths.map((value) => {
     if (!value) throw new Error("Release output directories are required.");
@@ -109,4 +109,4 @@ export async function assertEmptyReleaseOutputs(
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
   }
-}
+};

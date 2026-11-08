@@ -1,11 +1,11 @@
+import { Field } from "@mcp-gateway/mainview/components/ui";
+import type { Document } from "@mcp-gateway/mainview/dialogs/ServerEditor";
+import type { ConfigFormat } from "@mcp-gateway/shared/config-document";
+import type { GatewaySnapshot } from "@mcp-gateway/shared/types";
 import { ArrowDownToLine, ChevronRight, Code2 } from "lucide-react";
 import type { RefObject } from "react";
-import type { ConfigFormat } from "../../shared/config-document";
-import type { GatewaySnapshot } from "../../shared/types";
-import { Field } from "../components/ui";
-import type { Document } from "../dialogs/ServerEditor";
 
-export function RawConfig({
+export const RawConfig = ({
   doc,
   setDoc,
   configurationLocked,
@@ -33,7 +33,7 @@ export function RawConfig({
   setRawOpen: (open: boolean) => void;
   fallbackFocus: RefObject<HTMLButtonElement | null>;
   setNotice: (notice: string) => void;
-}) {
+}) => {
   return (
     <section className="panel raw-panel">
       <button
@@ -86,4 +86,4 @@ export function RawConfig({
       )}
     </section>
   );
-}
+};

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { lstat, realpath } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { createCommandRunner } from "../src/core/process";
+import { createCommandRunner } from "@mcp-gateway/core/process";
 import { TEST_IDENTIFIER, validateFeedUrl } from "./build-config";
 import { hashFile, readUpdateArtifacts, UPDATE_FILES } from "./update-artifacts";
 
@@ -28,23 +28,23 @@ const CHILD_ENVIRONMENT_NAMES = new Set([
   "no_proxy",
 ]);
 
-function childEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+const childEnvironment = (source: NodeJS.ProcessEnv): NodeJS.ProcessEnv => {
   const environment: NodeJS.ProcessEnv = {};
   for (const [name, value] of Object.entries(source)) {
     if (value === undefined) continue;
     if (name.startsWith("RCLONE_") || CHILD_ENVIRONMENT_NAMES.has(name)) environment[name] = value;
   }
   return environment;
-}
+};
 
-function parseS3Path(value: string | undefined): string {
+const parseS3Path = (value: string | undefined): string => {
   const segments = value?.split("/") ?? [];
   if (segments.length < 2 || !segments.every((part) => /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(part)))
     throw new Error(
       "Set MCP_GATEWAY_TEST_FEED_S3_PATH to <bucket>/<prefix>, for example mcp-gateway/test/stable.",
     );
   return segments.join("/");
-}
+};
 
 const contentType = (name: string) =>
   name.endsWith(".json") ? "application/json" : "application/zstd";
@@ -53,7 +53,7 @@ const interrupt = () => cancellation.abort(new Error("Test feed publication canc
 process.on("SIGINT", interrupt);
 process.on("SIGTERM", interrupt);
 
-async function publish() {
+const publish = async () => {
   const options = parseArgs({
     args: process.argv.slice(2),
     allowPositionals: true,
@@ -84,7 +84,7 @@ async function publish() {
         stdio: ["ignore", "pipe", "pipe"],
       }),
   });
-  async function rclone(args: string[], accepted = [0]) {
+  const rclone = async (args: string[], accepted = [0]) => {
     const result = await run(
       "rclone",
       [
@@ -106,7 +106,7 @@ async function publish() {
         `Rclone ${args[0]} failed (exit ${result.exitCode}); private diagnostics withheld.`,
       );
     return result.stdout;
-  }
+  };
   const remotes = await rclone(["listremotes", "--long"]);
   if (!remotes.split(/\r?\n/).some((line) => new RegExp(`^${remote}:\\s+s3\\s*$`).test(line)))
     throw new Error("Selected remote does not exist or is not S3.");
@@ -262,7 +262,7 @@ async function publish() {
     console.log(`Verified anonymous readback: ${name}`);
   }
   console.log(`Published test version ${manifest.version} at ${publicBase}`);
-}
+};
 
 try {
   await publish();

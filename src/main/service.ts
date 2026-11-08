@@ -1,16 +1,16 @@
-import { Effect, Result, Schema, Semaphore } from "effect";
-import { MAX_CONFIG_BYTES, parseConfig, SAFE_NAME } from "../core/config";
-import { GatewayError, RequestError } from "../core/errors";
+import { MAX_CONFIG_BYTES, parseConfig, SAFE_NAME } from "@mcp-gateway/core/config";
+import { GatewayError, RequestError } from "@mcp-gateway/core/errors";
+import { type UpdateRuntime, unsupportedUpdateStatus } from "@mcp-gateway/main/app-updater";
 import {
   type AppResult,
   type AppSnapshot,
   type LoginStatus,
   needsLoginRetry,
   type QuitStatus,
-} from "../shared/rpc";
-import type { GatewayController } from "../shared/types";
-import { LOG_LEVELS, LOG_LIMITS } from "../shared/types";
-import { type UpdateRuntime, unsupportedUpdateStatus } from "./app-updater";
+} from "@mcp-gateway/shared/rpc";
+import type { GatewayController } from "@mcp-gateway/shared/types";
+import { LOG_LEVELS, LOG_LIMITS } from "@mcp-gateway/shared/types";
+import { Effect, Result, Schema, Semaphore } from "effect";
 
 export interface LoginManager {
   status(): LoginStatus;
@@ -28,24 +28,24 @@ const NameRequest = Schema.Struct({ name: Schema.String });
 const SaveRequest = Schema.Struct({ text: Schema.String, expectedRevision: Schema.String });
 const AutomaticRequest = Schema.Struct({ automatic: Schema.Boolean });
 
-function decode<A, I>(schema: Schema.Codec<A, I>, input: unknown): A {
+const decode = <A, I>(schema: Schema.Codec<A, I>, input: unknown): A => {
   try {
     return Schema.decodeUnknownSync(schema, { onExcessProperty: "error" })(input);
   } catch {
     throw new RequestError("The application request is invalid.");
   }
-}
+};
 
-function empty(input: unknown): void {
+const empty = (input: unknown): void => {
   if (input !== undefined && input !== null)
     throw new RequestError("This operation does not accept parameters.");
-}
+};
 
-function serverName(input: unknown): string {
+const serverName = (input: unknown): string => {
   const { name } = decode(NameRequest, input);
   if (!SAFE_NAME.test(name)) throw new RequestError("Select a configured server.");
   return name;
-}
+};
 
 /** Runtime-validated local RPC boundary. No exception may echo a raw request. */
 export class AppService {

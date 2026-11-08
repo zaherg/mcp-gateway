@@ -37,8 +37,6 @@ declare module "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js" {
   }
   export interface StatefulMount {
     app: GatewayApp;
-    path: string;
-    listening(host: string, port: number): void;
     close(): Promise<void>;
   }
   export interface GatewayLogger {
@@ -104,6 +102,8 @@ declare module "supergateway/dist/gateways/statefulSessions.js" {
       sessionTimeout: number,
     );
     readonly openResponses: WeakMap<StreamableHTTPServerTransport, Set<GatewayResponse>>;
+    /** Established sessions by id; a session is removed when it ends. */
+    readonly transports: Map<string, StreamableHTTPServerTransport>;
     open(res: GatewayResponse): Promise<StreamableHTTPServerTransport>;
     post(req: GatewayRequest, res: GatewayResponse): Promise<void>;
     request(req: GatewayRequest, res: GatewayResponse): Promise<void>;

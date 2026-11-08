@@ -1,11 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { lstat, open, readFile, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
+import { ensureParent } from "@mcp-gateway/core/config";
+import { RequestError } from "@mcp-gateway/core/errors";
+import type { QuitCoordinator } from "@mcp-gateway/main/lifecycle";
+import type { QuitStatus, UpdateStatus } from "@mcp-gateway/shared/rpc";
 import { Updater, type UpdateStatusEntry } from "electrobun/main";
-import { ensureParent } from "../core/config";
-import { RequestError } from "../core/errors";
-import type { QuitStatus, UpdateStatus } from "../shared/rpc";
-import type { QuitCoordinator } from "./lifecycle";
 
 const PREFERENCE_FILE = "updates.json";
 const STABLE_VERSION = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
@@ -26,7 +26,7 @@ export interface UpdateRuntime {
   subscribe(listener: (status: UpdateStatus) => void): () => void;
 }
 
-export function unsupportedUpdateStatus(): UpdateStatus {
+export const unsupportedUpdateStatus = (): UpdateStatus => {
   return {
     supported: false,
     automaticUpdates: false,
@@ -36,21 +36,21 @@ export function unsupportedUpdateStatus(): UpdateStatus {
     error: null,
     checkedAt: null,
   };
-}
+};
 
-export async function resolveUpdateSupport(): Promise<{
+export const resolveUpdateSupport = async (): Promise<{
   supported: boolean;
   installedVersion: string | null;
-}> {
+}> => {
   const info = await Updater.getLocalInfo();
   const installedVersion = STABLE_VERSION.test(info.version) ? info.version : null;
   return {
     supported: info.channel === "stable" && installedVersion !== null && info.baseUrl.length > 0,
     installedVersion,
   };
-}
+};
 
-function isHigherStableVersion(candidate: string, installed: string | null): boolean {
+const isHigherStableVersion = (candidate: string, installed: string | null): boolean => {
   if (!installed || !STABLE_VERSION.test(candidate) || !STABLE_VERSION.test(installed))
     return false;
   try {
@@ -58,7 +58,7 @@ function isHigherStableVersion(candidate: string, installed: string | null): boo
   } catch {
     return false;
   }
-}
+};
 
 interface Preference {
   automaticUpdates: boolean;
@@ -67,7 +67,7 @@ interface Preference {
 
 const invalidPreference = (): Preference => ({ automaticUpdates: false, error: PREFERENCE_ERROR });
 
-async function readPreference(dataDirectory: string): Promise<Preference> {
+const readPreference = async (dataDirectory: string): Promise<Preference> => {
   const path = join(dataDirectory, PREFERENCE_FILE);
   try {
     const stat = await lstat(path);
@@ -92,9 +92,9 @@ async function readPreference(dataDirectory: string): Promise<Preference> {
       return { automaticUpdates: true, error: null };
     return invalidPreference();
   }
-}
+};
 
-async function writePreference(dataDirectory: string, automaticUpdates: boolean): Promise<void> {
+const writePreference = async (dataDirectory: string, automaticUpdates: boolean): Promise<void> => {
   const path = join(dataDirectory, PREFERENCE_FILE);
   await ensureParent(path);
   const temporary = `${path}.${randomBytes(8).toString("hex")}.tmp`;
@@ -111,7 +111,7 @@ async function writePreference(dataDirectory: string, automaticUpdates: boolean)
     await unlink(temporary).catch(() => undefined);
     throw error;
   }
-}
+};
 
 const errorMessage = (error: unknown): string =>
   error instanceof Error && error.message ? error.message : "The update operation failed.";

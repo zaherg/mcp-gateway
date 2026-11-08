@@ -25,13 +25,13 @@ export interface UpdateManifest {
   artifact: { file: string; tarSha256?: string; tarSize?: number };
 }
 
-function record(value: unknown): Record<string, unknown> {
+const record = (value: unknown): Record<string, unknown> => {
   if (typeof value !== "object" || value === null || Array.isArray(value))
     throw new Error("Update metadata must be an object.");
   return value as Record<string, unknown>;
-}
+};
 
-function parseManifest(text: string, identifier: string, version?: string): UpdateManifest {
+const parseManifest = (text: string, identifier: string, version?: string): UpdateManifest => {
   let value: unknown;
   try {
     value = JSON.parse(text);
@@ -68,22 +68,22 @@ function parseManifest(text: string, identifier: string, version?: string): Upda
       ...(typeof artifact.tarSize === "number" ? { tarSize: artifact.tarSize } : {}),
     },
   };
-}
+};
 
-export async function hashFile(path: string, signal?: AbortSignal): Promise<string> {
+export const hashFile = async (path: string, signal?: AbortSignal): Promise<string> => {
   const digest = createHash("sha256");
   for await (const chunk of createReadStream(path)) {
     signal?.throwIfAborted();
     digest.update(chunk);
   }
   return digest.digest("hex");
-}
+};
 
-export async function readUpdateArtifacts(
+export const readUpdateArtifacts = async (
   directory: string,
   expected: { identifier: string; version?: string },
   signal?: AbortSignal,
-) {
+) => {
   for (const file of Object.values(UPDATE_FILES)) {
     const info = await lstat(join(directory, file));
     const limit = file === UPDATE_FILES.archive ? MAX_ARCHIVE_BYTES : MAX_MANIFEST_BYTES;
@@ -139,4 +139,4 @@ export async function readUpdateArtifacts(
   if (sha256 !== tarSha256 || size !== tarSize)
     throw new Error("Update archive integrity metadata mismatch.");
   return { manifest, integrity, expanded: { sha256, size } };
-}
+};

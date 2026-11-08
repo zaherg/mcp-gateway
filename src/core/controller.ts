@@ -1,35 +1,32 @@
 import { type FSWatcher, lstatSync, watch } from "node:fs";
 import { lstat } from "node:fs/promises";
 import { dirname } from "node:path";
-import { Effect, Exit, Result, Scope, Semaphore } from "effect";
-import type {
-  GatewayConfig,
-  GatewayController,
-  GatewayEvent,
-  GatewayOperation,
-  GatewaySnapshot,
-  LogQuery,
-  VisibleError,
-} from "../shared/types";
-import { type ConfigDocument, ConfigStore, isHttpServer, parseConfig } from "./config";
-import { failure, operational, visible } from "./errors";
-import { GatewayIngress } from "./ingress";
-import { LogBuffer } from "./logs";
+import {
+  type ConfigDocument,
+  ConfigStore,
+  isHttpServer,
+  parseConfig,
+} from "@mcp-gateway/core/config";
+import { failure, operational, visible } from "@mcp-gateway/core/errors";
+import { GatewayIngress } from "@mcp-gateway/core/ingress";
+import { LogBuffer } from "@mcp-gateway/core/logs";
 import {
   interfaceChoices,
   isSelfProxyCancelled,
   rejectSelfProxy,
   SELF_PROXY_DEADLINE_MS,
   type SelfProxyOptions,
-  type SelfProxyResolver,
   selectInterface,
-} from "./network";
-
-/** Internal seams for tests; production callers pass no options. */
-export interface ControllerOptions {
-  /** Resolver used by every self-proxy check instead of node:dns. */
-  resolve?: SelfProxyResolver;
-}
+} from "@mcp-gateway/core/network";
+import type {
+  GatewayConfig,
+  GatewayController,
+  GatewayOperation,
+  GatewaySnapshot,
+  LogQuery,
+  VisibleError,
+} from "@mcp-gateway/shared/types";
+import { Effect, Exit, Result, Scope, Semaphore } from "effect";
 
 /** Local native/UI API. Snapshots contain explicit config credentials; do not log them. */
 export class McpGatewayController implements GatewayController {
@@ -56,7 +53,6 @@ export class McpGatewayController implements GatewayController {
     ]);
   }
 
-  private readonly events: GatewayEvent[] = [];
   private watcher: FSWatcher | undefined;
   private watchHealthy = false;
   private watchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -66,18 +62,12 @@ export class McpGatewayController implements GatewayController {
   private closePromise: Promise<void> | undefined;
   private lifetimeClosed: Promise<void> | undefined;
 
-  private constructor(
-    configPath: string,
-    private readonly resolve?: SelfProxyResolver,
-  ) {
+  private constructor(configPath: string) {
     this.store = new ConfigStore(configPath);
   }
 
-  static async open(
-    configPath: string,
-    options: ControllerOptions = {},
-  ): Promise<McpGatewayController> {
-    const controller = new McpGatewayController(configPath, options.resolve);
+  static async open(configPath: string): Promise<McpGatewayController> {
+    const controller = new McpGatewayController(configPath);
     await controller.serial(async () => {
       const control = controller.control(controller.validationLifetime());
       try {
@@ -128,16 +118,13 @@ export class McpGatewayController implements GatewayController {
           status: server.disabled ? ("disabled" as const) : ("stopped" as const),
           error: null,
         })),
-      events: this.events.map((entry) => ({ ...entry })),
       configError: this.configError ? { ...this.configError } : null,
       operationalError: this.operationalError ? { ...this.operationalError } : null,
     };
   }
 
-  private event(level: GatewayEvent["level"], message: string): void {
+  private event(level: "info" | "error", message: string): void {
     this.logs.append({ server: null, level, source: "controller" }, [message]);
-    this.events.push({ time: new Date().toISOString(), level, message });
-    if (this.events.length > 100) this.events.shift();
   }
 
   private serial<A>(work: () => Promise<A>): Promise<A> {
@@ -181,7 +168,6 @@ export class McpGatewayController implements GatewayController {
 
   private control(signal: AbortSignal): SelfProxyOptions {
     return {
-      resolve: this.resolve,
       signal,
       deadline: Date.now() + SELF_PROXY_DEADLINE_MS,
     };
@@ -470,8 +456,3 @@ export class McpGatewayController implements GatewayController {
     return this.closePromise;
   }
 }
-
-export const open = (
-  configPath: string,
-  options: ControllerOptions = {},
-): Promise<McpGatewayController> => McpGatewayController.open(configPath, options);

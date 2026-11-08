@@ -76,7 +76,7 @@ await command(
 );
 await command([process.execPath, "run", "ui:build"], environment);
 
-async function signedBuild() {
+const signedBuild = async () => {
   const required = ["APPLE_ID", "APPLE_TEAM_ID", "APPLE_APP_PASSWORD"] as const;
   if (identity.notarize)
     for (const name of required) if (!process.env[name]) throw new Error(`Missing ${name}.`);
@@ -131,7 +131,7 @@ async function signedBuild() {
   );
   console.log(log);
   if (exit !== 0) throw new Error(`Signed release build failed with exit code ${exit}.`);
-}
+};
 
 if (plan.signed) await signedBuild();
 else

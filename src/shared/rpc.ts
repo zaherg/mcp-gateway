@@ -1,4 +1,4 @@
-import type { GatewaySnapshot, LogPage, LogQuery } from "./types";
+import type { GatewaySnapshot, LogPage, LogQuery } from "@mcp-gateway/shared/types";
 
 export interface LoginStatus {
   occurrenceId?: string;
@@ -7,9 +7,9 @@ export interface LoginStatus {
   error: string | null;
 }
 
-export function needsLoginRetry(status: LoginStatus, wanted: boolean): boolean {
+export const needsLoginRetry = (status: LoginStatus, wanted: boolean): boolean => {
   return status.supported && (status.error !== null || status.enabled !== wanted);
-}
+};
 
 export type QuitStatus =
   | { attempt: number; phase: "idle" | "pending" | "ready"; error: null }

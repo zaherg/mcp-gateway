@@ -1,3 +1,6 @@
+import { type Editor, emptyEditor } from "@mcp-gateway/mainview/dialogs/ServerEditor";
+import type { AppClient, AppResult, AppSnapshot } from "@mcp-gateway/shared/rpc";
+import type { GatewayConfig, GatewaySnapshot } from "@mcp-gateway/shared/types";
 import {
   ArrowUpRight,
   CircleHelp,
@@ -11,9 +14,6 @@ import {
   Terminal,
   Trash2,
 } from "lucide-react";
-import type { AppClient, AppResult, AppSnapshot } from "../../shared/rpc";
-import type { GatewayConfig, GatewaySnapshot } from "../../shared/types";
-import { type Editor, emptyEditor } from "../dialogs/ServerEditor";
 
 type Run = (
   operation: () => Promise<AppResult<AppSnapshot | null>>,
@@ -21,7 +21,7 @@ type Run = (
   saved?: boolean,
 ) => Promise<boolean>;
 
-export function Overview({
+export const Overview = ({
   gateway,
   config,
   dirty,
@@ -45,7 +45,7 @@ export function Overview({
   setDeleting: (name: string | null) => void;
   setEditor: (editor: Editor | null) => void;
   setEditorError: (error: string | null) => void;
-}) {
+}) => {
   return (
     <>
       <section aria-labelledby="servers-heading">
@@ -235,4 +235,4 @@ export function Overview({
       </section>
     </>
   );
-}
+};

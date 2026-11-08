@@ -1,9 +1,9 @@
+import type { Editor } from "@mcp-gateway/mainview/dialogs/ServerEditor";
+import type { AppSnapshot, QuitStatus } from "@mcp-gateway/shared/rpc";
 import { ChevronRight, Network, Server, Settings2, ShieldCheck, Terminal } from "lucide-react";
 import type { ReactNode } from "react";
-import type { AppSnapshot, QuitStatus } from "../../shared/rpc";
-import type { Editor } from "../dialogs/ServerEditor";
 
-export function Shell({
+export const Shell = ({
   tab,
   setTab,
   snapshot,
@@ -27,7 +27,7 @@ export function Shell({
   interactiveQuit: { current: () => boolean };
   children: ReactNode;
   dialogs: ReactNode;
-}) {
+}) => {
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -116,4 +116,4 @@ export function Shell({
       {dialogs}
     </div>
   );
-}
+};

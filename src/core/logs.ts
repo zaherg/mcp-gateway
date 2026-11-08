@@ -1,7 +1,7 @@
-import { LOG_LIMITS, type LogEntry, type LogPage, type LogQuery } from "../shared/types";
+import { LOG_LIMITS, type LogEntry, type LogPage, type LogQuery } from "@mcp-gateway/shared/types";
 
 /** Reads data descriptors only: diagnostic capture must never invoke custom inspection or getters. */
-export function diagnosticText(values: readonly unknown[]): string {
+export const diagnosticText = (values: readonly unknown[]): string => {
   let remaining = LOG_LIMITS.entryBytes;
   const seen = new Set<object>();
   const take = (text: string): string => {
@@ -49,7 +49,7 @@ export function diagnosticText(values: readonly unknown[]): string {
     output += format(value, 0);
   }
   return output;
-}
+};
 
 export class LogBuffer {
   private entries: LogEntry[] = [];

@@ -1,5 +1,22 @@
 import { spawn } from "node:child_process";
 import { constants } from "node:os";
+import { isHttpServer } from "@mcp-gateway/core/config";
+import { failure } from "@mcp-gateway/core/errors";
+import {
+  BACKEND_CAPACITY_ERROR,
+  type BackendCalls,
+  BackendOutputLimitError,
+  boundedBackendResponse,
+  MAX_BACKEND_MESSAGE_BYTES,
+  type ResourceAdmission,
+  type ResourceLease,
+  readBackendLines,
+  releaseAfterCleanup,
+} from "@mcp-gateway/core/limits";
+import { LogBuffer } from "@mcp-gateway/core/logs";
+import { BackendProcesses } from "@mcp-gateway/core/process";
+import { createSessions } from "@mcp-gateway/core/sessions";
+import type { HttpServerConfig, LogLevel, StdioServerConfig } from "@mcp-gateway/shared/types";
 import { JSONRPCMessageSchema } from "@modelcontextprotocol/sdk/types.js";
 import cors from "cors";
 import { createParser } from "eventsource-parser";
@@ -37,23 +54,6 @@ import {
   SPEAKS_FOR_MS,
   UpstreamModernChild,
 } from "supergateway/dist/lib/upstreamModernChild.js";
-import type { HttpServerConfig, LogLevel, StdioServerConfig } from "../shared/types";
-import { isHttpServer } from "./config";
-import { failure } from "./errors";
-import {
-  BACKEND_CAPACITY_ERROR,
-  type BackendCalls,
-  BackendOutputLimitError,
-  boundedBackendResponse,
-  MAX_BACKEND_MESSAGE_BYTES,
-  type ResourceAdmission,
-  type ResourceLease,
-  readBackendLines,
-  releaseAfterCleanup,
-} from "./limits";
-import { LogBuffer } from "./logs";
-import { BackendProcesses } from "./process";
-import { createSessions } from "./sessions";
 
 export type GatewayMount = StatefulMount;
 
@@ -68,9 +68,9 @@ export const UNSUPPORTED_PROTOCOL_ERROR = {
 class CapacityError extends Error {}
 
 // Only the owned close promise proves that backend work ended.
-function cleanupConfirmed(child: ModernChild): boolean {
+const cleanupConfirmed = (child: ModernChild): boolean => {
   return "cleanedUp" in child && child.cleanedUp === true;
-}
+};
 
 type ModernSend = Parameters<PerRequestHTTPServerTransport["send"]>;
 
@@ -95,7 +95,7 @@ class WorkTransport extends PerRequestHTTPServerTransport {
 // Coupled to Supergateway 4.2.1's exported modern primitives, not its CLI.
 // Protocol dispatch, validation, opaque continuations and transports stay upstream.
 // The command object takes childCommand.js's shell:false argument-array branch.
-export function createMount(
+export const createMount = (
   name: string,
   server: StdioServerConfig | HttpServerConfig,
   onDiagnostic: (summary: string) => void,
@@ -103,8 +103,7 @@ export function createMount(
   calls: BackendCalls,
   sessionAdmission: ResourceAdmission,
   logs = new LogBuffer(),
-): GatewayMount {
-  const discard = (..._args: unknown[]) => {};
+): GatewayMount => {
   let closing = false;
   const capture = (level: LogLevel, args: unknown[], diagnose = true) => {
     const stderr = typeof args[0] === "string" && args[0].startsWith("Child stderr:");
@@ -435,8 +434,6 @@ export function createMount(
     });
     return {
       app,
-      path,
-      listening: discard,
       close: async () => {
         closing = true;
         await Promise.all([
@@ -451,17 +448,17 @@ export function createMount(
     diagnostic(error);
     throw failure("BackendFailure", "The backend mount could not be created.");
   }
-}
+};
 
-function validExit(code: string, signal: string): boolean {
+const validExit = (code: string, signal: string): boolean => {
   return (
     (code === "null" || (Number(code) >= -1 && Number(code) <= 255)) &&
     (signal === "null" || Object.hasOwn(constants.signals, signal))
   );
-}
+};
 
 /** Only allowlisted codes and numeric statuses may enter status summaries. */
-export function backendSummary(args: readonly unknown[]): string {
+export const backendSummary = (args: readonly unknown[]): string => {
   const codes = new Set([
     "ENOENT",
     "EACCES",
@@ -515,16 +512,16 @@ export function backendSummary(args: readonly unknown[]): string {
     }
   }
   return "A backend operation failed. Open Logs for details.";
-}
+};
 
 // Deadlines bound each wait, not ownership of the underlying cleanup. A raw
 // rejection is unconfirmed cleanup and must remain a failure on every retry.
 const mountClosures = new WeakMap<StatefulMount, Promise<void>>();
 
-export async function closeMount(
+export const closeMount = async (
   mount: StatefulMount,
   onFailure?: (error: unknown) => void,
-): Promise<void> {
+): Promise<void> => {
   let completion = mountClosures.get(mount);
   if (!completion) {
     completion = Promise.resolve().then(() => mount.close());
@@ -547,12 +544,12 @@ export async function closeMount(
   } finally {
     if (timer) clearTimeout(timer);
   }
-}
+};
 const MAX_DISCOVERY_BYTES = 64 * 1024;
 const DISCOVERY_TIMEOUT_MS = 10_000;
 const DISCOVERY_ID = "supergateway-discover";
 
-function discoveryResult(data: string): boolean | undefined {
+const discoveryResult = (data: string): boolean | undefined => {
   const message = JSONRPCMessageSchema.parse(JSON.parse(data));
   if (!("id" in message) || "method" in message || message.id !== DISCOVERY_ID) return undefined;
   if (!("result" in message)) return false;
@@ -562,7 +559,7 @@ function discoveryResult(data: string): boolean | undefined {
     versions.every((version) => typeof version === "string") &&
     versions.includes(MODERN_VERSION)
   );
-}
+};
 
 /** Pinned Supergateway capability check with explicit cancellation and bounded input.
  * Its original remoteSpeaksModern helper provides neither a signal nor a close hook.
@@ -576,9 +573,16 @@ export class UpstreamDiscovery {
   readonly speaks = (): Promise<boolean> => {
     if (this.lifetime.signal.aborted) return Promise.resolve(false);
     if (this.last && Date.now() - this.last.at < SPEAKS_FOR_MS) return this.last.result;
-    const result = this.discover();
-    this.last = { at: Date.now(), result };
-    return result;
+    const last = {
+      at: Date.now(),
+      result: this.discover().then((speaks) => {
+        // A failed check is not an answer: ask again on the next request.
+        if (speaks === undefined && this.last === last) this.last = undefined;
+        return speaks ?? false;
+      }),
+    };
+    this.last = last;
+    return last.result;
   };
 
   async close(): Promise<void> {
@@ -586,32 +590,44 @@ export class UpstreamDiscovery {
     await this.last?.result;
   }
 
-  private async discover(): Promise<boolean> {
+  /** Undefined when the upstream could not be asked: no connection, a timeout or a 5xx. */
+  private async discover(): Promise<boolean | undefined> {
     try {
-      const response = await fetch(this.upstream.url, {
-        method: "POST",
-        signal: AbortSignal.any([this.lifetime.signal, AbortSignal.timeout(DISCOVERY_TIMEOUT_MS)]),
-        headers: {
-          ...this.upstream.headers,
-          "content-type": "application/json",
-          accept: "application/json, text/event-stream",
-          "mcp-protocol-version": MODERN_VERSION,
-          "mcp-method": "server/discover",
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: DISCOVERY_ID,
-          method: "server/discover",
-          params: {
-            _meta: {
-              "io.modelcontextprotocol/protocolVersion": MODERN_VERSION,
-              "io.modelcontextprotocol/clientInfo": { name: "supergateway", version: getVersion() },
-              "io.modelcontextprotocol/clientCapabilities": {},
-            },
+      let response: Response;
+      try {
+        response = await fetch(this.upstream.url, {
+          method: "POST",
+          signal: AbortSignal.any([
+            this.lifetime.signal,
+            AbortSignal.timeout(DISCOVERY_TIMEOUT_MS),
+          ]),
+          headers: {
+            ...this.upstream.headers,
+            "content-type": "application/json",
+            accept: "application/json, text/event-stream",
+            "mcp-protocol-version": MODERN_VERSION,
+            "mcp-method": "server/discover",
           },
-        }),
-      });
-      if (!response.body) return false;
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: DISCOVERY_ID,
+            method: "server/discover",
+            params: {
+              _meta: {
+                "io.modelcontextprotocol/protocolVersion": MODERN_VERSION,
+                "io.modelcontextprotocol/clientInfo": {
+                  name: "supergateway",
+                  version: getVersion(),
+                },
+                "io.modelcontextprotocol/clientCapabilities": {},
+              },
+            },
+          }),
+        });
+      } catch {
+        return undefined;
+      }
+      if (!response.body) return response.status >= 500 ? undefined : false;
       const reader = response.body.getReader();
       const chunks: Uint8Array[] = [];
       const decoder = new TextDecoder("utf-8", { fatal: true });
@@ -632,7 +648,7 @@ export class UpstreamDiscovery {
       };
       let length = 0;
       try {
-        if (!response.ok) return false;
+        if (!response.ok) return response.status >= 500 ? undefined : false;
         for (;;) {
           const { value, done } = await reader.read();
           if (done) break;

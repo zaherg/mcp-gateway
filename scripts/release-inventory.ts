@@ -21,16 +21,16 @@ export class ReleaseInventoryError extends Error {
   }
 }
 
-export async function inventoryBundle(
+export const inventoryBundle = async (
   rootPath: string,
   signal?: AbortSignal,
-): Promise<BundleInventoryEntry[]> {
+): Promise<BundleInventoryEntry[]> => {
   const root = resolve(rootPath);
   const rootInfo = await lstat(root);
   if (rootInfo.isSymbolicLink() || !rootInfo.isDirectory())
     throw new Error("Bundle inventory root is not a plain directory.");
   const entries: BundleInventoryEntry[] = [];
-  async function visit(path: string): Promise<void> {
+  const visit = async (path: string): Promise<void> => {
     signal?.throwIfAborted();
     const info = await lstat(path);
     const entryPath = relative(root, path) || ".";
@@ -72,17 +72,17 @@ export async function inventoryBundle(
     } finally {
       await file.close();
     }
-  }
+  };
   await visit(root);
   entries.sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0));
   return entries;
-}
+};
 
-export function compareBundleInventories(
+export const compareBundleInventories = (
   expected: BundleInventoryEntry[],
   actual: BundleInventoryEntry[],
   labels = { expected: "expected", actual: "actual" },
-): void {
+): void => {
   const differences: string[] = [];
   const expectedByPath = new Map(expected.map((entry) => [entry.path, entry]));
   const actualByPath = new Map(actual.map((entry) => [entry.path, entry]));
@@ -103,8 +103,8 @@ export function compareBundleInventories(
       differences.push(`${path} differs`);
   }
   if (differences.length > 0) throw new ReleaseInventoryError(differences);
-}
+};
 
-export function inventoryDigest(entries: BundleInventoryEntry[]): string {
+export const inventoryDigest = (entries: BundleInventoryEntry[]): string => {
   return createHash("sha256").update(JSON.stringify(entries)).digest("hex");
-}
+};

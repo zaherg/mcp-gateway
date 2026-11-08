@@ -38,7 +38,7 @@ export interface CreateCommandRunnerOptions {
 const DEFAULT_COMMAND_TIMEOUT_MS = 60_000;
 const DEFAULT_COMMAND_OUTPUT_BYTES = 64 * 1024;
 
-export function createCommandRunner(options?: CreateCommandRunnerOptions): CommandRunner {
+export const createCommandRunner = (options?: CreateCommandRunnerOptions): CommandRunner => {
   const defaultTimeoutMs = options?.defaultTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS;
   const maxOutputBytes = options?.maxOutputBytes ?? DEFAULT_COMMAND_OUTPUT_BYTES;
   for (const limit of [defaultTimeoutMs, maxOutputBytes]) {
@@ -133,7 +133,7 @@ export function createCommandRunner(options?: CreateCommandRunnerOptions): Comma
       signal?.addEventListener("abort", abortHandler, { once: true });
       if (signal?.aborted) terminate(new Error("Command cancelled"));
     });
-}
+};
 
 export const runCommand = createCommandRunner();
 
@@ -148,10 +148,10 @@ export type BackendGroup =
 
 const runInspection = createCommandRunner({ defaultTimeoutMs: 2_000, maxOutputBytes: 16 * 1024 });
 
-export async function inspectBackendGroup(
+export const inspectBackendGroup = async (
   pgid: number,
   run: CommandRunner = runInspection,
-): Promise<BackendGroup> {
+): Promise<BackendGroup> => {
   try {
     const listed = await run("/usr/bin/pgrep", ["-g", String(pgid)]);
     if (listed.exitCode === 1 && !listed.stdout.trim() && !listed.stderr.trim())
@@ -196,14 +196,10 @@ export async function inspectBackendGroup(
   } catch {
     return { status: "unknown" };
   }
-}
+};
 
-interface ProcessOptions {
-  inspect?: (pgid: number) => Promise<BackendGroup>;
-  signal?: (pgid: number, signal: "SIGTERM" | "SIGKILL") => void;
-  graceMs?: number;
-  pollMs?: number;
-}
+const TERMINATION_GRACE_MS = 5_000;
+const TERMINATION_POLL_MS = 50;
 
 /** A cleanup stays owned through uncertain inspection or refused termination. */
 export class BackendProcesses implements ChildrenOwner {
@@ -211,10 +207,7 @@ export class BackendProcesses implements ChildrenOwner {
   readonly spawnOptions: SpawnOptions = { shell: false, detached: true };
   private readonly stops = new Set<() => Promise<void>>();
 
-  constructor(
-    private readonly logger: GatewayLogger,
-    private readonly options: ProcessOptions = {},
-  ) {}
+  constructor(private readonly logger: GatewayLogger) {}
 
   track(stop: () => Promise<void>): () => Promise<void> {
     let operation: Promise<void> | undefined;
@@ -230,12 +223,6 @@ export class BackendProcesses implements ChildrenOwner {
 
   own(child: ChildProcess): () => Promise<void> {
     const pid = child.pid;
-    const inspect = this.options.inspect ?? inspectBackendGroup;
-    const signal =
-      this.options.signal ??
-      ((pgid, name) => {
-        process.kill(-pgid, name);
-      });
     const running = () => child.exitCode === null && child.signalCode === null;
     const exited = new Promise<void>((resolve) => {
       if (!running()) resolve();
@@ -257,7 +244,7 @@ export class BackendProcesses implements ChildrenOwner {
     const registration =
       pid === undefined
         ? Promise.resolve()
-        : inspect(pid).then((state) => {
+        : inspectBackendGroup(pid).then((state) => {
             remember(state);
           });
     const stop = this.track(async () => {
@@ -266,17 +253,17 @@ export class BackendProcesses implements ChildrenOwner {
         await exited;
         return;
       }
-      const deadline = Date.now() + (this.options.graceMs ?? 5_000);
+      const deadline = Date.now() + TERMINATION_GRACE_MS;
       let reported = false;
       for (;;) {
-        const state = await inspect(pid);
+        const state = await inspectBackendGroup(pid);
         if (state.status === "absent") {
           await exited;
           return;
         }
         if (remember(state)) {
           try {
-            signal(pid, Date.now() < deadline ? "SIGTERM" : "SIGKILL");
+            process.kill(-pid, Date.now() < deadline ? "SIGTERM" : "SIGKILL");
           } catch (error) {
             // ESRCH is rechecked, and EPERM never means successful termination.
             if ((error as NodeJS.ErrnoException).code !== "ESRCH" && !reported) {
@@ -290,7 +277,7 @@ export class BackendProcesses implements ChildrenOwner {
             "Backend process-group identity could not be confirmed; cleanup remains pending.",
           );
         }
-        await new Promise<void>((resolve) => setTimeout(resolve, this.options.pollMs ?? 50));
+        await new Promise<void>((resolve) => setTimeout(resolve, TERMINATION_POLL_MS));
       }
     });
     const stopOnExit = () => {

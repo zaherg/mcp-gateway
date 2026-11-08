@@ -1,6 +1,6 @@
+import type { AppClient, AppResult, AppSnapshot } from "@mcp-gateway/shared/rpc";
+import type { GatewaySnapshot } from "@mcp-gateway/shared/types";
 import { ArrowUpRight, Network } from "lucide-react";
-import type { AppClient, AppResult, AppSnapshot } from "../../shared/rpc";
-import type { GatewaySnapshot } from "../../shared/types";
 
 type Run = (
   operation: () => Promise<AppResult<AppSnapshot | null>>,
@@ -9,7 +9,7 @@ type Run = (
 ) => Promise<boolean>;
 
 /** Shown on every tab, above the draft bar. */
-export function GatewayStrip({
+export const GatewayStrip = ({
   gateway,
   dirty,
   configurationLocked,
@@ -21,7 +21,7 @@ export function GatewayStrip({
   configurationLocked: boolean;
   run: Run;
   client: AppClient;
-}) {
+}) => {
   return (
     <section className="gateway-strip panel" aria-label="Gateway status">
       <div className={`status-orb ${gateway?.running ? "online" : ""}`}>
@@ -56,4 +56,4 @@ export function GatewayStrip({
       </div>
     </section>
   );
-}
+};

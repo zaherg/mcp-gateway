@@ -2,8 +2,8 @@ import { createReadStream } from "node:fs";
 import { lstat, mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { runCommand } from "@mcp-gateway/core/process";
 import packageInfo from "../package.json";
-import { runCommand } from "../src/core/process";
 import {
   PRODUCTION_FEED,
   PRODUCTION_IDENTIFIER,
@@ -64,7 +64,7 @@ const redact = (value: string) => {
 const checks: Array<{ name: string; exitCode: number; output: string }> = [];
 const cancellation = new AbortController();
 process.env.TMPDIR = join(root, ".cache/tmp");
-async function check(name: string, args: [string, ...string[]]) {
+const check = async (name: string, args: [string, ...string[]]) => {
   const { stdout, stderr, exitCode } = await runCommand(
     args[0],
     args.slice(1),
@@ -74,7 +74,7 @@ async function check(name: string, args: [string, ...string[]]) {
   checks.push({ name, exitCode, output: redact(`${stdout}\n${stderr}`).trim() });
   if (exitCode !== 0) throw new Error(`${name} failed; inspect the redacted verification record.`);
   return stdout;
-}
+};
 const hash = (path: string) => hashFile(path, cancellation.signal);
 const evidence: Record<string, unknown> = {
   version: packageInfo.version,
@@ -328,7 +328,7 @@ try {
     .filter((value): value is string => !!value)
     .map((value) => Buffer.from(value));
   let files = 0;
-  async function scan(path: string): Promise<void> {
+  const scan = async (path: string): Promise<void> => {
     cancellation.signal.throwIfAborted();
     const info = await lstat(path);
     if (info.isSymbolicLink()) return;
@@ -347,7 +347,7 @@ try {
         throw new Error("Signing account/password bytes were found in the payload.");
       tail = overlap ? bytes.subarray(Math.max(0, bytes.length - overlap)) : Buffer.alloc(0);
     }
-  }
+  };
   await scan(payload);
   evidence.credentialScan = {
     files,

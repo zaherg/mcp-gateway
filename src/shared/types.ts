@@ -1,4 +1,4 @@
-import type { ConfigFormat } from "./config-document";
+import type { ConfigFormat } from "@mcp-gateway/shared/config-document";
 
 export const LOG_LIMITS = Object.freeze({
   entries: 500,
@@ -100,12 +100,6 @@ export interface ServerSnapshot {
   error: VisibleError | null;
 }
 
-export interface GatewayEvent {
-  time: string;
-  level: "info" | "error";
-  message: string;
-}
-
 export interface GatewaySnapshot {
   configPath: string;
   configFormat: ConfigFormat;
@@ -116,7 +110,6 @@ export interface GatewaySnapshot {
   address: string | null;
   interfaces: InterfaceChoice[];
   servers: ServerSnapshot[];
-  events: GatewayEvent[];
   configError: VisibleError | null;
   operationalError: VisibleError | null;
 }

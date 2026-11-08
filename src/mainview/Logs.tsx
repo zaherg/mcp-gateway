@@ -1,9 +1,9 @@
+import { Alert } from "@mcp-gateway/mainview/components/ui";
+import type { AppClient } from "@mcp-gateway/shared/rpc";
+import { LOG_LEVELS, LOG_LIMITS, type LogEntry, type LogLevel } from "@mcp-gateway/shared/types";
 import { useEffect, useRef, useState } from "react";
-import type { AppClient } from "../shared/rpc";
-import { LOG_LEVELS, LOG_LIMITS, type LogEntry, type LogLevel } from "../shared/types";
-import { Alert } from "./components/ui";
 
-async function logRequest<T>(pending: Promise<T>, signal: AbortSignal): Promise<T> {
+const logRequest = async <T,>(pending: Promise<T>, signal: AbortSignal): Promise<T> => {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let cancel: (() => void) | undefined;
   try {
@@ -23,9 +23,9 @@ async function logRequest<T>(pending: Promise<T>, signal: AbortSignal): Promise<
     if (timer) clearTimeout(timer);
     if (cancel) signal.removeEventListener("abort", cancel);
   }
-}
+};
 
-export function Logs({ client, servers }: { client: AppClient; servers: string[] }) {
+export const Logs = ({ client, servers }: { client: AppClient; servers: string[] }) => {
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [level, setLevel] = useState<LogLevel | "">("");
   const [server, setServer] = useState("");
@@ -54,7 +54,7 @@ export function Logs({ client, servers }: { client: AppClient; servers: string[]
     bufferGeneration.current = undefined;
     setEntries([]);
     setError(null);
-    async function poll() {
+    const poll = async () => {
       try {
         const result = await logRequest(
           client.readLogs({ after: cursor.current }),
@@ -89,7 +89,7 @@ export function Logs({ client, servers }: { client: AppClient; servers: string[]
         if (!cancelled && generation === requestGeneration.current)
           setError("Could not read local logs. Reopen Logs to retry.");
       }
-    }
+    };
     if (!clearing) void poll();
     return () => {
       cancelled = true;
@@ -98,7 +98,7 @@ export function Logs({ client, servers }: { client: AppClient; servers: string[]
     };
   }, [client, epoch, clearing]);
 
-  async function clear() {
+  const clear = async () => {
     requestGeneration.current++;
     setClearing(true);
     setClearError(null);
@@ -117,7 +117,7 @@ export function Logs({ client, servers }: { client: AppClient; servers: string[]
     } finally {
       if (!lifetime.current.signal.aborted) setClearing(false);
     }
-  }
+  };
   const filtered = entries.filter(
     (entry) =>
       (!level || entry.level === level) &&
@@ -219,4 +219,4 @@ export function Logs({ client, servers }: { client: AppClient; servers: string[]
       </section>
     </section>
   );
-}
+};

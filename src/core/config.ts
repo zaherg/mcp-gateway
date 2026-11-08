@@ -3,10 +3,14 @@ import { constants, type Stats } from "node:fs";
 import * as fs from "node:fs/promises";
 import { validateHeaderName, validateHeaderValue } from "node:http";
 import { basename, dirname, isAbsolute, join, parse, resolve } from "node:path";
+import { failure, GatewayError } from "@mcp-gateway/core/errors";
+import {
+  type ConfigFormat,
+  configFormat,
+  parseConfigDocument,
+} from "@mcp-gateway/shared/config-document";
+import type { GatewayConfig, HttpServerConfig, StdioServerConfig } from "@mcp-gateway/shared/types";
 import { Schema } from "effect";
-import { type ConfigFormat, configFormat, parseConfigDocument } from "../shared/config-document";
-import type { GatewayConfig, HttpServerConfig, StdioServerConfig } from "../shared/types";
-import { failure, GatewayError } from "./errors";
 
 const missing = (error: unknown) => (error as NodeJS.ErrnoException)?.code === "ENOENT";
 
@@ -38,11 +42,13 @@ const ConfigSchema = Schema.Struct({
   mcpServers: Schema.Record(Schema.String, Schema.Union([StdioSchema, HttpSchema])),
 });
 
-function invalid(message = "Configuration does not match the supported schema."): never {
+const invalid: (message?: string) => never = (
+  message = "Configuration does not match the supported schema.",
+) => {
   throw failure("InvalidConfig", message);
-}
+};
 
-function expand(value: string, environment: NodeJS.ProcessEnv): string {
+const expand = (value: string, environment: NodeJS.ProcessEnv): string => {
   const result = value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_match, name: string) => {
     const replacement = environment[name];
     if (replacement === undefined) invalid("A referenced environment variable is not defined.");
@@ -50,19 +56,19 @@ function expand(value: string, environment: NodeJS.ProcessEnv): string {
   });
   if (result.includes("\0")) invalid("NUL characters are not allowed.");
   return result;
-}
+};
 
-export function isHttpServer(
+export const isHttpServer = (
   server: StdioServerConfig | HttpServerConfig,
-): server is HttpServerConfig {
+): server is HttpServerConfig => {
   return "url" in server;
-}
+};
 
-export function parseConfig(
+export const parseConfig = (
   text: string,
   environment: NodeJS.ProcessEnv = process.env,
   format: ConfigFormat = "json",
-): GatewayConfig {
+): GatewayConfig => {
   if (Buffer.byteLength(text) > MAX_CONFIG_BYTES) invalid("Configuration exceeds the size limit.");
   let config: GatewayConfig;
   try {
@@ -146,9 +152,9 @@ export function parseConfig(
     }
   }
   return config;
-}
+};
 
-export function serverFingerprint(server: StdioServerConfig | HttpServerConfig): string {
+export const serverFingerprint = (server: StdioServerConfig | HttpServerConfig): string => {
   const sorted = (values: Record<string, string> = {}) =>
     Object.fromEntries(Object.entries(values).sort(([a], [b]) => a.localeCompare(b)));
   return JSON.stringify(
@@ -173,9 +179,9 @@ export function serverFingerprint(server: StdioServerConfig | HttpServerConfig):
           legacyProtocol: server.legacyProtocol === true,
         },
   );
-}
+};
 
-export function newConfigText(host = "127.0.0.1"): string {
+export const newConfigText = (host = "127.0.0.1"): string => {
   return `${JSON.stringify(
     {
       gateway: {
@@ -190,8 +196,8 @@ export function newConfigText(host = "127.0.0.1"): string {
     null,
     2,
   )}\n`;
-}
-export async function safeParent(path: string, allowMissing = false): Promise<void> {
+};
+export const safeParent = async (path: string, allowMissing = false): Promise<void> => {
   const parent = dirname(path);
   let current = parse(parent).root;
   for (const part of parent.slice(current.length).split("/").filter(Boolean)) {
@@ -213,9 +219,9 @@ export async function safeParent(path: string, allowMissing = false): Promise<vo
       "UnsafeFile",
       "The configuration directory must be owned by this user and not writable by others.",
     );
-}
+};
 
-export async function ensureParent(path: string): Promise<void> {
+export const ensureParent = async (path: string): Promise<void> => {
   const parent = dirname(path);
   let current = parse(parent).root;
   for (const part of parent.slice(current.length).split("/").filter(Boolean)) {
@@ -237,7 +243,7 @@ export async function ensureParent(path: string): Promise<void> {
       throw failure("UnsafeFile", "Configuration paths must not contain symlinks.");
   }
   await safeParent(path);
-}
+};
 
 export interface ConfigDocument {
   text: string;
@@ -246,16 +252,16 @@ export interface ConfigDocument {
 export const revisionOf = (bytes: string | Uint8Array): string =>
   createHash("sha256").update(bytes).digest("hex");
 
-async function guarded<A>(work: () => Promise<A>): Promise<A> {
+const guarded = async <A>(work: () => Promise<A>): Promise<A> => {
   try {
     return await work();
   } catch (error) {
     if (error instanceof GatewayError) throw error;
     throw failure("ConfigIO", "Configuration file access failed.");
   }
-}
+};
 
-function safeFile(stat: Stats): void {
+const safeFile = (stat: Stats): void => {
   if (
     !stat.isFile() ||
     stat.nlink !== 1 ||
@@ -266,7 +272,7 @@ function safeFile(stat: Stats): void {
       "UnsafeFile",
       "The configuration must be an owner-only regular file with no hard links.",
     );
-}
+};
 
 export class ConfigStore {
   private selectedPath: string;

@@ -1,11 +1,11 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { networkInterfaces } from "node:os";
-import type { GatewayConfig, InterfaceChoice } from "../shared/types";
-import { isHttpServer } from "./config";
-import { failure, GatewayError } from "./errors";
+import { isHttpServer } from "@mcp-gateway/core/config";
+import { failure, GatewayError } from "@mcp-gateway/core/errors";
+import type { GatewayConfig, InterfaceChoice } from "@mcp-gateway/shared/types";
 
-export function ipv4(value: string): string | null {
+export const ipv4 = (value: string): string | null => {
   if (isIP(value) === 4) return value;
   if (/^::ffff:/i.test(value)) {
     const suffix = value.slice(7);
@@ -16,18 +16,18 @@ export function ipv4(value: string): string | null {
     }
   }
   return null;
-}
+};
 const numeric = (address: string) =>
   address.split(".").reduce((n, part) => (n * 256 + Number(part)) >>> 0, 0);
 export const isLoopback = (address: string) => ipv4(address)?.startsWith("127.") === true;
-export function isPrivate(address: string): boolean {
+export const isPrivate = (address: string): boolean => {
   const ip = ipv4(address);
   if (!ip) return false;
   const [a, b] = ip.split(".").map(Number);
   return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
-}
+};
 
-export function interfaceChoices(): InterfaceChoice[] {
+export const interfaceChoices = (): InterfaceChoice[] => {
   return Object.entries(networkInterfaces()).flatMap(([name, entries]) =>
     (entries ?? [])
       .filter(
@@ -41,16 +41,16 @@ export function interfaceChoices(): InterfaceChoice[] {
         loopback: isLoopback(entry.address),
       })),
   );
-}
+};
 
-export function selectInterface(host: string): InterfaceChoice {
+export const selectInterface = (host: string): InterfaceChoice => {
   const choice = interfaceChoices().find((entry) => entry.address === host);
   if (!choice)
     throw failure("NetworkPolicy", "Select a currently assigned private IPv4 or loopback address.");
   return choice;
-}
+};
 
-export function peerAllowed(peer: string, selected: InterfaceChoice): boolean {
+export const peerAllowed = (peer: string, selected: InterfaceChoice): boolean => {
   const ip = ipv4(peer);
   if (!ip) return false;
   if (isLoopback(ip)) return true;
@@ -58,19 +58,12 @@ export function peerAllowed(peer: string, selected: InterfaceChoice): boolean {
   if (selected.loopback || !isPrivate(ip)) return false;
   const mask = numeric(selected.netmask);
   return (numeric(ip) & mask) === (numeric(selected.address) & mask);
-}
-
-/** A hostname resolver; production uses the system resolver from node:dns. */
-export type SelfProxyResolver = (
-  hostname: string,
-  options: { all: true },
-) => Promise<readonly { address: string }[]>;
+};
 
 /** One budget for every self-proxy hostname lookup an operation performs. */
 export const SELF_PROXY_DEADLINE_MS = 5_000;
 
 export interface SelfProxyOptions {
-  resolve?: SelfProxyResolver;
   /** Stops the application's wait; a lookup already in flight is left unobserved. */
   signal?: AbortSignal;
   /** Absolute epoch-millisecond deadline shared by an operation's validation passes. */
@@ -96,11 +89,11 @@ type LookupOutcome =
 // DNS lookup itself cannot be cancelled. This bounds the wait, removes its
 // timer and listener when it ends either way, and observes later settlement so
 // a late answer cannot resolve or reject an invocation that already refused.
-function boundedLookup(
+const boundedLookup = (
   work: Promise<readonly { address: string }[]>,
   signal: AbortSignal | undefined,
   timeoutMs: number,
-): Promise<LookupOutcome> {
+): Promise<LookupOutcome> => {
   return new Promise((settle) => {
     let finished = false;
     const finish = (outcome: LookupOutcome) => {
@@ -124,14 +117,12 @@ function boundedLookup(
     }
     signal?.addEventListener("abort", abort, { once: true });
   });
-}
+};
 
-export async function rejectSelfProxy(
+export const rejectSelfProxy = async (
   config: GatewayConfig,
   options: SelfProxyOptions = {},
-): Promise<void> {
-  const resolve: SelfProxyResolver =
-    options.resolve ?? ((hostname, lookupOptions) => lookup(hostname, lookupOptions));
+): Promise<void> => {
   const deadline = options.deadline ?? Date.now() + SELF_PROXY_DEADLINE_MS;
   // A superseded or already-expired operation refuses even when a stdio-only,
   // disabled or different-port configuration needs no hostname lookup.
@@ -140,7 +131,8 @@ export async function rejectSelfProxy(
   const hostnames: string[] = [];
   for (const server of Object.values(config.mcpServers)) {
     if (server.disabled || !isHttpServer(server)) continue;
-    const url = new URL(server.url);
+    const url = URL.parse(server.url);
+    if (!url) throw unchecked();
     if (Number(url.port || (url.protocol === "https:" ? 443 : 80)) !== config.gateway.port)
       continue;
     hostnames.push(url.hostname.replace(/^\[|\]$/g, ""));
@@ -151,7 +143,7 @@ export async function rejectSelfProxy(
     if (remaining <= 0) throw timedOut();
     let work: Promise<readonly { address: string }[]>;
     try {
-      work = resolve(hostname, { all: true });
+      work = lookup(hostname, { all: true });
     } catch {
       throw unchecked();
     }
@@ -173,4 +165,4 @@ export async function rejectSelfProxy(
     )
       throw failure("NetworkPolicy", "An upstream must not point back to this gateway listener.");
   }
-}
+};

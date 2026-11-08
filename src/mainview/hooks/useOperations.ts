@@ -1,8 +1,8 @@
+import type { Document } from "@mcp-gateway/mainview/dialogs/ServerEditor";
+import type { AppResult, AppSnapshot, UpdateStatus } from "@mcp-gateway/shared/rpc";
 import type { Dispatch, RefObject, SetStateAction } from "react";
-import type { AppResult, AppSnapshot, UpdateStatus } from "../../shared/rpc";
-import type { Document } from "../dialogs/ServerEditor";
 
-export function useOperations({
+export const useOperations = ({
   quitGeneration,
   generation,
   setBusy,
@@ -24,12 +24,12 @@ export function useOperations({
   setNotice: (notice: string) => void;
   setSnapshot: Dispatch<SetStateAction<AppSnapshot | null>>;
   setDoc: (doc: Document | null) => void;
-}) {
-  async function run(
+}) => {
+  const run = async (
     operation: () => Promise<AppResult<AppSnapshot | null>>,
     message: string,
     saved = false,
-  ) {
+  ) => {
     const terminalGeneration = quitGeneration.current;
     setBusy(true);
     setError(null);
@@ -67,12 +67,12 @@ export function useOperations({
       if (terminalGeneration === quitGeneration.current) generation.current++;
       setBusy(false);
     }
-  }
+  };
 
-  async function runUpdate(
+  const runUpdate = async (
     operation: () => Promise<AppResult<UpdateStatus>>,
     message: string,
-  ): Promise<boolean> {
+  ): Promise<boolean> => {
     if (updateBusy) return false;
     const terminalGeneration = quitGeneration.current;
     setUpdateBusy(true);
@@ -96,7 +96,7 @@ export function useOperations({
     } finally {
       setUpdateBusy(false);
     }
-  }
+  };
 
   return { run, runUpdate };
-}
+};
