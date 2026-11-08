@@ -49,7 +49,8 @@ export const parseConfigDocument = (text: string, format: ConfigFormat = "json")
   return getNodeValue(checkedTree(text, format));
 };
 
-const record = (value: unknown): value is Record<string, unknown> =>
+/** Plain-object check shared with the runtime schemas. */
+export const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 
 /** Change only differing leaves. Retained blocks and source environment references stay intact. */
@@ -77,7 +78,7 @@ export const editConfigDocument = (
   // Direct value edits and unformatted structural edits leave retained trivia byte-identical.
   const change = (path: JSONPath, before: unknown, after: unknown): void => {
     if (Object.is(before, after)) return;
-    if (record(before) && record(after)) {
+    if (isRecord(before) && isRecord(after)) {
       for (const key of Object.keys(before)) {
         if (!Object.hasOwn(after, key)) set([...path, key], undefined);
       }
