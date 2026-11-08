@@ -2,14 +2,10 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { lstat, mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { pipeline } from "node:stream/promises";
+import { createZstdDecompress } from "node:zlib";
 import packageInfo from "../package.json";
-import {
-  UPDATER_CHANNEL,
-  UPDATER_FEED_URL,
-  UPDATER_HASH_PATTERN,
-  UPDATER_IDENTIFIER,
-} from "../src/main/updater/constants";
-import { readBuildIdentityResource, runCommand } from "../src/main/updater/verify";
+import { runCommand } from "../src/core/command";
 import { releaseOutputEnvironment } from "./build-config";
 import { withDmgMount } from "./release-dmg";
 import { compareBundleInventories, inventoryBundle, inventoryDigest } from "./release-inventory";
@@ -26,9 +22,16 @@ const wrapper = resolve(
 );
 const DMG_FILE = "macos-arm64-MCPGateway.dmg";
 const MANIFEST_FILE = "stable-macos-arm64-update.json";
+const INTEGRITY_FILE = "stable-macos-arm64-update-v2.json";
 const ARCHIVE_FILE = "stable-macos-arm64-MCPGateway.app.tar.zst";
+const IDENTIFIER = "dev.srvr.mcpgateway";
+const CHANNEL = "stable";
+const FEED_URL = "https://github.com/zaherg/mcp-gateway/releases/latest/download";
+const HASH_PATTERN = /^[a-z0-9]{1,13}$/;
+const MAX_EXPANDED_ARCHIVE_BYTES = 512 * 1024 * 1024;
 const dmg = join(artifacts, DMG_FILE);
 const manifestPath = join(artifacts, MANIFEST_FILE);
+const integrityPath = join(artifacts, INTEGRITY_FILE);
 const archive = join(artifacts, ARCHIVE_FILE);
 const redact = (value: string) => {
   let text = value;
@@ -63,10 +66,56 @@ async function hash(path: string): Promise<string> {
   }
   return digest.digest("hex");
 }
+async function archiveDigest(path: string): Promise<{ sha256: string; size: number }> {
+  const digest = createHash("sha256");
+  let size = 0;
+  await pipeline(createReadStream(path), createZstdDecompress(), async (chunks) => {
+    for await (const chunk of chunks) {
+      cancellation.signal.throwIfAborted();
+      size += chunk.length;
+      if (size > MAX_EXPANDED_ARCHIVE_BYTES)
+        throw new Error("Update archive exceeds the expanded size limit.");
+      digest.update(chunk);
+    }
+  });
+  return { sha256: digest.digest("hex"), size };
+}
+interface UpdateManifest {
+  schemaVersion: number;
+  identifier: string;
+  channel: string;
+  version: string;
+  hash: string;
+  platform: string;
+  arch: string;
+  artifact: { file: string; tarSha256?: string; tarSize?: number };
+}
+function parseManifest(value: unknown, label: string): UpdateManifest {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    throw new Error(`${label} is not an object.`);
+  const manifest = value as Record<string, unknown>;
+  const artifact = manifest.artifact;
+  if (
+    manifest.schemaVersion !== 1 ||
+    manifest.identifier !== IDENTIFIER ||
+    manifest.channel !== CHANNEL ||
+    manifest.version !== packageInfo.version ||
+    typeof manifest.hash !== "string" ||
+    !HASH_PATTERN.test(manifest.hash) ||
+    manifest.platform !== "macos" ||
+    manifest.arch !== "arm64" ||
+    typeof artifact !== "object" ||
+    artifact === null ||
+    Array.isArray(artifact) ||
+    (artifact as Record<string, unknown>).file !== ARCHIVE_FILE
+  )
+    throw new Error(`${label} does not match the app identity, version, or artifact name.`);
+  return value as UpdateManifest;
+}
 const evidence: Record<string, unknown> = {
   version: packageInfo.version,
   architecture: "arm64",
-  feed: UPDATER_FEED_URL,
+  feed: FEED_URL,
   checkedAt: new Date().toISOString(),
   checks,
 };
@@ -85,41 +134,58 @@ try {
   for (const [name, path] of [
     ["DMG", dmg],
     ["update manifest", manifestPath],
+    ["update integrity manifest", integrityPath],
     ["runtime archive", archive],
   ] as const) {
     const info = await lstat(path);
     if (info.isSymbolicLink() || !info.isFile() || info.size <= 0)
       throw new Error(`${name} is missing or unsafe: ${path}`);
   }
-  const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
-  const artifact = manifest.artifact;
+  const manifest = parseManifest(
+    JSON.parse(await readFile(manifestPath, "utf8")),
+    "Update manifest",
+  );
+  const integrity = parseManifest(
+    JSON.parse(await readFile(integrityPath, "utf8")),
+    "Update integrity manifest",
+  );
+  for (const key of [
+    "schemaVersion",
+    "identifier",
+    "channel",
+    "version",
+    "hash",
+    "platform",
+    "arch",
+  ] as const)
+    if (integrity[key] !== manifest[key]) throw new Error(`Update manifests disagree on ${key}.`);
+  const artifact = integrity.artifact;
   if (
-    manifest.schemaVersion !== 1 ||
-    manifest.identifier !== UPDATER_IDENTIFIER ||
-    manifest.channel !== UPDATER_CHANNEL ||
-    manifest.version !== packageInfo.version ||
-    typeof manifest.hash !== "string" ||
-    !UPDATER_HASH_PATTERN.test(manifest.hash) ||
-    manifest.platform !== "macos" ||
-    manifest.arch !== "arm64" ||
-    typeof artifact !== "object" ||
-    artifact === null ||
-    Array.isArray(artifact) ||
-    (artifact as Record<string, unknown>).file !== ARCHIVE_FILE
+    typeof artifact.tarSha256 !== "string" ||
+    !/^[a-f0-9]{64}$/.test(artifact.tarSha256) ||
+    !Number.isSafeInteger(artifact.tarSize) ||
+    (artifact.tarSize as number) <= 0 ||
+    (artifact.tarSize as number) > MAX_EXPANDED_ARCHIVE_BYTES
   )
-    throw new Error(
-      "Update manifest does not match the package identity, version, or asset names.",
-    );
-  const manifestHash = manifest.hash as string;
+    throw new Error("Update integrity manifest has invalid archive metadata.");
+  const archiveIntegrity = await archiveDigest(archive);
+  if (archiveIntegrity.size !== artifact.tarSize || archiveIntegrity.sha256 !== artifact.tarSha256)
+    throw new Error("Update archive integrity metadata mismatch.");
   evidence.manifest = {
     file: MANIFEST_FILE,
     version: manifest.version,
-    hash: manifestHash,
+    hash: manifest.hash,
     artifact: ARCHIVE_FILE,
+  };
+  evidence.archive = {
+    file: ARCHIVE_FILE,
+    sha256: archiveIntegrity.sha256,
+    size: archiveIntegrity.size,
   };
   evidence.assets = {
     dmg: DMG_FILE,
     manifest: MANIFEST_FILE,
+    integrity: INTEGRITY_FILE,
     runtimeArchive: ARCHIVE_FILE,
   };
   await check("wrapper signature", [
@@ -171,9 +237,9 @@ try {
     await readFile(join(wrapper, "Contents/Resources/metadata.json"), "utf8"),
   );
   if (
-    metadata.identifier !== UPDATER_IDENTIFIER ||
-    metadata.channel !== UPDATER_CHANNEL ||
-    metadata.hash !== manifestHash
+    metadata.identifier !== IDENTIFIER ||
+    metadata.channel !== CHANNEL ||
+    metadata.hash !== manifest.hash
   )
     throw new Error("Wrapper metadata does not match the update manifest.");
   const digest = await hash(archive);
@@ -201,9 +267,9 @@ try {
         await readFile(join(dmgApp, "Contents/Resources/metadata.json"), "utf8"),
       );
       if (
-        dmgMetadata.identifier !== UPDATER_IDENTIFIER ||
-        dmgMetadata.channel !== UPDATER_CHANNEL ||
-        dmgMetadata.hash !== manifestHash
+        dmgMetadata.identifier !== IDENTIFIER ||
+        dmgMetadata.channel !== CHANNEL ||
+        dmgMetadata.hash !== manifest.hash
       )
         throw new Error("DMG application metadata does not match the update manifest.");
       const dmgVersion = (
@@ -217,7 +283,7 @@ try {
       ).trim();
       if (dmgVersion !== packageInfo.version)
         throw new Error("DMG application version does not match package.json.");
-      const dmgPayload = join(dmgApp, "Contents/Resources", `${manifestHash}.tar.zst`);
+      const dmgPayload = join(dmgApp, "Contents/Resources", `${manifest.hash}.tar.zst`);
       if ((await hash(dmgPayload)) !== digest)
         throw new Error("DMG application update payload does not match the runtime archive.");
       const dmgInventory = await inventoryBundle(dmgApp, cancellation.signal);
@@ -289,22 +355,13 @@ try {
     await readFile(join(payload, "Contents/Resources/version.json"), "utf8"),
   ) as Record<string, unknown>;
   if (
-    payloadMetadata.identifier !== UPDATER_IDENTIFIER ||
-    payloadMetadata.channel !== UPDATER_CHANNEL ||
+    payloadMetadata.identifier !== IDENTIFIER ||
+    payloadMetadata.channel !== CHANNEL ||
     payloadMetadata.version !== manifest.version ||
-    payloadMetadata.hash !== manifestHash ||
-    payloadMetadata.baseUrl !== UPDATER_FEED_URL
+    payloadMetadata.hash !== manifest.hash ||
+    payloadMetadata.baseUrl !== FEED_URL
   )
     throw new Error("Payload identity, version, hash, or fixed feed does not match the manifest.");
-  const buildIdentity = await readBuildIdentityResource(payload);
-  const bundledMain = await readFile(join(payload, "Contents/Resources/app/bun/index.js"), "utf8");
-  if (
-    buildIdentity.identifier !== UPDATER_IDENTIFIER ||
-    buildIdentity.version !== packageInfo.version ||
-    !bundledMain.includes(buildIdentity.build_id)
-  )
-    throw new Error("Signed build identity is missing from the matching bundled main process.");
-  evidence.executingBuild = buildIdentity;
   await check("payload signing metadata", [
     "/usr/bin/codesign",
     "--display",
