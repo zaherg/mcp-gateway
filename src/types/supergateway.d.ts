@@ -3,7 +3,6 @@
 declare module "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js" {
   import type { ChildProcess, SpawnOptions } from "node:child_process";
   import type { IncomingMessage, ServerResponse } from "node:http";
-  import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
   export interface GatewayRequest extends IncomingMessage {
     body?: unknown;
   }
@@ -67,21 +66,6 @@ declare module "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js" {
     own(child: ChildProcess): () => Promise<void>;
     track(stop: () => Promise<void>): () => Promise<void>;
   }
-  export interface PeerOwner {
-    failure(kind: string, error: Error): void;
-    exit(code: number | null, signal: string | null): void;
-    message(message: JSONRPCMessage, line: string): void;
-    nonJson(line: string): void;
-    stderr(text: string): void;
-    output(): Promise<void> | undefined;
-  }
-  export interface Peer {
-    write(message: JSONRPCMessage): void;
-    end(): void;
-    stop(): Promise<void>;
-    readonly gone: boolean;
-  }
-  export type PeerFactory = (owner: PeerOwner) => Peer;
 }
 declare module "express" {
   // Passed unchanged to streamableHttpApp; all Express use stays inside Supergateway.
@@ -109,21 +93,6 @@ declare module "supergateway/dist/lib/streamableHttpApp.js" {
     },
   ): GatewayApp;
 }
-declare module "supergateway/dist/lib/ownedChildProcesses.js" {
-  import type { ChildProcess, SpawnOptions } from "node:child_process";
-  import type {
-    ChildrenOwner,
-    GatewayLogger,
-  } from "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js";
-  export class OwnedChildProcesses implements ChildrenOwner {
-    constructor(logger: GatewayLogger);
-    readonly closing: boolean;
-    readonly spawnOptions: SpawnOptions;
-    own(child: ChildProcess): () => Promise<void>;
-    track(stop: () => Promise<void>): () => Promise<void>;
-    close(): Promise<void>;
-  }
-}
 declare module "supergateway/dist/lib/childCommand.js" {
   import type { ChildProcessWithoutNullStreams, SpawnOptions, spawn } from "node:child_process";
   import type { Command } from "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js";
@@ -132,57 +101,6 @@ declare module "supergateway/dist/lib/childCommand.js" {
     command: Command,
     options: SpawnOptions & { stdio: "pipe" },
   ): ChildProcessWithoutNullStreams;
-}
-declare module "supergateway/dist/lib/outputBackpressure.js" {
-  export function readWhile(response: Response, wait: () => Promise<void> | undefined): Response;
-}
-declare module "supergateway/dist/gateways/statefulSessions.js" {
-  import type { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-  import type {
-    ChildrenOwner,
-    GatewayLogger,
-    GatewayRequest,
-    GatewayResponse,
-    Source,
-  } from "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js";
-  export class StatefulSessions {
-    constructor(
-      source: Source,
-      children: ChildrenOwner,
-      logger: GatewayLogger,
-      sessionTimeout: number,
-    );
-    readonly openResponses: WeakMap<StreamableHTTPServerTransport, Set<GatewayResponse>>;
-    /** Session id to its established transport; used only for pre-dispatch refusal. */
-    readonly transports: Map<string, StreamableHTTPServerTransport>;
-    open(res: GatewayResponse): Promise<StreamableHTTPServerTransport>;
-    post(req: GatewayRequest, res: GatewayResponse): Promise<void>;
-    request(req: GatewayRequest, res: GatewayResponse): Promise<void>;
-  }
-}
-declare module "supergateway/dist/gateways/statefulSession.js" {
-  import type { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-  import type { StatefulSessions } from "supergateway/dist/gateways/statefulSessions.js";
-  import type {
-    GatewayLogger,
-    GatewayResponse,
-    PeerFactory,
-  } from "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js";
-  export class StatefulSession {
-    readonly transport: StreamableHTTPServerTransport;
-    settle(requestId: string | number): boolean;
-    endCancelled(requestId: unknown): void;
-    static open(
-      sessions: StatefulSessions,
-      res: GatewayResponse,
-      logger: GatewayLogger,
-      sessionTimeout: number,
-      begin: (
-        transport: StreamableHTTPServerTransport,
-        responses: Set<GatewayResponse>,
-      ) => PeerFactory,
-    ): Promise<StatefulSession>;
-  }
 }
 declare module "supergateway/dist/lib/modernAdmission.js" {
   import type { InboundModernRoute } from "@modelcontextprotocol/server";

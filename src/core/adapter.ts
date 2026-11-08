@@ -30,8 +30,7 @@ import {
 } from "supergateway/dist/lib/retainedChildren.js";
 import { streamableHttpApp } from "supergateway/dist/lib/streamableHttpApp.js";
 import { UpstreamModernChild } from "supergateway/dist/lib/upstreamModernChild.js";
-import type { LogLevel } from "../shared/logs";
-import type { HttpServerConfig, StdioServerConfig } from "../shared/types";
+import type { HttpServerConfig, LogLevel, StdioServerConfig } from "../shared/types";
 import {
   BackendOutputLimitError,
   boundedBackendResponse,

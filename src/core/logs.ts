@@ -1,4 +1,4 @@
-import { LOG_LIMITS, type LogEntry, type LogPage, type LogQuery } from "../shared/logs";
+import { LOG_LIMITS, type LogEntry, type LogPage, type LogQuery } from "../shared/types";
 
 /** Reads data descriptors only: diagnostic capture must never invoke custom inspection or getters. */
 export function diagnosticText(values: readonly unknown[]): string {

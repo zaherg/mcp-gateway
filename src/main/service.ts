@@ -1,7 +1,6 @@
 import { Effect, Result, Schema, Semaphore } from "effect";
 import { MAX_CONFIG_BYTES, parseConfig, SAFE_NAME } from "../core/config";
 import { GatewayError, RequestError } from "../core/errors";
-import { LOG_LEVELS, LOG_LIMITS } from "../shared/logs";
 import {
   type AppResult,
   type AppSnapshot,
@@ -10,6 +9,7 @@ import {
   type QuitStatus,
 } from "../shared/rpc";
 import type { GatewayController } from "../shared/types";
+import { LOG_LEVELS, LOG_LIMITS } from "../shared/types";
 import { type UpdateRuntime, unsupportedUpdateStatus } from "./app-updater";
 
 export interface LoginManager {

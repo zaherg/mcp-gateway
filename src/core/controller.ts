@@ -2,13 +2,13 @@ import { type FSWatcher, lstatSync, watch } from "node:fs";
 import { lstat } from "node:fs/promises";
 import { dirname } from "node:path";
 import { Effect, Exit, Result, Scope, Semaphore } from "effect";
-import type { LogQuery } from "../shared/logs";
 import type {
   GatewayConfig,
   GatewayController,
   GatewayEvent,
   GatewayOperation,
   GatewaySnapshot,
+  LogQuery,
   VisibleError,
 } from "../shared/types";
 import { isHttpServer, parseConfig } from "./config";

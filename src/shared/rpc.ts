@@ -1,5 +1,4 @@
-import type { LogPage, LogQuery } from "./logs";
-import type { GatewaySnapshot } from "./types";
+import type { GatewaySnapshot, LogPage, LogQuery } from "./types";
 
 export interface LoginStatus {
   occurrenceId?: string;

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { LOG_LEVELS, LOG_LIMITS, type LogEntry, type LogLevel } from "../shared/logs";
 import type { AppClient } from "../shared/rpc";
+import { LOG_LEVELS, LOG_LIMITS, type LogEntry, type LogLevel } from "../shared/types";
 import { Alert } from "./Alert";
 
 async function logRequest<T>(pending: Promise<T>, signal: AbortSignal): Promise<T> {
