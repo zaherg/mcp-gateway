@@ -1,6 +1,6 @@
 {
     "name": "mcp-gateway",
-    "version": "0.3.2",
+    "version": "0.4.0",
     "type": "module",
     "description": "A macOS menu-bar app for independently exposing local stdio MCP servers and existing Streamable HTTP servers on a trusted LAN.",
     "repository": {
