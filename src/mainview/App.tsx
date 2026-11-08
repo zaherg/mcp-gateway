@@ -268,11 +268,6 @@ export function App({ client }: { client: AppClient }) {
   });
   const [quitStatusKnown, setQuitStatusKnown] = useState(false);
   const [requestingQuit, setRequestingQuit] = useState(false);
-  const [restartUnconfirmed, setRestartUnconfirmed] = useState(false);
-  const restartEvidence = useRef<{
-    snapshot: UpdateStatus | null;
-    lifecycle: QuitStatus | null;
-  }>({ snapshot: null, lifecycle: null });
   const [quitReadError, setQuitReadError] = useState(false);
   const quitAttempt = useRef(0);
   const quitGeneration = useRef(0);
@@ -280,7 +275,7 @@ export function App({ client }: { client: AppClient }) {
   const quitting = requestingQuit || quitStatus.phase === "pending" || quitStatus.phase === "ready";
   const updateRestarting = snapshot?.update.phase === "restarting";
   const shutdownStarted = requestingQuit || quitStatus.phase !== "idle" || updateRestarting;
-  const configurationLocked = restartUnconfirmed || !quitStatusKnown || shutdownStarted;
+  const configurationLocked = !quitStatusKnown || shutdownStarted;
   const [confirmQuit, setConfirmQuit] = useState(false);
   const [confirmUpdate, setConfirmUpdate] = useState(false);
   const [editor, setEditor] = useState<Editor | null>(null);
@@ -288,7 +283,7 @@ export function App({ client }: { client: AppClient }) {
   const [deleting, setDeleting] = useState<string | null>(null);
   const [showToken, setShowToken] = useState(false);
   const [rawOpen, setRawOpen] = useState(false);
-  const recoveryButton = useRef<HTMLButtonElement>(null);
+  const fallbackFocus = useRef<HTMLButtonElement>(null);
   const updatesHeading = useRef<HTMLHeadingElement>(null);
   const [tab, setTab] = useState<"overview" | "settings" | "logs">("overview");
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
@@ -363,7 +358,6 @@ export function App({ client }: { client: AppClient }) {
           return;
         }
         pollFailed.current = false;
-        restartEvidence.current.snapshot = result.value.update;
         setSnapshot(result.value);
         if (!docRef.current?.dirty && !editingRef.current) {
           const gateway = result.value.gateway;
@@ -397,7 +391,6 @@ export function App({ client }: { client: AppClient }) {
   const acceptQuitStatus = useCallback((status: QuitStatus) => {
     if (status.attempt < quitAttempt.current) return;
     quitAttempt.current = status.attempt;
-    restartEvidence.current.lifecycle = status;
     setQuitStatusKnown(true);
     setQuitStatus(status);
     if (status.phase !== "idle") setConfirmQuit(false);
@@ -425,21 +418,6 @@ export function App({ client }: { client: AppClient }) {
       clearTimeout(timer);
     };
   }, [client, acceptQuitStatus]);
-
-  useEffect(() => {
-    const evidence = restartEvidence.current;
-    if (
-      restartUnconfirmed &&
-      evidence.snapshot &&
-      evidence.lifecycle &&
-      evidence.snapshot === snapshot?.update &&
-      evidence.lifecycle === quitStatus &&
-      evidence.snapshot.phase !== "restarting" &&
-      evidence.lifecycle.phase !== "pending" &&
-      evidence.lifecycle.phase !== "ready"
-    )
-      setRestartUnconfirmed(false);
-  }, [restartUnconfirmed, snapshot, quitStatus]);
 
   const format = snapshot?.gateway.configFormat ?? "json";
   const filename = snapshot?.gateway.configPath.split("/").at(-1) ?? "mcp.json";
@@ -554,11 +532,9 @@ export function App({ client }: { client: AppClient }) {
     }
   }
   async function requestUpdateRestart() {
-    if (restartUnconfirmed || quitting || updateRestarting) return;
+    if (quitting || updateRestarting) return;
     if (snapshot?.update.phase !== "ready") return;
     setConfirmUpdate(false);
-    setRestartUnconfirmed(true);
-    restartEvidence.current = { snapshot: null, lifecycle: null };
     generation.current++;
     setRequestingQuit(true);
     setQuitStatusKnown(false);
@@ -847,12 +823,6 @@ export function App({ client }: { client: AppClient }) {
               Configuration is read-only because{" "}
               {updateRestarting ? "an update restart has started" : "Quit cleanup has started"}.
               Drafts can still be selected and copied, and Logs remain available.
-            </p>
-          )}
-          {!shutdownStarted && restartUnconfirmed && (
-            <p role="status">
-              Configuration is read-only until the update restart attempt is confirmed. Drafts can
-              still be selected and copied, and Logs remain available.
             </p>
           )}
           {!quitStatusKnown && !requestingQuit && (
@@ -1479,7 +1449,6 @@ export function App({ client }: { client: AppClient }) {
                             disabled={
                               busy ||
                               !quitStatusKnown ||
-                              restartUnconfirmed ||
                               updateState.phase === "restarting" ||
                               !!editor ||
                               !!deleting ||
@@ -1513,14 +1482,14 @@ export function App({ client }: { client: AppClient }) {
                   <button
                     type="button"
                     className="raw-heading"
-                    ref={recoveryButton}
+                    ref={fallbackFocus}
                     aria-expanded={rawOpen}
                     onClick={() => setRawOpen(!rawOpen)}
                   >
                     <Code2 size={18} />
                     <span>
                       <strong>Authoritative configuration</strong>
-                      <small>{filename} · advanced editing & recovery</small>
+                      <small>{filename} · advanced editing</small>
                     </span>
                     <ChevronRight className={rawOpen ? "expanded" : ""} size={18} />
                   </button>
@@ -1576,7 +1545,7 @@ export function App({ client }: { client: AppClient }) {
         <Modal
           title="Quit MCP Gateway?"
           onClose={() => setConfirmQuit(false)}
-          fallbackFocus={recoveryButton}
+          fallbackFocus={fallbackFocus}
         >
           <p>Your unsaved changes will be discarded. Quit stops the gateway and its backends.</p>
           <div className="dialog-actions">
@@ -1598,16 +1567,17 @@ export function App({ client }: { client: AppClient }) {
         <Modal
           title="Restart to update?"
           onClose={() => setConfirmUpdate(false)}
-          fallbackFocus={recoveryButton}
+          fallbackFocus={fallbackFocus}
         >
           <p>
-            Restart MCP Gateway to install version {updateReady}? Active MCP connections will be
-            interrupted while the gateway and backends stop before the installer is armed.
+            Restart MCP Gateway to install version {updateState.availableVersion}? Active MCP
+            connections will be interrupted while the gateway and backends stop before the installer
+            is armed.
           </p>
           <p>
             {dirty
-              ? "Your unsaved configuration changes will be discarded. The verified previous application copy remains available for manual recovery."
-              : "Your saved configuration remains unchanged. The verified previous application copy remains available for manual recovery."}
+              ? "Your unsaved configuration changes will be discarded."
+              : "Your saved configuration remains unchanged."}
           </p>
           <div className="dialog-actions">
             <button type="button" className="button" onClick={() => setConfirmUpdate(false)}>
@@ -1616,7 +1586,7 @@ export function App({ client }: { client: AppClient }) {
             <button
               type="button"
               className="button danger"
-              disabled={restartUnconfirmed || quitting || updateRestarting}
+              disabled={quitting || updateRestarting}
               onClick={() => void requestUpdateRestart()}
             >
               {dirty ? "Discard draft and restart" : "Restart to update"}
@@ -1628,7 +1598,7 @@ export function App({ client }: { client: AppClient }) {
         <Modal
           title={editor.original ? "Edit server" : "Add a server"}
           onClose={() => setEditor(null)}
-          fallbackFocus={recoveryButton}
+          fallbackFocus={fallbackFocus}
         >
           <form onSubmit={applyServer}>
             <p className="dialog-intro">
@@ -1769,7 +1739,7 @@ export function App({ client }: { client: AppClient }) {
         <Modal
           title="Delete server?"
           onClose={() => setDeleting(null)}
-          fallbackFocus={recoveryButton}
+          fallbackFocus={fallbackFocus}
         >
           <p className="dialog-intro">
             Remove <strong>{deleting}</strong> from the configuration? Its endpoint will stop when
