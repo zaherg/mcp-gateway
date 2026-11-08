@@ -111,7 +111,7 @@ The artifacts directory contains:
 - `stable-macos-arm64-update-v2.json` adds the expanded archive digest and size used by Electrobun 2.0.6.
 - `stable-macos-arm64-MCPGateway.app.tar.zst` is the updater payload.
 
-After the verification and acceptance checks pass, upload all four files to the same GitHub release without renaming them.
+After verification passes, upload all four files to the same GitHub release without renaming them.
 Their version must match `package.json`.
 If the build fails, inspect the command output and use a new candidate directory for the next attempt.
 The Electrobun signing step also writes a redacted log to `.cache/build-stable.log`; failures before that step may not produce a current log.
@@ -144,7 +144,7 @@ Version `0.3.2` is the first published release with updater files.
 
 ### Install or distribute
 
-After the required verification and acceptance checks pass, open the DMG for the selected version.
+After verification passes, open the DMG for the selected version.
 For example, for a default build of version 0.3.2:
 
 ```sh
@@ -419,10 +419,9 @@ Tags must be `X.Y.Z` or `vX.Y.Z`, with a version matching `package.json` exactly
 Other tags and prerelease versions fail validation without publishing.
 The release, lint and test workflow definitions must all be present in the tagged commit.
 
-Do not tag the current source for distribution until packaged acceptance is complete.
 The built-in Electrobun updater is wired, but the release workflow verifies build artifacts, not a complete in-app update cycle.
 
-`0.3.2` was an explicit exception to this rule and did not go through this workflow.
+`0.3.2` did not go through this workflow.
 Its annotated tag already existed on GitHub; it was built locally with `bun run release` into `build/tag-0.3.2/` and `artifacts/tag-0.3.2/`, verified with `bun scripts/verify-release.ts`, and published manually with `gh`.
 As of 2026-11-08 the release workflow has never run, and the repository has no Actions secrets configured.
 
@@ -467,5 +466,5 @@ No personal access token is needed.
 Existing releases and their assets are never overwritten.
 If an upload failure leaves a draft release, inspect and remove that draft before retrying publication.
 
-After packaged acceptance is ready, update `package.json`, commit the release changes, and push the matching version tag.
+To release, update `package.json`, commit the release changes, and push the matching version tag.
 Creating this workflow locally does not create or push a tag, configure signing secrets, or publish a release.
