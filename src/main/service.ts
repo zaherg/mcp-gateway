@@ -1,6 +1,7 @@
 import { MAX_CONFIG_BYTES, parseConfig, SAFE_NAME } from "@mcp-gateway/core/config";
 import { GatewayError, RequestError } from "@mcp-gateway/core/errors";
 import { anyNumber } from "@mcp-gateway/core/schema";
+import { createSerialQueue } from "@mcp-gateway/core/serial-queue";
 import { type UpdateRuntime, unsupportedUpdateStatus } from "@mcp-gateway/main/app-updater";
 import {
   type AppResult,
@@ -10,7 +11,6 @@ import {
   type QuitStatus,
 } from "@mcp-gateway/shared/rpc";
 import type { GatewayController } from "@mcp-gateway/shared/types";
-import { Effect, Result, Semaphore } from "effect";
 import * as z from "zod/v4";
 
 export interface LoginManager {
@@ -43,7 +43,7 @@ const serverName = (input: unknown): string => {
 
 /** Runtime-validated local RPC boundary. No exception may echo a raw request. */
 export class AppService {
-  private readonly semaphore = Semaphore.makeUnsafe(1);
+  private readonly queue = createSerialQueue();
   private loginStatus: LoginStatus;
   constructor(
     readonly controller: GatewayController,
@@ -90,12 +90,10 @@ export class AppService {
   }
 
   private settle<A>(work: () => Promise<A> | A, serialized: boolean): Promise<AppResult<A>> {
-    const attempt = Effect.tryPromise({ try: async () => work(), catch: (error) => error });
-    const effect = serialized ? this.semaphore.withPermits(1)(attempt) : attempt;
-    return Effect.runPromise(Effect.result(effect)).then((result) =>
-      Result.isSuccess(result)
-        ? this.reply({ ok: true, value: result.success })
-        : this.reply({ ok: false, error: result.failure }),
+    const attempt = async () => work();
+    return (serialized ? this.queue(attempt) : attempt()).then(
+      (value) => this.reply({ ok: true, value }),
+      (error) => this.reply({ ok: false, error }),
     );
   }
 

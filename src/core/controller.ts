@@ -7,7 +7,7 @@ import {
   isHttpServer,
   parseConfig,
 } from "@mcp-gateway/core/config";
-import { failure, operational, visible } from "@mcp-gateway/core/errors";
+import { failure, GatewayError, visible } from "@mcp-gateway/core/errors";
 import { GatewayIngress } from "@mcp-gateway/core/ingress";
 import { LogBuffer } from "@mcp-gateway/core/logs";
 import {
@@ -18,6 +18,7 @@ import {
   type SelfProxyOptions,
   selectInterface,
 } from "@mcp-gateway/core/network";
+import { createSerialQueue } from "@mcp-gateway/core/serial-queue";
 import type {
   GatewayConfig,
   GatewayController,
@@ -26,11 +27,11 @@ import type {
   LogQuery,
   VisibleError,
 } from "@mcp-gateway/shared/types";
-import { Effect, Exit, Result, Scope, Semaphore } from "effect";
+import { Effect, Exit, Scope } from "effect";
 
 /** Local native/UI API. Snapshots contain explicit config credentials; do not log them. */
 export class McpGatewayController implements GatewayController {
-  private readonly semaphore = Semaphore.makeUnsafe(1);
+  private readonly queue = createSerialQueue();
   private readonly lifetime = Scope.makeUnsafe();
   private readonly store: ConfigStore;
   private document: ConfigDocument = { text: "", revision: "" };
@@ -128,23 +129,15 @@ export class McpGatewayController implements GatewayController {
   }
 
   private serial<A>(work: () => Promise<A>): Promise<A> {
-    const effect = this.semaphore.withPermits(1)(
-      operational(
-        async () => {
-          try {
-            return await work();
-          } catch (error) {
-            this.logs.append({ server: null, level: "error", source: "controller" }, [error]);
-            throw error;
-          }
-        },
-        "BackendFailure",
-        "The gateway operation failed.",
-      ),
-    );
-    return Effect.runPromise(Effect.result(effect)).then((result) => {
-      if (Result.isFailure(result)) throw result.failure;
-      return result.success;
+    return this.queue(async () => {
+      try {
+        return await work();
+      } catch (error) {
+        this.logs.append({ server: null, level: "error", source: "controller" }, [error]);
+        throw error instanceof GatewayError
+          ? error
+          : failure("BackendFailure", "The gateway operation failed.");
+      }
     });
   }
 
@@ -202,12 +195,12 @@ export class McpGatewayController implements GatewayController {
     await this.stopOwned();
     const config = this.config;
     try {
-      const ingress = await Effect.runPromise(
-        operational(
-          () => GatewayIngress.open(config, this.report, this.logs, control),
-          "ListenerFailure",
-          "The listener could not start.",
-        ),
+      const ingress = await GatewayIngress.open(config, this.report, this.logs, control).catch(
+        (error) => {
+          throw error instanceof GatewayError
+            ? error
+            : failure("ListenerFailure", "The listener could not start.");
+        },
       );
       this.closingIngress = ingress;
       this.ensureOpen();
