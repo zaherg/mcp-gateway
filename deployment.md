@@ -33,7 +33,7 @@ Without a `MCP_GATEWAY_BUILD_ROOT` override, the macOS development app is `build
 To build and launch the development app instead, run `bun run dev`.
 Running the app can read or change its configuration; see [Configuration](README.md#configuration).
 
-The build prepares the toolchain automatically and writes generated files under `.cache/`, `.hutch-home/`, `dist/`, `assets/`, and the selected build directory.
+The build prepares the toolchain automatically and writes generated files under `.cache/`, `.hutch/`, `.hutch-home/`, `dist/`, `assets/`, and the selected build directory.
 Use a separate checkout for concurrent builds because these intermediate paths are shared.
 
 `hutch.config.ts` pins Electrobun 2.0.6 and its paired Hutch 0.29.0.
@@ -113,7 +113,6 @@ The artifacts directory contains:
 
 After the verification and acceptance checks pass, upload all four files to the same GitHub release without renaming them.
 Their version must match `package.json`.
-The existing `artifacts/v0.3.1/` files predate the current dependency changes and do not verify the current checkout.
 If the build fails, inspect the command output and use a new candidate directory for the next attempt.
 The Electrobun signing step also writes a redacted log to `.cache/build-stable.log`; failures before that step may not produce a current log.
 Do not remove retained artifacts to make a build proceed.
@@ -141,14 +140,15 @@ Production releases use the fixed feed `https://github.com/zaherg/mcp-gateway/re
 Only the separate `release:test` command accepts a build-time feed override, as described below.
 Update candidates must match the installed app's identifier, channel and version metadata; the built-in updater does not compare the signing team.
 Version `0.3.0` has no updater and requires a manual upgrade using the DMG.
+Version `0.3.2` is the first published release with updater files.
 
 ### Install or distribute
 
 After the required verification and acceptance checks pass, open the DMG for the selected version.
-For example, for version 0.3.1:
+For example, for a default build of version 0.3.2:
 
 ```sh
-open artifacts/v0.3.1/macos-arm64-MCPGateway.dmg
+open artifacts/v0.3.2/macos-arm64-MCPGateway.dmg
 ```
 
 Copy the app from the mounted DMG to a writable location before opening it.
@@ -398,13 +398,18 @@ curl -sIL https://github.com/zaherg/mcp-gateway/releases/latest/download/stable-
 3. Download the v2 manifest and the archive, compare the manifest byte for byte with the local copy, and compare the archive hash with the checksum file.
 4. Expand the archive and compare its SHA-256 and size with `tarSha256` and `tarSize` in the v2 manifest.
 
-Checked on 2026-11-08 against the current `v0.3.0` release: it lists only `macos-arm64-MCPGateway.dmg`, and the `latest/download/stable-macos-arm64-update-v2.json` request redirects with 302 to the `v0.3.0` asset URL and ends in 404, because that release has no updater files.
-The asset-listing and redirect commands work, and the first updater-capable release is therefore the first point at which they can pass.
+Checked on 2026-11-08 against `0.3.2`, the latest release:
+
+- The release is published, not a draft or prerelease, and lists the DMG, both manifests, the archive and `SHA256SUMS`.
+- `latest/download/stable-macos-arm64-update-v2.json` redirects with 302 to the `0.3.2` asset, then with 302 to `release-assets.githubusercontent.com`, and ends in HTTP 200.
+- Both downloaded manifests are byte-identical to the local copies in `artifacts/tag-0.3.2/`, and all four downloaded files match `SHA256SUMS`.
+- The expanded archive matches the v2 manifest's `tarSha256` and `tarSize` (278784512 bytes).
 
 ### First real update
 
 The live GitHub update path stays unverified until two updater-capable releases exist.
-Then start an installed N against the real feed and observe it update to N+1.
+`0.3.2` is the first, so the next published release is the earliest N+1.
+Then start an installed `0.3.2` against the real feed and observe it update to that release.
 Until that happens, release notes and `README.md` must say that the live GitHub update path has not been exercised.
 
 ## Automatic releases from tags
@@ -416,6 +421,10 @@ The release, lint and test workflow definitions must all be present in the tagge
 
 Do not tag the current source for distribution until packaged acceptance is complete.
 The built-in Electrobun updater is wired, but the release workflow verifies build artifacts, not a complete in-app update cycle.
+
+`0.3.2` was an explicit exception to this rule and did not go through this workflow.
+Its annotated tag already existed on GitHub; it was built locally with `bun run release` into `build/tag-0.3.2/` and `artifacts/tag-0.3.2/`, verified with `bun scripts/verify-release.ts`, and published manually with `gh`.
+As of 2026-11-08 the release workflow has never run, and the repository has no Actions secrets configured.
 
 ### Required GitHub Actions secrets
 

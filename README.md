@@ -40,18 +40,22 @@ Turn them off in **Settings → Updates**; the choice is stored in `updates.json
 A release is offered only when its version is higher than the installed one.
 Check manually in **Settings → Updates**. Installing requires **Restart to Update**. After confirmation, that stops the gateway and discards unsaved configuration.
 If the handoff fails, the gateway stays stopped; quit and reopen the app to retry.
-No updater-capable release has been published yet, because the latest release (`0.3.0`) has no updater, so install the first updater-capable release manually.
-Signed two-version replacements were verified locally against a loopback feed and an HTTPS test feed, including a GitHub-style redirect rehearsal (see `deployment.md`); the live GitHub feed and notarized-download behavior have not been exercised.
+`0.3.2` is the first updater-capable release.
+`0.3.0` has no updater, so upgrade from it manually with the `0.3.2` or later DMG.
+A local rehearsal updated a signed, non-notarized test build through a loopback feed that redirected to an HTTPS test feed (see `deployment.md`).
+The live GitHub update path from one published release to the next has not been exercised.
 
 ## Security
 
 - Use a trusted LAN only: HTTP traffic is unencrypted.
 - Requests need the bearer token and must originate from the selected subnet or loopback.
+- The `Host` header must match the configured address and port, and a present `Origin` must match the gateway origin.
 - Upstream credentials are configured separately, and client tokens are not forwarded.
 - `mcp.json` can start processes, so protect it. Logs and copied client configurations can expose tokens and note data.
 
 The gateway allows 32 concurrent HTTP requests and 240 admissions per minute.
 At most 16 backend calls can be in flight across all servers; extra calls receive a capacity error.
+At most 16 backend processes or upstream connections are held at once across all servers.
 A slot is released on a matching reply or confirmed backend cleanup; cancelling a request does not necessarily release it immediately.
 Request bodies, backend stdout lines, and backend HTTP response bodies are capped at 4 MiB; successful SSE streams have a 4 MiB per-event limit instead.
 Requests time out after 30 seconds.
@@ -77,6 +81,8 @@ If a crash leaves `mcp.json.lock` beside the configuration, quit every app insta
 }
 ```
 
+`gateway` accepts `host`, `port`, `token`, `autoStart`, and `launchAtLogin`.
+The host must be a currently assigned private IPv4 or loopback address, and the port must be 1 to 65535.
 `${NAME}` reads the app environment, not your shell startup files. Missing variables are errors.
 Stdio entries accept `command`, `args`, `env`, `cwd`, and `disabled`; HTTP entries accept `url`, `headers`, and `disabled`.
 Server names contain 1 to 64 ASCII letters, digits, `_`, or `-` and start with a letter or digit.
@@ -87,14 +93,14 @@ Tokens require 32 to 512 non-space printable ASCII characters; configuration is 
 Install Bun 1.4.4 and Node. macOS builds also need Command Line Tools.
 
 ```sh
-bun install --ignore-scripts --cache-dir .cache/bun
+bun install --frozen-lockfile --ignore-scripts --cache-dir .cache/bun
 bun run build  # Development package
 bun run dev    # Build and launch
 ```
 
 `bun run release` signs and notarizes the app. It requires exactly one Developer ID Application identity in Keychain, plus `APPLE_ID`, `APPLE_TEAM_ID`, and `APPLE_APP_PASSWORD` as environment variables or in `.env`.
 By default, it writes to `build/v<version>/` and `artifacts/v<version>/`, using the version from `package.json`.
-The artifact directory must be absent or empty and cannot be a symlink.
+Both output directories must be absent or empty, stay inside the project, and have no symlink ancestors.
 The check is not a lock, so concurrent builds must use separate directories.
 Build and verify the default release from the repository root:
 
@@ -106,6 +112,7 @@ bun scripts/verify-release.ts
 To build another candidate of the same version without replacing existing files, set `MCP_GATEWAY_BUILD_ROOT` and `MCP_GATEWAY_ARTIFACTS_DIR` to fresh relative paths for both commands.
 
 After verification passes, an updater-capable release must publish `macos-arm64-MCPGateway.dmg`, `stable-macos-arm64-update.json`, `stable-macos-arm64-update-v2.json`, and `stable-macos-arm64-MCPGateway.app.tar.zst`, all matching the version in `package.json`.
+Published releases also include a `SHA256SUMS` file; `bun run release` does not generate it.
 
 Run `bun run typecheck` and `bun run lint` for source checks. This repository has no test suites.
 See [deployment.md](deployment.md#tests) for the lint workflow checks.
