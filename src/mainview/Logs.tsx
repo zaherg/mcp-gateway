@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { AppClient } from "../shared/rpc";
 import { LOG_LEVELS, LOG_LIMITS, type LogEntry, type LogLevel } from "../shared/types";
-import { Alert } from "./Alert";
+import { Alert } from "./components/ui";
 
 async function logRequest<T>(pending: Promise<T>, signal: AbortSignal): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
