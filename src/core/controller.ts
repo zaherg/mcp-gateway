@@ -27,12 +27,10 @@ import type {
   LogQuery,
   VisibleError,
 } from "@mcp-gateway/shared/types";
-import { Effect, Exit, Scope } from "effect";
 
 /** Local native/UI API. Snapshots contain explicit config credentials; do not log them. */
 export class McpGatewayController implements GatewayController {
   private readonly queue = createSerialQueue();
-  private readonly lifetime = Scope.makeUnsafe();
   private readonly store: ConfigStore;
   private document: ConfigDocument = { text: "", revision: "" };
   private config: GatewayConfig | undefined;
@@ -61,7 +59,7 @@ export class McpGatewayController implements GatewayController {
   private closing = false;
   private validation = new AbortController();
   private closePromise: Promise<void> | undefined;
-  private lifetimeClosed: Promise<void> | undefined;
+  private closeWatcher: (() => void) | undefined;
 
   private constructor(configPath: string) {
     this.store = new ConfigStore(configPath);
@@ -423,16 +421,11 @@ export class McpGatewayController implements GatewayController {
       this.watchHealthy = true;
       this.watcher.on("error", this.failWatcher);
       this.watcher.on("close", this.failWatcher);
-      Effect.runSync(
-        Scope.addFinalizer(
-          this.lifetime,
-          Effect.sync(() => {
-            if (this.watchTimer) clearTimeout(this.watchTimer);
-            this.watchHealthy = false;
-            this.watcher?.close();
-          }),
-        ),
-      );
+      this.closeWatcher = () => {
+        if (this.watchTimer) clearTimeout(this.watchTimer);
+        this.watchHealthy = false;
+        this.watcher?.close();
+      };
     } catch {
       this.watchHealthy = false;
       this.watcher?.close();
@@ -448,8 +441,9 @@ export class McpGatewayController implements GatewayController {
     this.cancelValidation();
     this.closePromise = this.serial(async () => {
       try {
-        this.lifetimeClosed ??= Effect.runPromise(Scope.close(this.lifetime, Exit.void));
-        await Promise.all([this.stopOwned(), this.lifetimeClosed]);
+        this.closeWatcher?.();
+        this.closeWatcher = undefined;
+        await this.stopOwned();
       } finally {
         this.closed = true;
       }
