@@ -4,42 +4,43 @@ import * as fs from "node:fs/promises";
 import { validateHeaderName, validateHeaderValue } from "node:http";
 import { basename, dirname, isAbsolute, join, parse, resolve } from "node:path";
 import { failure, GatewayError } from "@mcp-gateway/core/errors";
+import { anyNumber, ownRecord } from "@mcp-gateway/core/schema";
 import {
   type ConfigFormat,
   configFormat,
   parseConfigDocument,
 } from "@mcp-gateway/shared/config-document";
 import type { GatewayConfig, HttpServerConfig, StdioServerConfig } from "@mcp-gateway/shared/types";
-import { Schema } from "effect";
+import * as z from "zod/v4";
 
 const missing = (error: unknown) => (error as NodeJS.ErrnoException)?.code === "ENOENT";
 
 export const MAX_CONFIG_BYTES = 1024 * 1024;
 export const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
-const StringMap = Schema.Record(Schema.String, Schema.String);
-const StdioSchema = Schema.Struct({
-  command: Schema.String,
-  args: Schema.optionalKey(Schema.Array(Schema.String)),
-  env: Schema.optionalKey(StringMap),
-  cwd: Schema.optionalKey(Schema.String),
-  disabled: Schema.optionalKey(Schema.Boolean),
-  legacyProtocol: Schema.optionalKey(Schema.Boolean),
+const StringMap = ownRecord(z.string());
+const StdioSchema = z.strictObject({
+  command: z.string(),
+  args: z.array(z.string()).exactOptional(),
+  env: StringMap.exactOptional(),
+  cwd: z.string().exactOptional(),
+  disabled: z.boolean().exactOptional(),
+  legacyProtocol: z.boolean().exactOptional(),
 });
-const HttpSchema = Schema.Struct({
-  url: Schema.String,
-  headers: Schema.optionalKey(StringMap),
-  disabled: Schema.optionalKey(Schema.Boolean),
-  legacyProtocol: Schema.optionalKey(Schema.Boolean),
+const HttpSchema = z.strictObject({
+  url: z.string(),
+  headers: StringMap.exactOptional(),
+  disabled: z.boolean().exactOptional(),
+  legacyProtocol: z.boolean().exactOptional(),
 });
-const ConfigSchema = Schema.Struct({
-  gateway: Schema.Struct({
-    host: Schema.String,
-    port: Schema.Number,
-    token: Schema.String,
-    autoStart: Schema.optionalKey(Schema.Boolean),
-    launchAtLogin: Schema.optionalKey(Schema.Boolean),
+const ConfigSchema = z.strictObject({
+  gateway: z.strictObject({
+    host: z.string(),
+    port: anyNumber,
+    token: z.string(),
+    autoStart: z.boolean().exactOptional(),
+    launchAtLogin: z.boolean().exactOptional(),
   }),
-  mcpServers: Schema.Record(Schema.String, Schema.Union([StdioSchema, HttpSchema])),
+  mcpServers: ownRecord(z.union([StdioSchema, HttpSchema])),
 });
 
 const invalid: (message?: string) => never = (
@@ -73,7 +74,7 @@ export const parseConfig = (
   let config: GatewayConfig;
   try {
     const raw = parseConfigDocument(text, format);
-    const decoded = Schema.decodeUnknownSync(ConfigSchema, { onExcessProperty: "error" })(raw);
+    const decoded = ConfigSchema.parse(raw);
     config = {
       gateway: { ...decoded.gateway },
       mcpServers: Object.fromEntries(
