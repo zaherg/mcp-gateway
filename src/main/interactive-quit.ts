@@ -1,5 +1,4 @@
 import type { QuitCoordinator } from "./lifecycle";
-import { asOrdinaryQuit, currentQuitInvocation } from "./updater/invocation";
 
 /** A renderer acknowledgement only confirms delivery, never consent to discard a draft. */
 export class InteractiveQuitGate {
@@ -17,10 +16,10 @@ export class InteractiveQuitGate {
     if (this.signalRequested()) {
       // A native signal is terminal intent, including during update preflight or
       // an unanswered draft prompt. It must never inherit install-on-quit.
-      asOrdinaryQuit(() => this.lifecycle.handle(veto));
+      this.lifecycle.handle(veto, true);
       return;
     }
-    if (currentQuitInvocation() || this.lifecycle.status().phase !== "idle") {
+    if (this.lifecycle.status().phase !== "idle" || this.lifecycle.updateRestartActive()) {
       this.lifecycle.handle(veto);
       return;
     }
@@ -31,10 +30,8 @@ export class InteractiveQuitGate {
         const acknowledgement = this.requestRenderer();
         if (acknowledgement === undefined) {
           // No window means no retained renderer draft. Cmd+W persistence is unchanged.
-          asOrdinaryQuit(() => {
-            this.lifecycle.armQuit();
-            this.quit();
-          });
+          this.lifecycle.armQuit();
+          this.quit();
         } else if ((await acknowledgement) !== true) {
           throw new Error("The window did not acknowledge the interactive Quit request.");
         }

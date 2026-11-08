@@ -4,6 +4,11 @@ import type { GatewayErrorCode, VisibleError } from "../shared/types";
 // Only policy text or allowlisted structured summaries belong here, never raw diagnostics.
 export class GatewayError extends Data.TaggedError("GatewayError")<VisibleError> {}
 
+/** An expected refusal at the local RPC boundary; never recorded as a local error. */
+export class RequestError extends Error {
+  readonly code = "InvalidRequest";
+}
+
 export function failure(code: GatewayErrorCode, message: string): GatewayError {
   return new GatewayError({ code, message, occurrenceId: `issue-${++issueSequence}` });
 }

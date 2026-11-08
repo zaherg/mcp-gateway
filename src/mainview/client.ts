@@ -29,5 +29,5 @@ export const client: AppClient = {
   updatesCheck: () => rpc.request.updatesCheck(),
   updatesDownload: () => rpc.request.updatesDownload(),
   updatesSetAutomatic: (params) => rpc.request.updatesSetAutomatic(params),
-  updatesRestart: (params) => rpc.request.updatesRestart(params),
+  updatesRestart: () => rpc.request.updatesRestart(),
 };

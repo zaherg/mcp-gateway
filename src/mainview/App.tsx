@@ -230,10 +230,6 @@ function updateCheckedLabel(value: string | null): string {
 
 function updateStatusText(update: UpdateStatus): string {
   switch (update.phase) {
-    case "unsupported":
-      return "Automatic updates are unavailable on this platform or build.";
-    case "preference-error":
-      return "Automatic updates are disabled until the preference file is repaired.";
     case "checking":
       return "Checking the fixed GitHub stable feed…";
     case "downloading":
@@ -245,8 +241,8 @@ function updateStatusText(update: UpdateStatus): string {
         ? `Version ${update.availableVersion} is available.`
         : "An update is available.";
     case "ready":
-      return update.readyVersion
-        ? `Version ${update.readyVersion} is verified and ready to install.`
+      return update.availableVersion
+        ? `Version ${update.availableVersion} is verified and ready to install.`
         : "The update is verified and ready to install.";
     case "restarting":
       return "Restarting to apply the verified update.";
@@ -438,7 +434,6 @@ export function App({ client }: { client: AppClient }) {
       evidence.lifecycle &&
       evidence.snapshot === snapshot?.update &&
       evidence.lifecycle === quitStatus &&
-      evidence.snapshot.attemptId === null &&
       evidence.snapshot.phase !== "restarting" &&
       evidence.lifecycle.phase !== "pending" &&
       evidence.lifecycle.phase !== "ready"
@@ -523,10 +518,6 @@ export function App({ client }: { client: AppClient }) {
         return false;
       }
       setSnapshot((previous) => (previous ? { ...previous, update: result.value } : previous));
-      if (result.value.preferenceError && message.startsWith("Automatic")) {
-        setError(`UpdatePreference: ${result.value.preferenceError}`);
-        return false;
-      }
       setNotice(message);
       return true;
     } catch {
@@ -564,9 +555,7 @@ export function App({ client }: { client: AppClient }) {
   }
   async function requestUpdateRestart() {
     if (restartUnconfirmed || quitting || updateRestarting) return;
-    const readyVersion = snapshot?.update.readyVersion;
-    const readyHash = snapshot?.update.availableHash;
-    if (!readyVersion || !readyHash) return;
+    if (snapshot?.update.phase !== "ready") return;
     setConfirmUpdate(false);
     setRestartUnconfirmed(true);
     restartEvidence.current = { snapshot: null, lifecycle: null };
@@ -578,7 +567,7 @@ export function App({ client }: { client: AppClient }) {
     setError(null);
     setNotice("");
     try {
-      const result = await client.updatesRestart({ version: readyVersion, hash: readyHash });
+      const result = await client.updatesRestart();
       if (!result.ok) {
         setError(`${result.error.code}: ${result.error.message}`);
         return;
@@ -597,7 +586,7 @@ export function App({ client }: { client: AppClient }) {
   const config = snapshot?.gateway.configError && !doc?.dirty ? null : parsed;
   const gateway = snapshot?.gateway;
   const updateState = snapshot?.update;
-  const updateReady = updateState?.readyVersion ?? null;
+  const updateReady = updateState?.phase === "ready";
   const dirty = doc?.dirty ?? false;
   const stale = !!doc && !!gateway && doc.revision !== gateway.revision;
   const retryLogin = !!(
@@ -827,7 +816,7 @@ export function App({ client }: { client: AppClient }) {
                 }
               >
                 {updateState.phase === "ready"
-                  ? `Version ${updateState.readyVersion ?? updateState.availableVersion} is ready to install.`
+                  ? `Version ${updateState.availableVersion} is ready to install.`
                   : `Version ${updateState.availableVersion} is available.`}{" "}
                 Open Settings → Updates to review and confirm.
               </Alert>
@@ -844,23 +833,6 @@ export function App({ client }: { client: AppClient }) {
                 }
               >
                 Update: {updateState.error ?? "The update operation failed."}
-              </Alert>
-            )}
-          {updateState?.preferenceError &&
-            !dismissed.has(
-              `update-${updateState.phase}-${updateState.availableVersion ?? ""}-${updateState.error ?? ""}`,
-            ) && (
-              <Alert
-                kind="warning"
-                role="status"
-                label="Dismiss update preference notice"
-                onDismiss={() =>
-                  dismiss(
-                    `update-${updateState.phase}-${updateState.availableVersion ?? ""}-${updateState.error ?? ""}`,
-                  )
-                }
-              >
-                {updateState.preferenceError}
               </Alert>
             )}
           {!quitting &&
@@ -1402,8 +1374,8 @@ export function App({ client }: { client: AppClient }) {
                   </div>
                   {!updateState.supported ? (
                     <p className="update-unavailable">
-                      Automatic updates are unavailable on this platform or build. This build does
-                      not contact the update feed.
+                      Automatic updates are unsupported in this build. This build does not contact
+                      the update feed.
                     </p>
                   ) : (
                     <>
@@ -1440,10 +1412,7 @@ export function App({ client }: { client: AppClient }) {
                         label="Automatically check and download updates"
                         description="Check after launch, then daily. A higher stable version downloads automatically; installation always requires explicit confirmation."
                         disabled={
-                          updateBusy ||
-                          configurationLocked ||
-                          updateState.recoveryRequired ||
-                          updateState.phase === "restarting"
+                          updateBusy || configurationLocked || updateState.phase === "restarting"
                         }
                         checked={updateState.automaticUpdates}
                         onChange={(value) =>
@@ -1455,21 +1424,6 @@ export function App({ client }: { client: AppClient }) {
                           )
                         }
                       />
-                      {updateState.preferenceError && (
-                        <p className="inline-error" role="alert">
-                          {updateState.preferenceError}
-                        </p>
-                      )}
-                      {updateState.recoveryRequired && (
-                        <p className="inline-error" role="alert">
-                          A previous update needs recovery before new update work can start.
-                        </p>
-                      )}
-                      {updateState.recoveryPath && (
-                        <p className="inline-error" role="status">
-                          Verified previous app copy: {updateState.recoveryPath}
-                        </p>
-                      )}
                       <div className="update-actions">
                         <button
                           type="button"
@@ -1477,7 +1431,6 @@ export function App({ client }: { client: AppClient }) {
                           disabled={
                             updateBusy ||
                             configurationLocked ||
-                            updateState.recoveryRequired ||
                             updateState.phase === "checking" ||
                             updateState.phase === "downloading" ||
                             updateState.phase === "restarting"
@@ -1500,7 +1453,6 @@ export function App({ client }: { client: AppClient }) {
                             disabled={
                               updateBusy ||
                               configurationLocked ||
-                              updateState.recoveryRequired ||
                               updateState.phase === "checking" ||
                               updateState.phase === "downloading" ||
                               updateState.phase === "restarting"
@@ -1529,7 +1481,6 @@ export function App({ client }: { client: AppClient }) {
                               !quitStatusKnown ||
                               restartUnconfirmed ||
                               updateState.phase === "restarting" ||
-                              !updateState.installationEnabled ||
                               !!editor ||
                               !!deleting ||
                               quitStatus.phase === "pending" ||
@@ -1542,12 +1493,6 @@ export function App({ client }: { client: AppClient }) {
                           </button>
                         )}
                       </div>
-                      {!updateState.installationEnabled && (
-                        <p className="fine-print">
-                          <ShieldCheck size={14} /> Installation is disabled for this build. Only
-                          signed packaged macOS arm64 stable builds can arm the update installer.
-                        </p>
-                      )}
                       {(editor || deleting) && updateReady && (
                         <p className="fine-print" role="status">
                           Close the open server dialog before restarting.

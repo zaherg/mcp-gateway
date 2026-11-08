@@ -22,8 +22,6 @@ export interface QuitRequest {
 }
 
 export type UpdatePhase =
-  | "unsupported"
-  | "preference-error"
   | "idle"
   | "checking"
   | "available"
@@ -34,25 +32,12 @@ export type UpdatePhase =
 
 export interface UpdateStatus {
   supported: boolean;
-  installationEnabled: boolean;
   automaticUpdates: boolean;
   installedVersion: string | null;
   availableVersion: string | null;
-  availableHash: string | null;
-  readyVersion: string | null;
   phase: UpdatePhase;
   error: string | null;
-  preferenceError: string | null;
-  recoveryRequired: boolean;
-  recoveryPath: string | null;
   checkedAt: string | null;
-  attemptId?: number | null;
-  transaction?: {
-    status: "none" | "confirmed" | "failed" | "unconfirmed" | "recovery-required";
-    version: string | null;
-    hash: string | null;
-    message: string | null;
-  } | null;
 }
 
 export interface AppSnapshot {
@@ -90,7 +75,7 @@ export type AppRPC = {
         response: AppResult<UpdateStatus>;
       };
       updatesRestart: {
-        params: { version: string; hash: string };
+        params: undefined;
         response: AppResult<QuitRequest>;
       };
     };
@@ -120,5 +105,5 @@ export interface AppClient {
   updatesCheck(): Promise<AppResult<UpdateStatus>>;
   updatesDownload(): Promise<AppResult<UpdateStatus>>;
   updatesSetAutomatic(params: { automatic: boolean }): Promise<AppResult<UpdateStatus>>;
-  updatesRestart(params: { version: string; hash: string }): Promise<AppResult<QuitRequest>>;
+  updatesRestart(): Promise<AppResult<QuitRequest>>;
 }

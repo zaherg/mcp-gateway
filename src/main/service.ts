@@ -1,6 +1,6 @@
 import { Effect, Result, Schema, Semaphore } from "effect";
 import { MAX_CONFIG_BYTES, parseConfig, SAFE_NAME } from "../core/config";
-import { GatewayError } from "../core/errors";
+import { GatewayError, RequestError } from "../core/errors";
 import { LOG_LEVELS, LOG_LIMITS } from "../shared/logs";
 import {
   type AppResult,
@@ -8,50 +8,13 @@ import {
   type LoginStatus,
   needsLoginRetry,
   type QuitStatus,
-  type UpdateStatus,
 } from "../shared/rpc";
 import type { GatewayController } from "../shared/types";
-import { UpdatePolicyError } from "./updater/coordinator";
-import type { UpdateAttempt } from "./updater/transaction";
+import { type UpdateRuntime, unsupportedUpdateStatus } from "./app-updater";
 
 export interface LoginManager {
   status(): LoginStatus;
   setEnabled(enabled: boolean): LoginStatus;
-}
-
-export interface UpdateManager {
-  statusValue(): UpdateStatus;
-  check(): Promise<UpdateStatus>;
-  download(): Promise<UpdateStatus>;
-  setAutomatic(enabled: boolean): Promise<UpdateStatus>;
-  beginRestart(version: string, hash: string): UpdateAttempt;
-  restartToUpdate(
-    version: string,
-    hash: string,
-    admittedAttempt?: UpdateAttempt,
-  ): Promise<QuitStatus>;
-}
-
-function unsupportedUpdateStatus(): UpdateStatus {
-  return {
-    supported: false,
-    installationEnabled: false,
-    automaticUpdates: false,
-    installedVersion: null,
-    availableVersion: null,
-    availableHash: null,
-    readyVersion: null,
-    phase: "unsupported",
-    error: null,
-    preferenceError: null,
-    recoveryRequired: false,
-    recoveryPath: null,
-    checkedAt: null,
-  };
-}
-
-class RequestError extends Error {
-  readonly code = "InvalidRequest";
 }
 
 let requestSequence = 0;
@@ -64,7 +27,6 @@ const LogRequest = Schema.Struct({
 const NameRequest = Schema.Struct({ name: Schema.String });
 const SaveRequest = Schema.Struct({ text: Schema.String, expectedRevision: Schema.String });
 const AutomaticRequest = Schema.Struct({ automatic: Schema.Boolean });
-const RestartUpdateRequest = Schema.Struct({ version: Schema.String, hash: Schema.String });
 
 function decode<A, I>(schema: Schema.Codec<A, I>, input: unknown): A {
   try {
@@ -97,7 +59,7 @@ export class AppService {
       requestQuit: () => QuitStatus;
       quitStatus: () => QuitStatus;
     },
-    private readonly updates?: UpdateManager,
+    private readonly updates?: UpdateRuntime,
   ) {
     this.loginStatus = login.status();
   }
@@ -108,7 +70,7 @@ export class AppService {
     return {
       gateway: this.controller.snapshot(),
       login: this.loginStatus,
-      update: this.updates?.statusValue() ?? unsupportedUpdateStatus(),
+      update: this.updates?.status() ?? unsupportedUpdateStatus(),
     };
   }
 
@@ -116,20 +78,14 @@ export class AppService {
   private reply<A>(result: { ok: true; value: A } | { ok: false; error: unknown }): AppResult<A> {
     if (result.ok) return { ok: true, value: result.value };
     const error = result.error;
-    if (
-      !(error instanceof GatewayError) &&
-      !(error instanceof RequestError) &&
-      !(error instanceof UpdatePolicyError)
-    )
+    if (!(error instanceof GatewayError) && !(error instanceof RequestError))
       this.controller.recordLocalError(error);
     return {
       ok: false,
       error: {
         occurrenceId:
           error instanceof GatewayError ? error.occurrenceId : `request-${++requestSequence}`,
-        ...(error instanceof GatewayError ||
-        error instanceof RequestError ||
-        error instanceof UpdatePolicyError
+        ...(error instanceof GatewayError || error instanceof RequestError
           ? { code: error.code, message: error.message }
           : {
               code: "OperationFailed",
@@ -147,19 +103,6 @@ export class AppService {
         ? this.reply({ ok: true, value: result.success })
         : this.reply({ ok: false, error: result.failure }),
     );
-  }
-
-  private runAfterAdmission<Admission, A>(
-    admit: () => Admission,
-    work: (admission: Admission) => Promise<A> | A,
-  ): Promise<AppResult<A>> {
-    let admission: Admission;
-    try {
-      admission = admit();
-    } catch (error) {
-      return Promise.resolve(this.reply({ ok: false, error }));
-    }
-    return this.run(() => work(admission));
   }
 
   private run<A>(work: () => Promise<A> | A): Promise<AppResult<A>> {
@@ -238,7 +181,7 @@ export class AppService {
       return this.run(async () => {
         if (
           this.desktop.quitStatus().phase !== "idle" ||
-          this.updates?.statusValue().phase === "restarting"
+          this.updates?.status().phase === "restarting"
         )
           throw new RequestError("Quit cleanup has started. Retry Quit to close the app.");
         const { text, expectedRevision } = decode(SaveRequest, input);
@@ -304,7 +247,7 @@ export class AppService {
     updatesStatus: (input?: unknown) =>
       this.lifecycle(() => {
         empty(input);
-        return this.requireUpdates().statusValue();
+        return this.requireUpdates().status();
       }),
     updatesCheck: (input?: unknown) =>
       this.lifecycle(async () => {
@@ -321,28 +264,16 @@ export class AppService {
         const { automatic } = decode(AutomaticRequest, input);
         return this.requireUpdates().setAutomatic(automatic);
       }),
-    updatesRestart: (input: unknown) =>
-      this.runAfterAdmission(
-        () => {
-          const quitPhase = this.desktop.quitStatus().phase;
-          if (quitPhase === "pending" || quitPhase === "ready")
-            throw new RequestError("Quit cleanup has started. Retry Quit to close the app.");
-          const { version, hash } = decode(RestartUpdateRequest, input);
-          if (version.length === 0 || version.length > 256 || !/^[a-z0-9]{1,13}$/.test(hash))
-            throw new RequestError("The update request is invalid.");
-          // Publish the authoritative reservation before the service semaphore.
-          return this.requireUpdates().beginRestart(version, hash);
-        },
-        async (attempt) => {
-          const { version, hash } = decode(RestartUpdateRequest, input);
-          const status = await this.requireUpdates().restartToUpdate(version, hash, attempt);
-          return { requested: true as const, status };
-        },
-      ),
+    updatesRestart: (input?: unknown) =>
+      this.run(async () => {
+        empty(input);
+        const status = await this.requireUpdates().restart();
+        return { requested: true as const, status };
+      }),
   };
 
-  private requireUpdates(): UpdateManager {
-    if (!this.updates) throw new UpdatePolicyError("UpdateUnsupported");
+  private requireUpdates(): UpdateRuntime {
+    if (!this.updates) throw new RequestError("Updates are unavailable in this build.");
     return this.updates;
   }
 }

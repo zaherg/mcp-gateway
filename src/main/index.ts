@@ -1,4 +1,4 @@
-import { dirname, join, resolve } from "node:path";
+import { join } from "node:path";
 import Electrobun, {
   ApplicationMenu,
   BrowserView,
@@ -11,27 +11,13 @@ import { parseConfig } from "../core/config";
 import { McpGatewayController } from "../core/controller";
 import { GatewayError } from "../core/errors";
 import type { AppRPC, QuitStatus } from "../shared/rpc";
+import { AppUpdater, resolveUpdateSupport, unsupportedUpdateStatus } from "./app-updater";
 import { InteractiveQuitGate } from "./interactive-quit";
 import { QuitCoordinator } from "./lifecycle";
 import { openLoginManager } from "./login";
 import { observeNativeQuitSignals } from "./native-signals";
 import { configurationDirectory, restoreWindow, startsInBackground } from "./platform";
 import { AppService } from "./service";
-import { applyVerifiedUpdate, loadApplySdk } from "./updater/apply";
-import { INSTALLATION_ENABLED, UpdaterSafetyBoundary } from "./updater/boundary";
-import { UPDATER_CHANNEL, UPDATER_IDENTIFIER } from "./updater/constants";
-import { UpdaterCoordinator } from "./updater/coordinator";
-import { EXECUTING_BUILD } from "./updater/executing-build";
-import type { ApplySettlement } from "./updater/handoff";
-import { asOrdinaryQuit, withQuitInvocation } from "./updater/invocation";
-import { readUpdateSupport } from "./updater/support";
-import type { UpdateAttempt } from "./updater/transaction";
-
-const updaterWorkerMode = process.env.MCP_GATEWAY_UPDATE_WORKER;
-if (updaterWorkerMode) {
-  const { runUpdaterWorker } = await import("./updater/worker");
-  process.exit(await runUpdaterWorker(updaterWorkerMode));
-}
 
 const dataDirectory = configurationDirectory(Utils.paths.config);
 const nativeQuitSignal = observeNativeQuitSignals(
@@ -42,68 +28,12 @@ const controller = await McpGatewayController.open(join(dataDirectory, "mcp.json
 const idleQuitStatus: QuitStatus = { attempt: 0, phase: "idle", error: null };
 let quit: QuitCoordinator | undefined;
 const quitStatus = (): QuitStatus => quit?.status() ?? idleQuitStatus;
-const appBundlePath = resolve(dirname(process.execPath), "..", "..");
-const updateSupport = await readUpdateSupport({
-  appBundlePath,
-});
-const boundary = updateSupport.supported
-  ? new UpdaterSafetyBoundary({
-      appBundlePath,
-      executingBuild: EXECUTING_BUILD,
-      dataDirectory,
-      appDataDirectory: Utils.paths.appData,
-      channelRoot: join(Utils.paths.appData, UPDATER_IDENTIFIER, UPDATER_CHANNEL),
-    })
-  : undefined;
-const updates = new UpdaterCoordinator({
-  dataDirectory,
-  supported: boundary !== undefined,
-  installedVersion: updateSupport.installedVersion,
-  installationEnabled: INSTALLATION_ENABLED,
-  runtime: boundary
-    ? {
-        checkForUpdate: () => boundary.checkForUpdate(),
-        prepareUpdateAttempt: () => boundary.prepareUpdateAttempt(),
-        revalidate: (candidate, signal) => boundary.revalidate(candidate, signal),
-        reconcile: () => boundary.reconcile(),
-        abandonPrepared: () => boundary.abandonPrepared(),
-        cancel: () => boundary.cancel(),
-      }
-    : undefined,
-  terminal: {
-    reserveUpdate: (candidate) => quit?.reserveUpdate(candidate),
-    requestRestartToUpdate: (attempt: UpdateAttempt) => {
-      const accepted = quit?.acceptUpdateRestart(attempt) === true;
-      if (accepted)
-        withQuitInvocation({ kind: "begin-update-shutdown", attemptId: attempt.id }, () =>
-          Utils.quit(),
-        );
-      return { accepted, status: quitStatus() };
-    },
-    cancelUpdate: (attemptId) => quit?.cancelUpdate(attemptId),
-  },
-});
-const service = new AppService(
-  controller,
-  login.manager,
-  Utils.clipboardWriteText,
-  {
-    requestQuit: () => {
-      asOrdinaryQuit(() => {
-        quit?.armQuit();
-        Utils.quit();
-      });
-      return quitStatus();
-    },
-    quitStatus,
-  },
-  updates,
-);
+const support = await resolveUpdateSupport();
+let updates: AppUpdater | undefined;
 const tray = new Tray({ image: "views://assets/tray.png", template: true, width: 18, height: 18 });
 let window: BrowserWindow | undefined;
 let pendingShowUpdates = false;
 let windowReady = false;
-let updateStartup: Promise<void> | undefined;
 let menuState = "";
 let trayRemoved = false;
 let loginClosed = false;
@@ -120,13 +50,13 @@ function updateMenu(): void {
   if (trayRemoved) return;
   const quitFailed = quitStatus().phase === "failed";
   const snapshot = controller.snapshot();
-  const update = updates.statusValue();
+  const update = updates?.status() ?? unsupportedUpdateStatus();
   const state = `${snapshot.running}:${Boolean(snapshot.configError)}:${quitFailed}:${update.supported}:${update.phase}:${update.availableVersion ?? ""}`;
   if (state === menuState) return;
   menuState = state;
   const updateLabel =
     update.phase === "ready"
-      ? `Update ready: ${update.readyVersion ?? update.availableVersion ?? "review"}`
+      ? `Update ready: ${update.availableVersion ?? "review"}`
       : update.phase === "available"
         ? `Update available: ${update.availableVersion ?? "review"}`
         : "Check for Updates…";
@@ -156,7 +86,7 @@ function updateMenu(): void {
 }
 
 function showUpdatesSection(): void {
-  if (!updateSupport.supported) return;
+  if (!support.supported) return;
   pendingShowUpdates = true;
   openWindow();
   void service.handlers.updatesCheck();
@@ -168,14 +98,6 @@ function showUpdatesSection(): void {
 
 function dispatchShowUpdates(): void {
   window?.webview.executeJavascript('window.dispatchEvent(new Event("mcp-gateway:show-updates"))');
-}
-
-function completeUpdateStartup(): Promise<void> {
-  updateStartup ??= (async () => {
-    await updates.completeInitialization();
-    updateMenu();
-  })().catch((error) => controller.recordLocalError(error));
-  return updateStartup;
 }
 
 function openWindow(): void {
@@ -194,7 +116,6 @@ function openWindow(): void {
           if (!ready) {
             ready = true;
             windowReady = true;
-            void completeUpdateStartup();
           }
           if (pendingShowUpdates) {
             pendingShowUpdates = false;
@@ -232,7 +153,7 @@ function openWindow(): void {
 const refresh = setInterval(updateMenu, 1_000);
 quit = new QuitCoordinator(
   async () => {
-    updates.stop();
+    updates?.stop();
     clearInterval(refresh);
     await controller.close();
     if (!trayRemoved) {
@@ -247,9 +168,8 @@ quit = new QuitCoordinator(
   () => {
     Utils.quit();
   },
-  (error, kind, settlement) => {
+  (error, kind) => {
     controller.recordLocalError(error);
-    if (kind === "update") updates.markHandoffFailed(quitStatus().error ?? undefined, settlement);
     console.error(
       kind === "update"
         ? "Update handoff failed; the gateway is stopped."
@@ -259,29 +179,29 @@ quit = new QuitCoordinator(
     // Cleanup may already have removed the tray; retain a visible retry path.
     openWindow();
   },
-  async (attempt): Promise<ApplySettlement> => {
-    if (!boundary) throw new Error("Update handoff is unavailable");
-    const sdk = await loadApplySdk();
-    const session = await boundary.prepareHandoff(attempt, sdk);
-    if (!quit?.registerHandoff(session)) {
-      session.releaseGuard();
-      throw new Error("Update handoff session is no longer current");
-    }
-    let retained = false;
-    try {
-      const outcome = await applyVerifiedUpdate(attempt, session, sdk);
-      if (outcome.settlement.kind === "unarmed") retained = true;
-      return outcome.settlement;
-    } finally {
-      quit?.unregisterHandoff(session);
-      if (!retained) session.releaseGuard();
-    }
-  },
-  async () => {
-    await updates.abandonPrepared();
-  },
 );
-boundary?.setHandoffAuthority(quit.handoffAuthority);
+const updater = new AppUpdater({
+  dataDirectory,
+  supported: support.supported,
+  installedVersion: support.installedVersion,
+  quit,
+});
+updates = updater;
+updates.subscribe(updateMenu);
+const service = new AppService(
+  controller,
+  login.manager,
+  Utils.clipboardWriteText,
+  {
+    requestQuit: () => {
+      quit?.armQuit();
+      Utils.quit();
+      return quitStatus();
+    },
+    quitStatus,
+  },
+  updater,
+);
 const interactiveQuit = new InteractiveQuitGate(
   quit,
   () => {
@@ -314,10 +234,8 @@ Electrobun.events.on("before-quit", (event) =>
 Electrobun.events.on("reopen", openWindow);
 for (const signal of ["SIGINT", "SIGTERM"] as const)
   process.on(signal, () => {
-    asOrdinaryQuit(() => {
-      quit?.armQuit();
-      Utils.quit();
-    });
+    quit?.armQuit();
+    Utils.quit();
   });
 
 async function dispatch(event: unknown): Promise<void> {
@@ -352,7 +270,7 @@ ApplicationMenu.setApplicationMenu([
     label: "MCP Gateway",
     submenu: [
       { label: "Settings…", action: "open", accelerator: "Cmd+," },
-      ...(updateSupport.supported ? [{ label: "Check for Updates…", action: "updates" }] : []),
+      ...(support.supported ? [{ label: "Check for Updates…", action: "updates" }] : []),
       { type: "divider" },
       { label: "Quit MCP Gateway", action: "quit", accelerator: "Cmd+Q" },
     ],
@@ -380,7 +298,7 @@ ApplicationMenu.on("application-menu-clicked", (event) => {
 Utils.setDockIconVisible(false);
 updateMenu();
 try {
-  await updates.start({ reconcile: false });
+  await updater.start();
   updateMenu();
 } catch (error) {
   controller.recordLocalError(error);
@@ -400,4 +318,3 @@ const background = startsInBackground(
   savedLoginPreference,
 );
 if (!background) openWindow();
-if (!window) await completeUpdateStartup();
