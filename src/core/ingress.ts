@@ -121,10 +121,7 @@ export class GatewayIngress {
         try {
           ingress.selected = selectInterface(config.gateway.host);
         } catch {
-          ingress.report(
-            visible(failure("NetworkPolicy", "The selected interface is no longer assigned.")),
-          );
-          void ingress.close().catch((error) => ingress.report(visible(error)));
+          ingress.lostInterface();
         }
       }, 1_000);
       ingress.monitor.unref();
@@ -160,6 +157,12 @@ export class GatewayIngress {
         error: error ? { ...error } : null,
       };
     });
+  }
+
+  private lostInterface(): void {
+    if (this.closed) return;
+    this.report(visible(failure("NetworkPolicy", "The selected interface is no longer assigned.")));
+    void this.close().catch((error) => this.report(visible(error)));
   }
 
   async reconcile(config: GatewayConfig, control?: SelfProxyOptions): Promise<void> {
@@ -251,7 +254,7 @@ export class GatewayIngress {
       this.selected = selectInterface(this.config.gateway.host);
     } catch {
       reject(503);
-      void this.close().catch((error) => this.report(visible(error)));
+      this.lostInterface();
       return;
     }
     if (!peerAllowed(req.socket.remoteAddress ?? "", this.selected)) {

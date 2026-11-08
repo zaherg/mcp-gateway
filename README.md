@@ -20,6 +20,7 @@ Each server has its own endpoint, such as `http://192.168.1.120:8765/mcp/bear`. 
 The Bear preset permits all tools, including writes.
 
 Logs stay in memory until you quit. **Launch app at login** is off by default.
+While that setting is on, the app opens in the background at every launch, and the window opens from the menu-bar icon.
 
 ## Compatibility
 
@@ -130,3 +131,4 @@ Keep class and object methods, constructors, accessors, and declaration-only sig
 Import TypeScript and JavaScript under `src/` through `@mcp-gateway/...`, including same-folder imports; the alias is configured for TypeScript, Bun, and Vite.
 Imports outside `src/`, such as script helpers and root `package.json`, remain relative, as do CSS and resource paths.
 Do not use parent traversal inside the alias or add a second root alias.
+`dependencies` lists only the packages loaded from `node_modules` at runtime (the externals in `electrobun.config.ts`), and bundled packages belong in `devDependencies`.

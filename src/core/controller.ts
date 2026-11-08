@@ -342,16 +342,26 @@ export class McpGatewayController implements GatewayController {
   }
 
   private async refresh(control: SelfProxyOptions): Promise<void> {
+    const candidate = await this.validated(control);
+    if (!candidate) return;
+    // A valid document that cannot be applied (for example a busy port) is an
+    // operational error; apply() reports it and stops the listener.
+    await this.apply(candidate.document, candidate.config, control);
+  }
+
+  private async validated(
+    control: SelfProxyOptions,
+  ): Promise<{ document: ConfigDocument; config: GatewayConfig } | null> {
     let document: ConfigDocument | undefined;
     try {
       document = await this.store.read();
-      if (document.revision === this.document.revision && !this.configError) return;
+      if (document.revision === this.document.revision && !this.configError) return null;
       // Validate the candidate before publishing its text/revision. A cancelled
       // refresh must leave document/config consistent so the next Start retries it.
       const next = parseConfig(document.text, process.env, this.store.format);
       selectInterface(next.gateway.host);
       await rejectSelfProxy(next, control);
-      await this.apply(document, next, control);
+      return { document, config: next };
     } catch (error) {
       // A superseded operation leaves the authoritative config and configError alone.
       if (control.signal?.aborted || isSelfProxyCancelled(error)) throw error;
@@ -362,6 +372,7 @@ export class McpGatewayController implements GatewayController {
       this.configError = visible(error);
       this.event("error", "Invalid external configuration; listener stopped.");
       await this.stopOwned();
+      return null;
     }
   }
 

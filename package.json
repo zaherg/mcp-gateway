@@ -19,23 +19,25 @@
         "ui:build": "vite build"
     },
     "dependencies": {
-        "cors": "^2.8.6",
-        "effect": "^4.1.2",
-        "express": "^4.22.3",
         "jsonc-parser": "^3.3.1",
-        "lucide-react": "^1.70.0",
-        "react": "^19.3.1",
-        "react-dom": "^19.3.1",
-        "supergateway": "^4.2.1"
+        "supergateway": "4.2.1"
     },
     "devDependencies": {
         "@biomejs/biome": "^2.6.6",
+        "@modelcontextprotocol/sdk": "1.30.0",
         "@tailwindcss/vite": "^4.3.5",
         "@types/bun": "^1.4.4",
         "@types/react": "^19.3.0",
         "@types/react-dom": "^19.3.0",
         "@vitejs/plugin-react": "^6.2.1",
+        "cors": "^2.8.6",
+        "effect": "^4.1.2",
         "electrobun": "^2.0.6",
+        "eventsource-parser": "3.1.1",
+        "express": "^4.22.3",
+        "lucide-react": "^1.70.0",
+        "react": "^19.3.1",
+        "react-dom": "^19.3.1",
         "tailwindcss": "^4.3.5",
         "typescript": "^7.0.2",
         "vite": "^8.3.6"

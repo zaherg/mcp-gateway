@@ -78,9 +78,18 @@ export class LogBuffer {
       truncated,
     };
     // Include escaped text and metadata in retention and RPC byte accounting.
-    while (Buffer.byteLength(JSON.stringify(entry)) > LOG_LIMITS.entryBytes) {
+    // One proportional pass per check: removing 256 characters at a time would
+    // re-serialize the whole entry dozens of times.
+    const marker = "\n[entry truncated]";
+    let size = Buffer.byteLength(JSON.stringify(entry));
+    while (size > LOG_LIMITS.entryBytes) {
       entry.truncated = true;
-      entry.text = `${entry.text.slice(0, Math.max(0, entry.text.length - 256))}\n[entry truncated]`;
+      const keep = Math.max(
+        0,
+        Math.floor((entry.text.length * LOG_LIMITS.entryBytes) / size) - 256,
+      );
+      entry.text = `${entry.text.slice(0, keep)}${marker}`;
+      size = Buffer.byteLength(JSON.stringify(entry));
     }
     this.entries.push(entry);
     this.bytes += Buffer.byteLength(JSON.stringify(entry)) + 1;
@@ -106,17 +115,10 @@ export class LogBuffer {
     let bytes = 512;
     for (const entry of this.entries) {
       if (entry.id <= cursor) continue;
-      const matches =
-        (!query.level || entry.level === query.level) &&
-        (!query.server || entry.server === query.server) &&
-        (!query.text || entry.text.toLowerCase().includes(query.text.toLowerCase()));
-      if (matches) {
-        const size = Buffer.byteLength(JSON.stringify(entry)) + 1;
-        if (entries.length >= LOG_LIMITS.batchEntries || bytes + size > LOG_LIMITS.batchBytes)
-          break;
-        entries.push({ ...entry });
-        bytes += size;
-      }
+      const size = Buffer.byteLength(JSON.stringify(entry)) + 1;
+      if (entries.length >= LOG_LIMITS.batchEntries || bytes + size > LOG_LIMITS.batchBytes) break;
+      entries.push({ ...entry });
+      bytes += size;
       cursor = entry.id;
     }
     return { entries, cursor, generation: this.generation, gap, hasMore: cursor < this.sequence };

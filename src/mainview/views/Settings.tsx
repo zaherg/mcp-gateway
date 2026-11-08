@@ -127,7 +127,7 @@ export const Settings = ({
           <div className="startup-settings">
             <Toggle
               label="Launch app at login"
-              description="Open MCP Gateway in the background when you sign in to macOS."
+              description="While this is on, MCP Gateway opens in the background at every launch; open the window from the menu-bar icon."
               disabled={configurationLocked}
               checked={config.gateway.launchAtLogin ?? false}
               onChange={(value) =>

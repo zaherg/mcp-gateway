@@ -65,6 +65,20 @@ export const UNSUPPORTED_PROTOCOL_ERROR = {
   message: "Only MCP protocol version 2026-07-28 is supported.",
 } as const;
 
+/**
+ * Normalizes SSE line endings across chunks.
+ * A terminal CR is normalised immediately: the pinned parser otherwise defers it.
+ */
+const createLineFeed = (push: (text: string) => void): ((text: string) => void) => {
+  let afterCR = false;
+  return (text) => {
+    if (!text) return;
+    const normalized = afterCR && text.startsWith("\n") ? text.slice(1) : text;
+    afterCR = text.endsWith("\r");
+    push(normalized.replace(/\r\n?/g, "\n"));
+  };
+};
+
 class CapacityError extends Error {}
 
 // Only the owned close promise proves that backend work ended.
@@ -210,14 +224,7 @@ export const createMount = (
         },
       });
       const decoder = new TextDecoder("utf-8", { fatal: true });
-      let afterCR = false;
-      const feed = (text: string) => {
-        if (!text) return;
-        // Normalize immediately: the pinned parser otherwise defers a terminal CR.
-        const normalized = afterCR && text.startsWith("\n") ? text.slice(1) : text;
-        afterCR = text.endsWith("\r");
-        parser.feed(normalized.replace(/\r\n?/g, "\n"));
-      };
+      const feed = createLineFeed((text) => parser.feed(text));
       for await (const chunk of response.body) {
         feed(decoder.decode(chunk, { stream: true }));
         await this.held;
@@ -639,13 +646,7 @@ export class UpstreamDiscovery {
             },
           })
         : undefined;
-      let afterCR = false;
-      const feed = (text: string) => {
-        if (!text) return;
-        const normalized = afterCR && text.startsWith("\n") ? text.slice(1) : text;
-        afterCR = text.endsWith("\r");
-        parser?.feed(normalized.replace(/\r\n?/g, "\n"));
-      };
+      const feed = createLineFeed((text) => parser?.feed(text));
       let length = 0;
       try {
         if (!response.ok) return response.status >= 500 ? undefined : false;

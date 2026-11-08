@@ -192,13 +192,18 @@ export class AppUpdater implements UpdateRuntime {
       throw new RequestError("An update restart is already in progress.");
     if (this.value.phase === "checking")
       throw new RequestError("An update check is already in progress.");
+    if (this.value.phase === "downloading") return this.status();
     if (this.value.phase === "ready") return this.status();
     if (
       !this.value.availableVersion ||
       !isHigherStableVersion(this.value.availableVersion, this.options.installedVersion)
     )
       throw new RequestError("No eligible update is available to download.");
-    return this.performDownload();
+    // The download can outlive the window's request limit; its phase is polled.
+    void this.performDownload().catch((error: unknown) =>
+      this.update({ phase: "error", error: errorMessage(error) }),
+    );
+    return this.status();
   }
 
   async setAutomatic(enabled: boolean): Promise<UpdateStatus> {

@@ -200,6 +200,8 @@ export const inspectBackendGroup = async (
 
 const TERMINATION_GRACE_MS = 5_000;
 const TERMINATION_POLL_MS = 50;
+// Unconfirmed groups are only inspected, so a fast poll would waste CPU forever.
+const STUCK_POLL_MS = 1_000;
 
 /** A cleanup stays owned through uncertain inspection or refused termination. */
 export class BackendProcesses implements ChildrenOwner {
@@ -277,7 +279,9 @@ export class BackendProcesses implements ChildrenOwner {
             "Backend process-group identity could not be confirmed; cleanup remains pending.",
           );
         }
-        await new Promise<void>((resolve) => setTimeout(resolve, TERMINATION_POLL_MS));
+        await new Promise<void>((resolve) =>
+          setTimeout(resolve, Date.now() < deadline ? TERMINATION_POLL_MS : STUCK_POLL_MS),
+        );
       }
     });
     const stopOnExit = () => {

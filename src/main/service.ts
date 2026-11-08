@@ -9,7 +9,6 @@ import {
   type QuitStatus,
 } from "@mcp-gateway/shared/rpc";
 import type { GatewayController } from "@mcp-gateway/shared/types";
-import { LOG_LEVELS, LOG_LIMITS } from "@mcp-gateway/shared/types";
 import { Effect, Result, Schema, Semaphore } from "effect";
 
 export interface LoginManager {
@@ -18,12 +17,7 @@ export interface LoginManager {
 }
 
 let requestSequence = 0;
-const LogRequest = Schema.Struct({
-  after: Schema.Number,
-  level: Schema.optional(Schema.String),
-  server: Schema.optional(Schema.String),
-  text: Schema.optional(Schema.String),
-});
+const LogRequest = Schema.Struct({ after: Schema.Number });
 const NameRequest = Schema.Struct({ name: Schema.String });
 const SaveRequest = Schema.Struct({ text: Schema.String, expectedRevision: Schema.String });
 const AutomaticRequest = Schema.Struct({ automatic: Schema.Boolean });
@@ -120,16 +114,9 @@ export class AppService {
     readLogs: (input: unknown) =>
       this.run(() => {
         const query = decode(LogRequest, input);
-        if (
-          !Number.isSafeInteger(query.after) ||
-          query.after < 0 ||
-          (query.level !== undefined && !LOG_LEVELS.some((level) => level === query.level)) ||
-          (query.server !== undefined && !SAFE_NAME.test(query.server)) ||
-          (query.text !== undefined && query.text.length > LOG_LIMITS.queryTextCharacters)
-        )
+        if (!Number.isSafeInteger(query.after) || query.after < 0)
           throw new RequestError("The log query is invalid.");
-        const level = LOG_LEVELS.find((level) => level === query.level);
-        return this.controller.readLogs({ ...query, level });
+        return this.controller.readLogs({ after: query.after });
       }),
     clearLogs: (input?: unknown) =>
       this.run(() => {

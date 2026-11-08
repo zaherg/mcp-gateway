@@ -22,9 +22,6 @@ export interface LogEntry {
 }
 export interface LogQuery {
   after: number;
-  level?: LogLevel;
-  server?: string;
-  text?: string;
 }
 export interface LogPage {
   entries: LogEntry[];

@@ -70,19 +70,21 @@ export const Logs = ({ client, servers }: { client: AppClient; servers: string[]
         bufferGeneration.current = page.generation;
         cursor.current = page.cursor;
         if (page.gap) setGap(true);
-        setEntries((previous) => {
-          const all = [...(reset ? [] : previous), ...page.entries];
-          let bytes = 2;
-          let start = all.length;
-          while (start > 0 && all.length - start < LOG_LIMITS.entries) {
-            const size = new TextEncoder().encode(JSON.stringify(all[start - 1])).byteLength + 1;
-            if (bytes + size > LOG_LIMITS.bytes) break;
-            bytes += size;
-            start--;
-          }
-          if (start > 0) setGap(true);
-          return all.slice(start);
-        });
+        // Re-measuring up to 4 MiB of unchanged entries every poll is wasted work.
+        if (reset || page.entries.length > 0)
+          setEntries((previous) => {
+            const all = [...(reset ? [] : previous), ...page.entries];
+            let bytes = 2;
+            let start = all.length;
+            while (start > 0 && all.length - start < LOG_LIMITS.entries) {
+              const size = new TextEncoder().encode(JSON.stringify(all[start - 1])).byteLength + 1;
+              if (bytes + size > LOG_LIMITS.bytes) break;
+              bytes += size;
+              start--;
+            }
+            if (start > 0) setGap(true);
+            return all.slice(start);
+          });
         setError(null);
         timer = setTimeout(poll, page.hasMore ? 0 : 2000);
       } catch {
