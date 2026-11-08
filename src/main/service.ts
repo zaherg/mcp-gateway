@@ -1,5 +1,6 @@
 import { MAX_CONFIG_BYTES, parseConfig, SAFE_NAME } from "@mcp-gateway/core/config";
 import { GatewayError, RequestError } from "@mcp-gateway/core/errors";
+import { anyNumber } from "@mcp-gateway/core/schema";
 import { type UpdateRuntime, unsupportedUpdateStatus } from "@mcp-gateway/main/app-updater";
 import {
   type AppResult,
@@ -9,7 +10,8 @@ import {
   type QuitStatus,
 } from "@mcp-gateway/shared/rpc";
 import type { GatewayController } from "@mcp-gateway/shared/types";
-import { Effect, Result, Schema, Semaphore } from "effect";
+import { Effect, Result, Semaphore } from "effect";
+import * as z from "zod/v4";
 
 export interface LoginManager {
   status(): LoginStatus;
@@ -17,17 +19,15 @@ export interface LoginManager {
 }
 
 let requestSequence = 0;
-const LogRequest = Schema.Struct({ after: Schema.Number });
-const NameRequest = Schema.Struct({ name: Schema.String });
-const SaveRequest = Schema.Struct({ text: Schema.String, expectedRevision: Schema.String });
-const AutomaticRequest = Schema.Struct({ automatic: Schema.Boolean });
+const LogRequest = z.strictObject({ after: anyNumber });
+const NameRequest = z.strictObject({ name: z.string() });
+const SaveRequest = z.strictObject({ text: z.string(), expectedRevision: z.string() });
+const AutomaticRequest = z.strictObject({ automatic: z.boolean() });
 
-const decode = <A, I>(schema: Schema.Codec<A, I>, input: unknown): A => {
-  try {
-    return Schema.decodeUnknownSync(schema, { onExcessProperty: "error" })(input);
-  } catch {
-    throw new RequestError("The application request is invalid.");
-  }
+const decode = <A>(schema: z.ZodType<A>, input: unknown): A => {
+  const result = schema.safeParse(input);
+  if (!result.success) throw new RequestError("The application request is invalid.");
+  return result.data;
 };
 
 const empty = (input: unknown): void => {
