@@ -23,11 +23,19 @@ Logs stay in memory until you quit. **Launch app at login** is off by default.
 
 ## Compatibility
 
-The gateway serves only MCP protocol `2026-07-28`, which is stateless: every message is a `POST` to `/mcp/<name>`.
+By default, an endpoint serves only MCP protocol `2026-07-28`, which is stateless: every message is a `POST` to `/mcp/<name>`.
 `GET` and `DELETE` return 405, and requests for older protocol versions or the `initialize` handshake return 400.
-Session-based clients, including the official `StreamableHTTPClientTransport`, are refused.
 Stdio servers are bridged by the gateway.
 An HTTP upstream must answer `server/discover` with `2026-07-28`; other upstreams are refused.
+
+For clients that do not support `2026-07-28` yet, enable **Allow session-based clients** on a server, or set `"legacyProtocol": true` on it in `mcp.json`.
+That endpoint then also serves session-based MCP (`2025-11-25` and earlier, as negotiated by the client), including the official `StreamableHTTPClientTransport`: `initialize`, the `Mcp-Session-Id` header, the `GET` event stream and `DELETE`.
+An HTTP upstream on such an endpoint is reached as a session-based server, so it does not need to speak `2026-07-28`.
+Each session runs its own backend process or upstream session.
+At most 8 sessions are open across all endpoints, and each also uses one of the 16 shared backend slots; a new session beyond either limit gets 429.
+A session with no open request or event stream ends after 60 seconds, and the client must initialize again.
+Session requests share the 16 outstanding-call limit and the 4 MiB backend message limit with stateless requests.
+App versions up to `0.3.2` reject a configuration that contains `legacyProtocol`.
 
 ## Automatic updates
 

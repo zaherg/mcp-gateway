@@ -19,11 +19,13 @@ const StdioSchema = Schema.Struct({
   env: Schema.optionalKey(StringMap),
   cwd: Schema.optionalKey(Schema.String),
   disabled: Schema.optionalKey(Schema.Boolean),
+  legacyProtocol: Schema.optionalKey(Schema.Boolean),
 });
 const HttpSchema = Schema.Struct({
   url: Schema.String,
   headers: Schema.optionalKey(StringMap),
   disabled: Schema.optionalKey(Schema.Boolean),
+  legacyProtocol: Schema.optionalKey(Schema.Boolean),
 });
 const ConfigSchema = Schema.Struct({
   gateway: Schema.Struct({
@@ -161,12 +163,14 @@ export function serverFingerprint(server: StdioServerConfig | HttpServerConfig):
               ]),
             ),
           ),
+          legacyProtocol: server.legacyProtocol === true,
         }
       : {
           command: server.command,
           args: server.args ?? [],
           env: sorted(server.env),
           cwd: server.cwd,
+          legacyProtocol: server.legacyProtocol === true,
         },
   );
 }

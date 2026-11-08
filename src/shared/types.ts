@@ -51,12 +51,16 @@ export interface StdioServerConfig {
   env?: Record<string, string>;
   cwd?: string;
   disabled?: boolean;
+  /** Also serve session-based MCP (2025-11-25 and earlier) on this endpoint. */
+  legacyProtocol?: boolean;
 }
 
 export interface HttpServerConfig {
   url: string;
   headers?: Record<string, string>;
   disabled?: boolean;
+  /** Also serve session-based MCP (2025-11-25 and earlier) on this endpoint. */
+  legacyProtocol?: boolean;
 }
 
 export interface InterfaceChoice {

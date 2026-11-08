@@ -17,6 +17,7 @@ export type Editor = {
   url: string;
   headers: string;
   disabled: boolean;
+  legacyProtocol: boolean;
 };
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -26,7 +27,11 @@ export function stringMap(value: unknown): value is Record<string, string> {
   return isRecord(value) && Object.values(value).every((item) => typeof item === "string");
 }
 export function isBackend(value: unknown): value is Backend {
-  if (!isRecord(value) || (value.disabled !== undefined && typeof value.disabled !== "boolean"))
+  if (
+    !isRecord(value) ||
+    (value.disabled !== undefined && typeof value.disabled !== "boolean") ||
+    (value.legacyProtocol !== undefined && typeof value.legacyProtocol !== "boolean")
+  )
     return false;
   if ("url" in value)
     return (
@@ -80,6 +85,7 @@ export const emptyEditor = (): Editor => ({
   url: "",
   headers: "{}",
   disabled: false,
+  legacyProtocol: false,
 });
 
 export function ServerEditor({
@@ -216,6 +222,15 @@ export function ServerEditor({
             </Field>
           </>
         )}
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={editor.legacyProtocol}
+            disabled={configurationLocked}
+            onChange={(event) => onChange({ legacyProtocol: event.target.checked })}
+          />{" "}
+          Allow session-based clients (MCP 2025-11-25 and earlier)
+        </label>
         <label className="checkbox-row">
           <input
             type="checkbox"

@@ -222,6 +222,7 @@ export function App({ client }: { client: AppClient }) {
       next.original = name;
       next.name = name;
       next.disabled = server.disabled ?? false;
+      next.legacyProtocol = server.legacyProtocol ?? false;
       if ("url" in server) {
         next.type = "http";
         next.url = server.url;
@@ -280,8 +281,15 @@ export function App({ client }: { client: AppClient }) {
             env,
             cwd: editor.cwd || undefined,
             disabled: editor.disabled,
+            // Omitted when off, so older versions can still read the file.
+            legacyProtocol: editor.legacyProtocol || undefined,
           }
-        : { url: editor.url, headers, disabled: editor.disabled };
+        : {
+            url: editor.url,
+            headers,
+            disabled: editor.disabled,
+            legacyProtocol: editor.legacyProtocol || undefined,
+          };
     const servers = { ...config.mcpServers };
     if (editor.original) delete servers[editor.original];
     servers[editor.name] = server;

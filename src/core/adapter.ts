@@ -53,12 +53,13 @@ import {
 } from "./limits";
 import { LogBuffer } from "./logs";
 import { BackendProcesses } from "./process";
+import { createSessions } from "./sessions";
 
 export type GatewayMount = StatefulMount;
 
 export const SHUTDOWN_MS = 8_000;
 
-/** Session-based (pre-2026-07-28) MCP is not served. */
+/** Session-based (pre-2026-07-28) MCP is served only by endpoints that opt in. */
 export const UNSUPPORTED_PROTOCOL_ERROR = {
   code: -32600,
   message: "Only MCP protocol version 2026-07-28 is supported.",
@@ -100,18 +101,19 @@ export function createMount(
   onDiagnostic: (summary: string) => void,
   admission: ResourceAdmission,
   calls: BackendCalls,
+  sessionAdmission: ResourceAdmission,
   logs = new LogBuffer(),
 ): GatewayMount {
   const discard = (..._args: unknown[]) => {};
   let closing = false;
-  const capture = (level: LogLevel, args: unknown[]) => {
+  const capture = (level: LogLevel, args: unknown[], diagnose = true) => {
     const stderr = typeof args[0] === "string" && args[0].startsWith("Child stderr:");
     logs.append({ server: name, level, source: stderr ? "stderr" : "logger" }, args);
     // Upstream HTTP transports also report a synthetic null/null "child" exit
     // on close. Preserve that log without replacing the actual HTTP failure.
     const upstreamClosed =
       isHttpServer(server) && args[0] === "Child exited: code=null, signal=null";
-    if (!closing && level === "error" && !stderr && !upstreamClosed)
+    if (diagnose && !closing && level === "error" && !stderr && !upstreamClosed)
       onDiagnostic(backendSummary(args));
   };
   const diagnostic = (...args: unknown[]) => capture("error", args);
@@ -270,6 +272,36 @@ export function createMount(
       (req: GatewayRequest, res: GatewayResponse, next: (error?: unknown) => void) => {
         void handle(req, res).catch(next);
       };
+    const sessions = server.legacyProtocol
+      ? createSessions({
+          source,
+          children,
+          calls,
+          reserve: () => {
+            const session = sessionAdmission.acquire();
+            if (!session) throw new CapacityError();
+            const resource = admission.acquire();
+            if (!resource) {
+              session.release();
+              throw new CapacityError();
+            }
+            return [session, resource];
+          },
+          log: capture,
+        })
+      : undefined;
+    if (sessions) {
+      // A session's event stream (GET) and its end (DELETE).
+      const request = handled(async (req, res) => {
+        if (children.closing) {
+          res.status(503).end();
+          return;
+        }
+        await sessions.request(req, res);
+      });
+      app.get(path, request);
+      app.delete(path, request);
+    }
     app.post(
       path,
       handled(async (req, res) => {
@@ -282,7 +314,9 @@ export function createMount(
         if (res.destroyed || res.writableEnded || children.closing) return;
         if (typeof route === "boolean") {
           // true: admission already answered. false: a session-protocol request.
-          if (!route) rejectWith(req, res, 400, UNSUPPORTED_PROTOCOL_ERROR);
+          if (route) return;
+          if (sessions) await sessions.post(req, res);
+          else rejectWith(req, res, 400, UNSUPPORTED_PROTOCOL_ERROR);
           return;
         }
         // The pinned admission also routes envelope-bearing requests that claim an

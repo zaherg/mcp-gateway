@@ -19,6 +19,9 @@ import { peerAllowed, rejectSelfProxy, type SelfProxyOptions, selectInterface } 
 export const MAX_BODY_BYTES = 4 * 1024 * 1024;
 export const MAX_CONCURRENT_REQUESTS = 32;
 export const MAX_BACKEND_RESOURCES = 16;
+// Each session holds a backend resource and at most one open event stream, so
+// this cap also bounds the long-lived requests counted against concurrency.
+export const MAX_SESSIONS = 8;
 export const REQUEST_DEADLINE_MS = 30_000;
 const MAX_CONNECTIONS = 64;
 export const MAX_REQUESTS_PER_MINUTE = 240;
@@ -26,6 +29,8 @@ interface Endpoint {
   mount: GatewayMount;
   fingerprint: string;
   responses: Set<ServerResponse>;
+  /** Also serves session-based MCP: GET event streams and DELETE. */
+  sessions: boolean;
 }
 const digest = (text: string) => createHash("sha256").update(text).digest();
 
@@ -36,6 +41,7 @@ export class GatewayIngress {
   private readonly backendErrors = new Map<string, VisibleError>();
   private readonly closingMounts = new Map<string, GatewayMount>();
   private readonly admission = new ResourceAdmission(MAX_BACKEND_RESOURCES);
+  private readonly sessionAdmission = new ResourceAdmission(MAX_SESSIONS);
   // One backend-work budget shared by every endpoint.
   private readonly work = new BackendCalls(MAX_BACKEND_CALLS);
   private selected: InterfaceChoice;
@@ -173,12 +179,14 @@ export class GatewayIngress {
         },
         this.admission,
         this.work,
+        this.sessionAdmission,
         this.logs,
       );
       this.endpoints.set(name, {
         mount,
         fingerprint: serverFingerprint(server),
         responses: new Set(),
+        sessions: server.legacyProtocol === true,
       });
     }
   }
@@ -249,12 +257,6 @@ export class GatewayIngress {
       reject(403);
       return;
     }
-    // MCP 2026-07-28 is stateless: every message is a POST.
-    if (req.method !== "POST") {
-      res.setHeader("Allow", "POST");
-      reject(405);
-      return;
-    }
     const match = /^\/mcp\/([A-Za-z0-9][A-Za-z0-9_-]{0,63})$/.exec(req.url ?? "");
     if (!match) {
       reject(404);
@@ -266,9 +268,23 @@ export class GatewayIngress {
       reject(404);
       return;
     }
+    // MCP 2026-07-28 is stateless: every message is a POST. Session-based MCP
+    // adds a session's GET event stream and its DELETE.
+    const methods = endpoint.sessions ? ["POST", "GET", "DELETE"] : ["POST"];
+    if (!methods.includes(req.method ?? "")) {
+      res.setHeader("Allow", methods.join(", "));
+      reject(405);
+      return;
+    }
+    const post = req.method === "POST";
+    const stream = req.method === "GET";
     const length = req.headers["content-length"];
     if (length !== undefined && (!/^\d+$/.test(length) || Number(length) > MAX_BODY_BYTES)) {
       reject(413);
+      return;
+    }
+    if (!post && (req.headers["transfer-encoding"] !== undefined || Number(length ?? 0) > 0)) {
+      reject(400);
       return;
     }
     if (req.headers["content-encoding"] && req.headers["content-encoding"] !== "identity") {
@@ -296,6 +312,8 @@ export class GatewayIngress {
     req.once("close", () => req.off("error", requestError));
     let finished = false;
     const timeout = setTimeout(() => {
+      // An open event stream lives as long as its session; only its opening is bounded.
+      if (stream && res.headersSent) return;
       if (!res.headersSent) reject(504);
       else res.destroy();
       controller.abort();
@@ -314,7 +332,7 @@ export class GatewayIngress {
     res.once("close", done);
     void (async () => {
       try {
-        await readRequestBody(req, MAX_BODY_BYTES, controller.signal);
+        if (post) await readRequestBody(req, MAX_BODY_BYTES, controller.signal);
         if (
           finished ||
           controller.signal.aborted ||

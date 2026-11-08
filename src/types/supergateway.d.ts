@@ -3,6 +3,7 @@
 declare module "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js" {
   import type { ChildProcess, SpawnOptions } from "node:child_process";
   import type { IncomingMessage, ServerResponse } from "node:http";
+  import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
   export interface GatewayRequest extends IncomingMessage {
     body?: unknown;
   }
@@ -65,6 +66,69 @@ declare module "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js" {
     readonly spawnOptions: SpawnOptions;
     own(child: ChildProcess): () => Promise<void>;
     track(stop: () => Promise<void>): () => Promise<void>;
+  }
+  /** What a session's backend reports to it (peer.js, childLink.js). */
+  export interface PeerOwner {
+    failure(kind: string, error: Error): void;
+    exit(code: number | null, signal: string | null): void;
+    message(message: JSONRPCMessage, line: string): void;
+    nonJson(line: string): void;
+    stderr(text: string): void;
+    output(): Promise<void> | undefined;
+  }
+  export interface Peer {
+    write(message: JSONRPCMessage): void;
+    end(): void;
+    stop(): Promise<void>;
+    readonly gone: boolean;
+  }
+  export type PeerFactory = (owner: PeerOwner) => Peer;
+}
+declare module "supergateway/dist/lib/outputBackpressure.js" {
+  export function readWhile(response: Response, wait: () => Promise<void> | undefined): Response;
+}
+declare module "supergateway/dist/gateways/statefulSessions.js" {
+  import type { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+  import type {
+    ChildrenOwner,
+    GatewayLogger,
+    GatewayRequest,
+    GatewayResponse,
+    Source,
+  } from "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js";
+  export class StatefulSessions {
+    constructor(
+      source: Source,
+      children: ChildrenOwner,
+      logger: GatewayLogger,
+      sessionTimeout: number,
+    );
+    readonly openResponses: WeakMap<StreamableHTTPServerTransport, Set<GatewayResponse>>;
+    open(res: GatewayResponse): Promise<StreamableHTTPServerTransport>;
+    post(req: GatewayRequest, res: GatewayResponse): Promise<void>;
+    request(req: GatewayRequest, res: GatewayResponse): Promise<void>;
+  }
+}
+declare module "supergateway/dist/gateways/statefulSession.js" {
+  import type { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+  import type { StatefulSessions } from "supergateway/dist/gateways/statefulSessions.js";
+  import type {
+    GatewayLogger,
+    GatewayResponse,
+    PeerFactory,
+  } from "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js";
+  export class StatefulSession {
+    readonly transport: StreamableHTTPServerTransport;
+    static open(
+      sessions: StatefulSessions,
+      res: GatewayResponse,
+      logger: GatewayLogger,
+      sessionTimeout: number,
+      begin: (
+        transport: StreamableHTTPServerTransport,
+        responses: Set<GatewayResponse>,
+      ) => PeerFactory,
+    ): Promise<StatefulSession>;
   }
 }
 declare module "express" {
