@@ -6,6 +6,7 @@ import { needsLoginRetry } from "../shared/rpc";
 import type { GatewayConfig } from "../shared/types";
 import { Banners } from "./components/Banners";
 import { DraftBar } from "./components/DraftBar";
+import { GatewayStrip } from "./components/GatewayStrip";
 import { Shell } from "./components/Shell";
 import { ConfirmDialogs } from "./dialogs/ConfirmDialogs";
 import {
@@ -382,6 +383,13 @@ export function App({ client }: { client: AppClient }) {
       ) : (
         <>
           <fieldset disabled={busy} className="workspace">
+            <GatewayStrip
+              gateway={gateway}
+              dirty={dirty}
+              configurationLocked={configurationLocked}
+              run={run}
+              client={client}
+            />
             <DraftBar
               dirty={dirty}
               retryLogin={retryLogin}

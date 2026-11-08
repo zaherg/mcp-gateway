@@ -236,7 +236,7 @@ export class AppUpdater implements UpdateRuntime {
       cleaned = await this.options.quit.beginUpdateRestart();
     } catch {
       throw new RequestError(
-        "Update cleanup failed. The app has not exited. Retry Update or Quit.",
+        "Update cleanup failed. The app has not exited. Use Quit, then reopen the app to retry the update.",
       );
     }
     if (!cleaned) throw new RequestError("Quit cleanup has started. Retry Quit to close the app.");
@@ -244,8 +244,11 @@ export class AppUpdater implements UpdateRuntime {
     const mark = Updater.getStatusHistory().length;
     this.restartApproved = true;
     this.options.quit.approveUpdateRestart();
+    let applyError: string | undefined;
     try {
       await Updater.applyUpdate();
+    } catch (error) {
+      applyError = errorMessage(error);
     } finally {
       this.restartApproved = false;
       this.options.quit.clearUpdateRestart();
@@ -259,10 +262,10 @@ export class AppUpdater implements UpdateRuntime {
         (entry) =>
           entry.status === "error" || entry.status === "idle" || entry.status === "no-update",
       );
-    const message = failure?.message ?? "The update restart reported no outcome.";
+    const message = applyError ?? failure?.message ?? "The update restart reported no outcome.";
     this.update({ phase: "error", error: message });
     this.options.quit.updateRestartFailed(
-      `Update handoff failed. The gateway is stopped. Retry Update or Quit. ${message}`,
+      `Update handoff failed. The gateway is stopped. Quit and reopen the app to retry the update. ${message}`,
     );
     return this.options.quit.status();
   }
@@ -413,7 +416,13 @@ export class AppUpdater implements UpdateRuntime {
       this.scheduledCheck();
     }, STARTUP_DELAY_MS);
     this.intervalTimer = setInterval(() => {
-      if (Date.now() - this.lastCheckAt >= CHECK_INTERVAL_MS) this.scheduledCheck();
+      // A failed check or download is retried at the next poll instead of waiting a day.
+      const elapsed = Date.now() - this.lastCheckAt;
+      if (
+        elapsed >= CHECK_INTERVAL_MS ||
+        (this.value.phase === "error" && elapsed >= POLL_INTERVAL_MS)
+      )
+        this.scheduledCheck();
     }, POLL_INTERVAL_MS);
   }
 

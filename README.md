@@ -6,7 +6,8 @@ A macOS menu-bar app that exposes local stdio and remote Streamable HTTP MCP ser
 
 ## Platform status
 
-macOS 14+ on arm64 is supported.
+macOS on Apple silicon (arm64) is supported. The binaries require macOS 14.0 or newer; behavior on the minimum version has not been tested.
+Linux and Windows are not supported.
 
 ## Use
 
@@ -22,13 +23,25 @@ The Bear preset permits all tools, including writes.
 
 Logs stay in memory until you quit. **Launch app at login** is off by default.
 
+## Compatibility
+
+The gateway serves only MCP protocol `2026-07-28`, which is stateless: every message is a `POST` to `/mcp/<name>`.
+`GET` and `DELETE` return 405, and requests for older protocol versions or the `initialize` handshake return 400.
+Session-based clients, including the official `StreamableHTTPClientTransport`, are refused.
+Stdio servers are bridged by the gateway.
+An HTTP upstream must answer `server/discover` with `2026-07-28`; other upstreams are refused.
+
 ## Automatic updates
 
-Automatic checks and downloads are enabled by default in signed macOS arm64 builds with updater support.
-Updates come from `https://github.com/zaherg/mcp-gateway/releases/latest/download`.
+Updates use the built-in Electrobun updater and the fixed feed `https://github.com/zaherg/mcp-gateway/releases/latest/download`.
+Only signed stable builds can update. Development builds report that updates are unsupported and never contact the feed.
+Automatic checks and downloads are on by default: a check runs about 10 seconds after launch and then daily, and a failed check or download is retried about hourly.
+Turn them off in **Settings → Updates**; the choice is stored in `updates.json` beside `mcp.json`.
+A release is offered only when its version is higher than the installed one.
 Check manually in **Settings → Updates**. Installing requires **Restart to Update**. After confirmation, that stops the gateway and discards unsaved configuration.
-No updater-capable release has been published yet, and packaged acceptance for `0.3.1` has not passed.
-Because `0.3.0` has no updater, install the first updater-capable release manually.
+If the handoff fails, the gateway stays stopped; quit and reopen the app to retry.
+No updater-capable release has been published yet, because the latest release (`0.3.0`) has no updater, so install the first updater-capable release manually.
+A packaged update replacement has not been verified end to end.
 
 ## Security
 
@@ -45,7 +58,8 @@ Requests time out after 30 seconds.
 
 ## Configuration
 
-Use one `mcp.json` or `mcp.jsonc`. On macOS it belongs in `~/Library/Application Support/MCP Gateway/`.
+Use one `mcp.json` or `mcp.jsonc`. It belongs in `~/Library/Application Support/MCP Gateway/`, which cannot be changed.
+The app also keeps `updates.json` (the automatic-update preference) in that folder.
 A `.json` file must be strict JSON, while `.jsonc` allows comments and trailing commas. Having both files present is an error. Quit the app before renaming the file, then reopen it. Files are owner-only, and symlinks are refused.
 If a crash leaves `mcp.json.lock` beside the configuration, quit every app instance and confirm no writer is active before removing the lock and retrying.
 
@@ -93,5 +107,5 @@ To build another candidate of the same version without replacing existing files,
 
 After verification passes, an updater-capable release must publish `macos-arm64-MCPGateway.dmg`, `stable-macos-arm64-update.json`, `stable-macos-arm64-update-v2.json`, and `stable-macos-arm64-MCPGateway.app.tar.zst`, all matching the version in `package.json`.
 
-Run `bun run typecheck` and `bun run lint` for source checks.
-See [deployment.md](deployment.md#tests) for the current test coverage limits.
+Run `bun run typecheck` and `bun run lint` for source checks. This repository has no test suites.
+See [deployment.md](deployment.md#tests) for the lint workflow checks.

@@ -108,7 +108,7 @@ export class QuitCoordinator {
           attempt: this.state.attempt,
           phase: "failed",
           error: wasUpdate
-            ? "Update cleanup failed. The app has not exited. Retry Update or Quit."
+            ? "Update cleanup failed. The app has not exited. Use Quit, then reopen the app to retry the update."
             : "Quit cleanup failed. The app has not exited. Retry Quit.",
         };
         this.onFailure(error, wasUpdate ? "update" : "quit");

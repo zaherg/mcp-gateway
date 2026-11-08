@@ -1,5 +1,5 @@
 ---
-name: Tests
+name: macOS build checks
 
 "on":
   push:
@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   test:
-    runs-on: ubuntu-24.04
+    runs-on: macos-15
     timeout-minutes: 30
 
     steps:
@@ -38,13 +38,6 @@ jobs:
         with:
           bun-version: "1.4.4"
 
-      - name: Install native desktop prerequisites
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y \
-            libgtk-3-0 libwebkit2gtk-4.1-0 libayatana-appindicator3-1 librsvg2-2 \
-            xvfb xauth dbus-x11 openbox x11-utils
-
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts --cache-dir .cache/bun
 
@@ -57,10 +50,8 @@ jobs:
       - name: Lint
         run: bun run lint
 
-      - name: Build native development app
-        env:
-          MCP_GATEWAY_BUILD_ROOT: build/linux-native-ci
-        run: bun run build
+      - name: Build UI
+        run: bun run ui:build
 
-      - name: Native WebKitGTK smoke with owned display and window manager
-        run: bash scripts/check-native-linux.sh build/linux-native-ci/dev-linux-x64/MCPGateway-dev
+      - name: Build native development app
+        run: bun run build

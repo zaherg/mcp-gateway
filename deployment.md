@@ -183,7 +183,9 @@ Missing secrets stop the workflow rather than producing an unsigned release.
 
 The release workflow first calls `lint.yml` and `test.yml` from the same tagged commit.
 Both must succeed before the macOS build can start; a failure, cancellation or skipped check blocks signing and publication.
-The test workflow retains its source checks and development build.
+The `test.yml` workflow runs on a `macos-15` arm64 runner with Node 26.13.0 and Bun 1.4.4.
+It installs locked dependencies, prepares the SDK, runs typecheck and lint, builds the UI, and builds the unsigned development app.
+It does not launch the app or run a native smoke check.
 Standalone lint and test runs still cover branch pushes, pull requests and manual dispatches; tag checks run through the release workflow to avoid duplicate runs.
 Their concurrency groups are separate so a called workflow cannot cancel its caller.
 Signing secrets are not passed to either check workflow.

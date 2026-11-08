@@ -142,11 +142,7 @@ export function Updates({
               onClick={() => void runUpdate(() => client.updatesCheck(), "Update check completed.")}
             >
               <RefreshCw size={15} />
-              {updateState.phase === "checking"
-                ? "Checking…"
-                : updateState.phase === "error"
-                  ? "Retry Check"
-                  : "Check for Updates"}
+              {updateState.phase === "checking" ? "Checking…" : "Check for Updates"}
             </button>
             {updateState.availableVersion && !updateReady && (
               <button
@@ -164,11 +160,7 @@ export function Updates({
                 }
               >
                 <ArrowDownToLine size={15} />
-                {updateState.phase === "downloading"
-                  ? "Downloading…"
-                  : updateState.phase === "error"
-                    ? "Retry Download"
-                    : "Download Update"}
+                {updateState.phase === "downloading" ? "Downloading…" : "Download Update"}
               </button>
             )}
             {updateReady && (
@@ -187,7 +179,7 @@ export function Updates({
                 onClick={() => setConfirmUpdate(true)}
               >
                 <ArrowUpRight size={15} />
-                {updateState.phase === "error" ? "Retry Update" : "Restart to Update"}
+                Restart to Update
               </button>
             )}
           </div>

@@ -285,6 +285,15 @@ export function createMount(
           if (!route) rejectWith(req, res, 400, UNSUPPORTED_PROTOCOL_ERROR);
           return;
         }
+        // The pinned admission also routes envelope-bearing requests that claim an
+        // older revision, or initialize with a modern envelope, to the backend.
+        if (
+          route.classification.revision !== MODERN_VERSION ||
+          route.message.method === "initialize"
+        ) {
+          rejectWith(req, res, 400, UNSUPPORTED_PROTOCOL_ERROR);
+          return;
+        }
         const requestId = route.messageKind === "request" ? route.message.id : undefined;
         const work = requestId === undefined ? undefined : calls.owner();
         if (work && requestId !== undefined && !calls.admit(work, requestId)) {
