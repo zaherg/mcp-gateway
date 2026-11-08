@@ -614,10 +614,6 @@ main {
   border: 0;
   color: inherit;
 }
-.alert > svg {
-  flex-shrink: 0;
-  margin-top: 2px;
-}
 .draft-bar {
   display: flex;
   justify-content: space-between;
