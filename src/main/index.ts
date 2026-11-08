@@ -15,6 +15,7 @@ import { AppUpdater, resolveUpdateSupport, unsupportedUpdateStatus } from "./app
 import { InteractiveQuitGate, QuitCoordinator } from "./lifecycle";
 import {
   configurationDirectory,
+  installedIdentifier,
   observeNativeQuitSignals,
   openLoginManager,
   restoreWindow,
@@ -22,7 +23,10 @@ import {
 } from "./native";
 import { AppService } from "./service";
 
-const dataDirectory = configurationDirectory(Utils.paths.config);
+const dataDirectory = configurationDirectory(
+  Utils.paths.config,
+  installedIdentifier(PATHS.RESOURCES_FOLDER),
+);
 const nativeQuitSignal = observeNativeQuitSignals(
   join(PATHS.RESOURCES_FOLDER, "app/native/login.dylib"),
 );

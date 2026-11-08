@@ -1,13 +1,13 @@
 import type { ElectrobunConfig } from "electrobun";
 import packageInfo from "./package.json";
-import { releaseArtifactFolder } from "./scripts/build-config";
+import { buildIdentity, releaseArtifactFolder } from "./scripts/build-config";
 
-const UPDATE_FEED_URL = "https://github.com/zaherg/mcp-gateway/releases/latest/download";
+const identity = buildIdentity();
 
 export default {
   app: {
     name: "MCP Gateway",
-    identifier: "dev.srvr.mcpgateway",
+    identifier: identity.identifier,
     version: packageInfo.version,
   },
   build: {
@@ -30,10 +30,10 @@ export default {
       bundleCEF: false,
       icons: "assets/App.iconset",
       codesign: true,
-      notarize: true,
+      notarize: identity.notarize,
       createDmg: true,
     },
   },
   runtime: { exitOnLastWindowClosed: false },
-  release: { baseUrl: UPDATE_FEED_URL },
+  release: { baseUrl: identity.feed },
 } satisfies ElectrobunConfig;

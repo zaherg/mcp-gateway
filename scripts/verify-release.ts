@@ -1,38 +1,55 @@
-import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { lstat, mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { pipeline } from "node:stream/promises";
-import { createZstdDecompress } from "node:zlib";
+import { parseArgs } from "node:util";
 import packageInfo from "../package.json";
 import { runCommand } from "../src/core/process";
-import { releaseOutputEnvironment } from "./build-config";
+import {
+  PRODUCTION_FEED,
+  PRODUCTION_IDENTIFIER,
+  releaseOutputEnvironment,
+  TEST_IDENTIFIER,
+  validateFeedUrl,
+} from "./build-config";
 import { withDmgMount } from "./release-dmg";
 import { compareBundleInventories, inventoryBundle, inventoryDigest } from "./release-inventory";
+import { hashFile, readUpdateArtifacts, UPDATE_FILES } from "./update-artifacts";
 
+const options = parseArgs({
+  args: process.argv.slice(2),
+  allowPositionals: true,
+  options: { feed: { type: "string" }, identifier: { type: "string" } },
+});
+if (options.positionals.length > 1) throw new Error("Expected at most one wrapper path.");
+const IDENTIFIER = options.values.identifier ?? PRODUCTION_IDENTIFIER;
+const testBuild = IDENTIFIER === TEST_IDENTIFIER;
+if (IDENTIFIER !== PRODUCTION_IDENTIFIER && !testBuild)
+  throw new Error("Unsupported release identifier.");
+if (testBuild && !options.values.feed)
+  throw new Error("Test verification requires an explicit --feed.");
+const FEED_URL = validateFeedUrl(options.values.feed ?? PRODUCTION_FEED);
+if (!testBuild && FEED_URL !== PRODUCTION_FEED)
+  throw new Error("Production releases require the fixed GitHub feed.");
 const root = resolve(import.meta.dir, "..");
-const environment = releaseOutputEnvironment(packageInfo.version, process.env);
+const environment = releaseOutputEnvironment(
+  packageInfo.version,
+  process.env,
+  testBuild ? "test" : "production",
+);
 const artifacts = resolve(root, environment.MCP_GATEWAY_ARTIFACTS_DIR);
 const verificationOutput = resolve(
   process.env.MCP_GATEWAY_VERIFICATION_OUTPUT ?? join(artifacts, "release-verification.json"),
 );
 const wrapper = resolve(
-  process.argv[2] ??
+  options.positionals[0] ??
     join(root, environment.MCP_GATEWAY_BUILD_ROOT, "stable-macos-arm64/MCP Gateway.app"),
 );
 const DMG_FILE = "macos-arm64-MCPGateway.dmg";
-const MANIFEST_FILE = "stable-macos-arm64-update.json";
-const INTEGRITY_FILE = "stable-macos-arm64-update-v2.json";
-const ARCHIVE_FILE = "stable-macos-arm64-MCPGateway.app.tar.zst";
-const IDENTIFIER = "dev.srvr.mcpgateway";
 const CHANNEL = "stable";
-const FEED_URL = "https://github.com/zaherg/mcp-gateway/releases/latest/download";
-const HASH_PATTERN = /^[a-z0-9]{1,13}$/;
-const MAX_EXPANDED_ARCHIVE_BYTES = 512 * 1024 * 1024;
 const dmg = join(artifacts, DMG_FILE);
-const manifestPath = join(artifacts, MANIFEST_FILE);
-const integrityPath = join(artifacts, INTEGRITY_FILE);
-const archive = join(artifacts, ARCHIVE_FILE);
+const manifestPath = join(artifacts, UPDATE_FILES.manifest);
+const integrityPath = join(artifacts, UPDATE_FILES.integrity);
+const archive = join(artifacts, UPDATE_FILES.archive);
 const redact = (value: string) => {
   let text = value;
   for (const name of ["APPLE_ID", "APPLE_TEAM_ID", "APPLE_APP_PASSWORD"])
@@ -58,64 +75,14 @@ async function check(name: string, args: [string, ...string[]]) {
   if (exitCode !== 0) throw new Error(`${name} failed; inspect the redacted verification record.`);
   return stdout;
 }
-async function hash(path: string): Promise<string> {
-  const digest = createHash("sha256");
-  for await (const chunk of createReadStream(path)) {
-    cancellation.signal.throwIfAborted();
-    digest.update(chunk);
-  }
-  return digest.digest("hex");
-}
-async function archiveDigest(path: string): Promise<{ sha256: string; size: number }> {
-  const digest = createHash("sha256");
-  let size = 0;
-  await pipeline(createReadStream(path), createZstdDecompress(), async (chunks) => {
-    for await (const chunk of chunks) {
-      cancellation.signal.throwIfAborted();
-      size += chunk.length;
-      if (size > MAX_EXPANDED_ARCHIVE_BYTES)
-        throw new Error("Update archive exceeds the expanded size limit.");
-      digest.update(chunk);
-    }
-  });
-  return { sha256: digest.digest("hex"), size };
-}
-interface UpdateManifest {
-  schemaVersion: number;
-  identifier: string;
-  channel: string;
-  version: string;
-  hash: string;
-  platform: string;
-  arch: string;
-  artifact: { file: string; tarSha256?: string; tarSize?: number };
-}
-function parseManifest(value: unknown, label: string): UpdateManifest {
-  if (typeof value !== "object" || value === null || Array.isArray(value))
-    throw new Error(`${label} is not an object.`);
-  const manifest = value as Record<string, unknown>;
-  const artifact = manifest.artifact;
-  if (
-    manifest.schemaVersion !== 1 ||
-    manifest.identifier !== IDENTIFIER ||
-    manifest.channel !== CHANNEL ||
-    manifest.version !== packageInfo.version ||
-    typeof manifest.hash !== "string" ||
-    !HASH_PATTERN.test(manifest.hash) ||
-    manifest.platform !== "macos" ||
-    manifest.arch !== "arm64" ||
-    typeof artifact !== "object" ||
-    artifact === null ||
-    Array.isArray(artifact) ||
-    (artifact as Record<string, unknown>).file !== ARCHIVE_FILE
-  )
-    throw new Error(`${label} does not match the app identity, version, or artifact name.`);
-  return value as UpdateManifest;
-}
+const hash = (path: string) => hashFile(path, cancellation.signal);
 const evidence: Record<string, unknown> = {
   version: packageInfo.version,
   architecture: "arm64",
   feed: FEED_URL,
+  identifier: IDENTIFIER,
+  buildKind: testBuild ? "test" : "production",
+  notarizationAndGatekeeperChecked: !testBuild,
   checkedAt: new Date().toISOString(),
   checks,
 };
@@ -141,52 +108,27 @@ try {
     if (info.isSymbolicLink() || !info.isFile() || info.size <= 0)
       throw new Error(`${name} is missing or unsafe: ${path}`);
   }
-  const manifest = parseManifest(
-    JSON.parse(await readFile(manifestPath, "utf8")),
-    "Update manifest",
+  const { manifest, expanded: archiveIntegrity } = await readUpdateArtifacts(
+    artifacts,
+    { identifier: IDENTIFIER, version: packageInfo.version },
+    cancellation.signal,
   );
-  const integrity = parseManifest(
-    JSON.parse(await readFile(integrityPath, "utf8")),
-    "Update integrity manifest",
-  );
-  for (const key of [
-    "schemaVersion",
-    "identifier",
-    "channel",
-    "version",
-    "hash",
-    "platform",
-    "arch",
-  ] as const)
-    if (integrity[key] !== manifest[key]) throw new Error(`Update manifests disagree on ${key}.`);
-  const artifact = integrity.artifact;
-  if (
-    typeof artifact.tarSha256 !== "string" ||
-    !/^[a-f0-9]{64}$/.test(artifact.tarSha256) ||
-    !Number.isSafeInteger(artifact.tarSize) ||
-    (artifact.tarSize as number) <= 0 ||
-    (artifact.tarSize as number) > MAX_EXPANDED_ARCHIVE_BYTES
-  )
-    throw new Error("Update integrity manifest has invalid archive metadata.");
-  const archiveIntegrity = await archiveDigest(archive);
-  if (archiveIntegrity.size !== artifact.tarSize || archiveIntegrity.sha256 !== artifact.tarSha256)
-    throw new Error("Update archive integrity metadata mismatch.");
   evidence.manifest = {
-    file: MANIFEST_FILE,
+    file: UPDATE_FILES.manifest,
     version: manifest.version,
     hash: manifest.hash,
-    artifact: ARCHIVE_FILE,
+    artifact: UPDATE_FILES.archive,
   };
   evidence.archive = {
-    file: ARCHIVE_FILE,
+    file: UPDATE_FILES.archive,
     sha256: archiveIntegrity.sha256,
     size: archiveIntegrity.size,
   };
   evidence.assets = {
     dmg: DMG_FILE,
-    manifest: MANIFEST_FILE,
-    integrity: INTEGRITY_FILE,
-    runtimeArchive: ARCHIVE_FILE,
+    manifest: UPDATE_FILES.manifest,
+    integrity: UPDATE_FILES.integrity,
+    runtimeArchive: UPDATE_FILES.archive,
   };
   await check("wrapper signature", [
     "/usr/bin/codesign",
@@ -207,27 +149,31 @@ try {
   ).trim();
   if (wrapperVersion !== packageInfo.version)
     throw new Error("Wrapper version does not match package.json.");
-  await check("wrapper ticket", ["/usr/bin/xcrun", "stapler", "validate", wrapper]);
-  await check("wrapper Gatekeeper", [
-    "/usr/sbin/spctl",
-    "--assess",
-    "--type",
-    "execute",
-    "--verbose=4",
-    wrapper,
-  ]);
+  if (!testBuild) {
+    await check("wrapper ticket", ["/usr/bin/xcrun", "stapler", "validate", wrapper]);
+    await check("wrapper Gatekeeper", [
+      "/usr/sbin/spctl",
+      "--assess",
+      "--type",
+      "execute",
+      "--verbose=4",
+      wrapper,
+    ]);
+  }
   await check("DMG signature", ["/usr/bin/codesign", "--verify", "--strict", "--verbose=2", dmg]);
-  await check("DMG ticket", ["/usr/bin/xcrun", "stapler", "validate", dmg]);
-  await check("DMG Gatekeeper", [
-    "/usr/sbin/spctl",
-    "--assess",
-    "--type",
-    "open",
-    "--context",
-    "context:primary-signature",
-    "--verbose=4",
-    dmg,
-  ]);
+  if (!testBuild) {
+    await check("DMG ticket", ["/usr/bin/xcrun", "stapler", "validate", dmg]);
+    await check("DMG Gatekeeper", [
+      "/usr/sbin/spctl",
+      "--assess",
+      "--type",
+      "open",
+      "--context",
+      "context:primary-signature",
+      "--verbose=4",
+      dmg,
+    ]);
+  }
   const wrapperInventory = await inventoryBundle(wrapper, cancellation.signal);
   evidence.wrapperInventory = {
     entries: wrapperInventory.length,
@@ -262,7 +208,8 @@ try {
         "--verbose=2",
         dmgApp,
       ]);
-      await check("DMG app ticket", ["/usr/bin/xcrun", "stapler", "validate", dmgApp]);
+      if (!testBuild)
+        await check("DMG app ticket", ["/usr/bin/xcrun", "stapler", "validate", dmgApp]);
       const dmgMetadata = JSON.parse(
         await readFile(join(dmgApp, "Contents/Resources/metadata.json"), "utf8"),
       );
@@ -331,15 +278,17 @@ try {
     "--verbose=2",
     payload,
   ]);
-  await check("payload ticket", ["/usr/bin/xcrun", "stapler", "validate", payload]);
-  await check("payload Gatekeeper", [
-    "/usr/sbin/spctl",
-    "--assess",
-    "--type",
-    "execute",
-    "--verbose=4",
-    payload,
-  ]);
+  if (!testBuild) {
+    await check("payload ticket", ["/usr/bin/xcrun", "stapler", "validate", payload]);
+    await check("payload Gatekeeper", [
+      "/usr/sbin/spctl",
+      "--assess",
+      "--type",
+      "execute",
+      "--verbose=4",
+      payload,
+    ]);
+  }
   const payloadVersion = (
     await check("payload version", [
       "/usr/bin/plutil",
@@ -408,7 +357,7 @@ try {
     publicSigningCertificateMetadataExcluded: true,
   };
   const keys = ["APPLE_ID", "APPLE_TEAM_ID", "APPLE_APP_PASSWORD"];
-  if (keys.every((key) => !!process.env[key])) {
+  if (!testBuild && keys.every((key) => !!process.env[key])) {
     const output = await check("Apple notarization history", [
       "/usr/bin/xcrun",
       "notarytool",
@@ -441,7 +390,7 @@ try {
   cancellation.signal.throwIfAborted();
   evidence.ok = true;
   console.log(
-    `Verified app, DMG and signed payload signatures, tickets and Gatekeeper acceptance.\nSigned runtime: ${payload}`,
+    `Verified app, DMG and signed payload signatures${testBuild ? "; test build, notarization and Gatekeeper not checked" : ", tickets and Gatekeeper acceptance"}.\nSigned runtime: ${payload}`,
   );
 } catch (error) {
   evidence.ok = false;

@@ -1,5 +1,7 @@
 import { dlopen, FFIType } from "bun:ffi";
+import { readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
+import { PRODUCTION_IDENTIFIER, TEST_IDENTIFIER } from "../shared/identity";
 import type { LoginStatus } from "../shared/rpc";
 import type { LoginManager } from "./service";
 
@@ -110,8 +112,27 @@ function absolutePath(path: string, name: string): string {
   return path;
 }
 
-export function configurationDirectory(configBase: string): string {
-  return join(absolutePath(configBase, "Configuration base"), "MCP Gateway");
+export type AppIdentifier = typeof PRODUCTION_IDENTIFIER | typeof TEST_IDENTIFIER;
+
+export function installedIdentifier(resourcesFolder: string): AppIdentifier {
+  let identifier: unknown;
+  try {
+    identifier = JSON.parse(readFileSync(join(resourcesFolder, "version.json"), "utf8")).identifier;
+  } catch (error) {
+    throw new Error("The app's version.json is missing or invalid.", { cause: error });
+  }
+  if (identifier !== PRODUCTION_IDENTIFIER && identifier !== TEST_IDENTIFIER)
+    throw new Error("Unsupported app identifier in version.json.");
+  return identifier;
+}
+
+// Utils.paths.config does not include the bundle identifier, so test builds need
+// their own folder to stay off the production configuration.
+export function configurationDirectory(configBase: string, identifier: AppIdentifier): string {
+  return join(
+    absolutePath(configBase, "Configuration base"),
+    identifier === TEST_IDENTIFIER ? "MCP Gateway Test" : "MCP Gateway",
+  );
 }
 
 export function startsInBackground(

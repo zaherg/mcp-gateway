@@ -57,10 +57,10 @@ export async function command(args: string[], env = toolchainEnvironment) {
   if (code !== 0) throw new Error(`${args[0]} failed with exit code ${code}`);
 }
 
-export async function prepareToolchain() {
+export async function prepareToolchain(environment = toolchainEnvironment) {
   validateBuildHost(process.platform, process.arch);
-  await mkdir(toolchainEnvironment.TMPDIR, { recursive: true });
-  await command(["node", "node_modules/electrobun/bin/electrobun.cjs", "prepare"]);
+  await mkdir(environment.TMPDIR, { recursive: true });
+  await command(["node", "node_modules/electrobun/bin/electrobun.cjs", "prepare"], environment);
 }
 
 if (import.meta.main) await prepareToolchain();

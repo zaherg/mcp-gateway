@@ -41,7 +41,7 @@ A release is offered only when its version is higher than the installed one.
 Check manually in **Settings → Updates**. Installing requires **Restart to Update**. After confirmation, that stops the gateway and discards unsaved configuration.
 If the handoff fails, the gateway stays stopped; quit and reopen the app to retry.
 No updater-capable release has been published yet, because the latest release (`0.3.0`) has no updater, so install the first updater-capable release manually.
-A packaged update replacement has not been verified end to end.
+Signed two-version replacements were verified locally against a loopback feed and an HTTPS test feed, including a GitHub-style redirect rehearsal (see `deployment.md`); the live GitHub feed and notarized-download behavior have not been exercised.
 
 ## Security
 
