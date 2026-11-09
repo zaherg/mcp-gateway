@@ -1,4 +1,4 @@
 - Dont write any tests for this project
 - Ignore github CI for this project.
 - Always follow the plans as is, if you have any issues with it raise them, but never change without asking or requesting confirmation.
-- Always delete the data from `.cache` this folder should always stay empty after every session
+- Always delete the data from `.cache` and `build` these folders should always stay empty after every session
