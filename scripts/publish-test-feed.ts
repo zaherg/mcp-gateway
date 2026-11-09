@@ -5,7 +5,6 @@ import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { createCommandRunner } from '@mcp-gateway/core/process';
-
 import { TEST_IDENTIFIER, validateFeedUrl } from './build-config';
 import { hashFile, readUpdateArtifacts, UPDATE_FILES } from './update-artifacts';
 

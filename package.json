@@ -15,7 +15,7 @@
         "release:test": "bun scripts/build.ts stable-test",
         "typecheck": "tsc --noEmit",
         "lint": "biome check src tests scripts *.ts",
-        "format": "bunx --yes biome format --write src tests scripts *.ts *.json",
+        "format": "biome check --write --linter-enabled=false src tests scripts *.ts *.json",
         "ui:build": "vite build"
     },
     "dependencies": {
@@ -23,6 +23,7 @@
         "supergateway": "4.2.1"
     },
     "devDependencies": {
+        "@base-ui/react": "^1.9.0",
         "@biomejs/biome": "^2.6.6",
         "@modelcontextprotocol/sdk": "1.30.0",
         "@tailwindcss/vite": "^4.3.5",
@@ -30,6 +31,8 @@
         "@types/react": "^19.3.0",
         "@types/react-dom": "^19.3.0",
         "@vitejs/plugin-react": "^6.2.1",
+        "class-variance-authority": "^0.7.1",
+        "clsx": "^2.1.1",
         "cors": "^2.8.6",
         "electrobun": "^2.0.6",
         "eventsource-parser": "4.1.3",
@@ -37,6 +40,7 @@
         "lucide-react": "^1.70.0",
         "react": "^19.3.1",
         "react-dom": "^19.3.1",
+        "tailwind-merge": "^3.7.0",
         "tailwindcss": "^4.3.5",
         "typescript": "^7.0.2",
         "vite": "^8.3.6",

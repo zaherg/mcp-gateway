@@ -58,6 +58,7 @@ The live GitHub update path from one published release to the next has not been 
 - Requests need the bearer token and must originate from the selected subnet or loopback.
 - The `Host` header must match the configured address and port, and a present `Origin` must match the gateway origin.
 - Upstream credentials are configured separately, and client tokens are not forwarded.
+- An upstream with configured headers must answer at its own address: the gateway refuses to follow its redirects, so a header cannot reach another host.
 - `mcp.json` can start processes, so protect it. Logs and copied client configurations can expose tokens and note data.
 
 The gateway allows 32 concurrent HTTP requests and 240 admissions per minute.
@@ -110,6 +111,9 @@ Renderer edits use React Fast Refresh; main-process and shared-code edits rebuil
 Stop the command with `Ctrl+C`; it closes Vite and the development app.
 Restart the command after changing native code, dependencies, or build scripts.
 `bun run build` and release builds still load bundled assets without a development server.
+Development builds include **Developer → Open Developer Tools** (`Cmd+Option+I`) to inspect the renderer, console, and network activity.
+Close the inspector with its own close button.
+The menu and its action are unavailable in release builds.
 
 `bun run release` signs and notarizes the app. It requires exactly one Developer ID Application identity in Keychain, plus `APPLE_ID`, `APPLE_TEAM_ID`, and `APPLE_APP_PASSWORD` as environment variables or in `.env`.
 By default, it writes to `build/v<version>/` and `artifacts/v<version>/`, using the version from `package.json`.

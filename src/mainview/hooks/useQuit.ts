@@ -1,6 +1,7 @@
+import { type RefObject, useCallback, useEffect, useRef, useState } from 'react';
+
 import type { Editor } from '@mcp-gateway/mainview/dialogs/ServerEditor';
 import type { AppClient, AppSnapshot, QuitStatus } from '@mcp-gateway/shared/rpc';
-import { type RefObject, useCallback, useEffect, useRef, useState } from 'react';
 
 export const useQuit = ({
   client,

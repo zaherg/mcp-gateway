@@ -1,0 +1,24 @@
+{
+    "$schema": "https://ui.shadcn.com/schema.json",
+    "style": "new-york",
+    "rsc": false,
+    "tsx": true,
+    "tailwind": {
+        "config": "",
+        "css": "src/mainview/styles/styles.css",
+        "baseColor": "neutral",
+        "cssVariables": true,
+        "prefix": ""
+    },
+    "iconLibrary": "lucide",
+    "aliases": {
+        "components": "@mcp-gateway/mainview/components",
+        "ui": "@mcp-gateway/mainview/components/mac",
+        "utils": "@mcp-gateway/mainview/lib/utils",
+        "lib": "@mcp-gateway/mainview/lib",
+        "hooks": "@mcp-gateway/mainview/hooks"
+    },
+    "registries": {
+        "@cupertinoui": "https://www.cupertino-ui.com/r/{name}.json"
+    }
+}

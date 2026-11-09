@@ -10,6 +10,17 @@ import {
   useRef,
 } from 'react';
 
+import { Alert as MacAlert } from '@mcp-gateway/mainview/components/mac/alert';
+import { Button } from '@mcp-gateway/mainview/components/mac/button';
+import { Checkbox } from '@mcp-gateway/mainview/components/mac/checkbox';
+import { Input } from '@mcp-gateway/mainview/components/mac/input';
+import { Label } from '@mcp-gateway/mainview/components/mac/label';
+import { NativeSelect } from '@mcp-gateway/mainview/components/mac/native-select';
+import { Switch } from '@mcp-gateway/mainview/components/mac/switch';
+import { Textarea } from '@mcp-gateway/mainview/components/mac/textarea';
+
+const ALERT_VARIANT = { error: 'destructive', warning: 'warning', success: 'default' } as const;
+
 export const Alert = ({
   children,
   kind = 'error',
@@ -24,14 +35,21 @@ export const Alert = ({
   role?: 'alert' | 'status';
 }) => {
   return (
-    <div className={`alert ${kind}`} role={role ?? (kind === 'success' ? 'status' : 'alert')}>
-      <span>{children}</span>
-      <button type="button" className="icon-button" aria-label={label} onClick={onDismiss}>
-        <X size={16} />
-      </button>
-    </div>
+    <MacAlert
+      variant={ALERT_VARIANT[kind]}
+      role={role ?? (kind === 'success' ? 'status' : 'alert')}
+      className="flex items-center gap-2.5 text-mac-label"
+    >
+      <span className="min-w-0 flex-1 wrap-anywhere">{children}</span>
+      <Button variant="ghost" size="icon" aria-label={label} onClick={onDismiss}>
+        <X />
+      </Button>
+    </MacAlert>
   );
 };
+
+// Controls a Field can label: the macOS components that render an input, a select or a textarea.
+const FIELD_CONTROLS: unknown[] = [Input, NativeSelect, Textarea];
 
 export const Field = ({
   label,
@@ -46,7 +64,7 @@ export const Field = ({
   const associate = (node: ReactNode): ReactNode => {
     if (!isValidElement<{ id?: string; 'aria-describedby'?: string; children?: ReactNode }>(node))
       return node;
-    if (typeof node.type === 'string' && ['input', 'select', 'textarea'].includes(node.type)) {
+    if (FIELD_CONTROLS.includes(node.type)) {
       return cloneElement(node, { id, 'aria-describedby': help ? `${id}-help` : undefined });
     }
     return node.props.children
@@ -55,7 +73,9 @@ export const Field = ({
   };
   return (
     <div className="field">
-      <label htmlFor={id}>{label}</label>
+      <Label htmlFor={id} className="font-semibold">
+        {label}
+      </Label>
       {Children.map(children, associate)}
       {help && <small id={`${id}-help`}>{help}</small>}
     </div>
@@ -75,21 +95,48 @@ export const Toggle = ({
   disabled?: boolean;
   onChange: (checked: boolean) => void;
 }) => {
+  const id = useId();
   return (
-    <label className="toggle-row">
+    <label className="toggle-row" htmlFor={id}>
       <span>
         <strong>{label}</strong>
         <small>{description}</small>
       </span>
-      <input
-        type="checkbox"
-        role="switch"
-        aria-checked={checked}
-        disabled={disabled}
+      <Switch
+        id={id}
+        size="sm"
         checked={checked}
-        onChange={(event) => onChange(event.target.checked)}
+        disabled={disabled}
+        onCheckedChange={(value) => onChange(value)}
       />
     </label>
+  );
+};
+
+export const CheckboxRow = ({
+  label,
+  checked,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  disabled: boolean;
+  onChange: (checked: boolean) => void;
+}) => {
+  const id = useId();
+  return (
+    <div className="checkbox-row">
+      <Checkbox
+        id={id}
+        checked={checked}
+        disabled={disabled}
+        onCheckedChange={(value) => onChange(value)}
+      />
+      <Label htmlFor={id} className="text-mac-label-secondary">
+        {label}
+      </Label>
+    </div>
   );
 };
 
@@ -128,9 +175,9 @@ export const Modal = ({
     >
       <div className="dialog-heading">
         <h2 id={titleId}>{title}</h2>
-        <button type="button" className="icon-button" aria-label="Close dialog" onClick={onClose}>
-          <X size={18} />
-        </button>
+        <Button variant="ghost" size="icon-lg" aria-label="Close dialog" onClick={onClose}>
+          <X />
+        </Button>
       </div>
       {children}
     </dialog>

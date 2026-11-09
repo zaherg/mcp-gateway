@@ -1,7 +1,15 @@
+import { useEffect, useRef, useState } from 'react';
+
+import { Button } from '@mcp-gateway/mainview/components/mac/button';
+import { Input } from '@mcp-gateway/mainview/components/mac/input';
+import { Label } from '@mcp-gateway/mainview/components/mac/label';
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from '@mcp-gateway/mainview/components/mac/native-select';
 import { Alert } from '@mcp-gateway/mainview/components/ui';
 import type { AppClient } from '@mcp-gateway/shared/rpc';
 import { LOG_LEVELS, LOG_LIMITS, type LogEntry, type LogLevel } from '@mcp-gateway/shared/types';
-import { useEffect, useRef, useState } from 'react';
 
 const logRequest = async <T,>(pending: Promise<T>, signal: AbortSignal): Promise<T> => {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -24,6 +32,20 @@ const logRequest = async <T,>(pending: Promise<T>, signal: AbortSignal): Promise
     if (cancel) signal.removeEventListener('abort', cancel);
   }
 };
+
+// Each entry is measured once, when it first reaches the trimming step.
+const encoder = new TextEncoder();
+const entrySizes = new WeakMap<LogEntry, number>();
+const entrySize = (entry: LogEntry): number => {
+  let size = entrySizes.get(entry);
+  if (size === undefined) {
+    size = encoder.encode(JSON.stringify(entry)).byteLength + 1;
+    entrySizes.set(entry, size);
+  }
+  return size;
+};
+
+const FILTER = 'grid min-w-35 flex-1 gap-1.5';
 
 export const Logs = ({ client, servers }: { client: AppClient; servers: string[] }) => {
   const [entries, setEntries] = useState<LogEntry[]>([]);
@@ -70,14 +92,13 @@ export const Logs = ({ client, servers }: { client: AppClient; servers: string[]
         bufferGeneration.current = page.generation;
         cursor.current = page.cursor;
         if (page.gap) setGap(true);
-        // Re-measuring up to 4 MiB of unchanged entries every poll is wasted work.
         if (reset || page.entries.length > 0)
           setEntries((previous) => {
             const all = [...(reset ? [] : previous), ...page.entries];
             let bytes = 2;
             let start = all.length;
             while (start > 0 && all.length - start < LOG_LIMITS.entries) {
-              const size = new TextEncoder().encode(JSON.stringify(all[start - 1])).byteLength + 1;
+              const size = entrySize(all[start - 1]);
               if (bytes + size > LOG_LIMITS.bytes) break;
               bytes += size;
               start--;
@@ -133,9 +154,9 @@ export const Logs = ({ client, servers }: { client: AppClient; servers: string[]
           <h2>Backend logs</h2>
           <p>Full local diagnostics, retained only while the app runs.</p>
         </div>
-        <button className="button" type="button" onClick={() => void clear()} disabled={clearing}>
+        <Button onClick={() => void clear()} disabled={clearing}>
           Clear logs
-        </button>
+        </Button>
       </div>
       <p className="log-warning">
         <strong>Sensitive data:</strong> Logs can contain credentials, note content, and other
@@ -148,29 +169,29 @@ export const Logs = ({ client, servers }: { client: AppClient; servers: string[]
         entries are marked truncated. Clearing logs does not clear actual failures.
       </p>
       <div className="log-filters">
-        <label>
+        <Label className={FILTER}>
           Level
-          <select
+          <NativeSelect
             aria-label="Level"
             value={level}
             onChange={(event) =>
               setLevel(LOG_LEVELS.find((level) => level === event.target.value) ?? '')
             }
           >
-            <option value="">All levels</option>
+            <NativeSelectOption value="">All levels</NativeSelectOption>
             {LOG_LEVELS.map((value) => (
-              <option key={value}>{value}</option>
+              <NativeSelectOption key={value}>{value}</NativeSelectOption>
             ))}
-          </select>
-        </label>
-        <label>
+          </NativeSelect>
+        </Label>
+        <Label className={FILTER}>
           Server
-          <select
+          <NativeSelect
             aria-label="Server"
             value={server}
             onChange={(event) => setServer(event.target.value)}
           >
-            <option value="">All servers</option>
+            <NativeSelectOption value="">All servers</NativeSelectOption>
             {Array.from(
               new Set([
                 ...servers,
@@ -179,19 +200,19 @@ export const Logs = ({ client, servers }: { client: AppClient; servers: string[]
             )
               .sort()
               .map((value) => (
-                <option key={value}>{value}</option>
+                <NativeSelectOption key={value}>{value}</NativeSelectOption>
               ))}
-          </select>
-        </label>
-        <label>
+          </NativeSelect>
+        </Label>
+        <Label className={FILTER}>
           Search text
-          <input
+          <Input
             aria-label="Search text"
             value={text}
             maxLength={LOG_LIMITS.queryTextCharacters}
             onChange={(event) => setText(event.target.value)}
           />
-        </label>
+        </Label>
       </div>
       {error && <Alert onDismiss={() => setError(null)}>{error}</Alert>}
       {clearError && <Alert onDismiss={() => setClearError(null)}>{clearError}</Alert>}

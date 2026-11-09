@@ -41,6 +41,8 @@ await command(
     'AppKit',
     'src/native/login.m',
     'src/native/signals.m',
+    'src/native/tray.m',
+    'src/native/window.m',
     '-o',
     '.cache/native/login.dylib',
   ],

@@ -1,5 +1,16 @@
 import { join } from 'node:path';
 
+import Electrobun, {
+  ApplicationMenu,
+  BrowserView,
+  BrowserWindow,
+  BuildConfig,
+  PATHS,
+  Screen,
+  Tray,
+  Utils,
+} from 'electrobun/main';
+
 import { parseConfig } from '@mcp-gateway/core/config';
 import { McpGatewayController } from '@mcp-gateway/core/controller';
 import { GatewayError } from '@mcp-gateway/core/errors';
@@ -14,26 +25,21 @@ import {
   installedIdentifier,
   observeNativeQuitSignals,
   openLoginManager,
+  openMinimumWindowSize,
+  openTrayIndicator,
   restoreWindow,
   startsInBackground,
 } from '@mcp-gateway/main/native';
 import { AppService } from '@mcp-gateway/main/service';
+import { MIN_WINDOW_SIZE, WindowSizeStore } from '@mcp-gateway/main/window-size';
 import type { AppRPC, QuitStatus } from '@mcp-gateway/shared/rpc';
-import Electrobun, {
-  ApplicationMenu,
-  BrowserView,
-  BrowserWindow,
-  BuildConfig,
-  PATHS,
-  Tray,
-  Utils,
-} from 'electrobun/main';
 
 const buildConfig = BuildConfig.getSync();
+const isDevelopment = buildConfig.channel === 'dev';
 const developmentServerUrl = buildConfig.runtime?.developmentServerUrl;
 // Packaged builds must never grant the RPC bridge to a development server.
 const viewUrl =
-  buildConfig.channel === 'dev' && typeof developmentServerUrl === 'string'
+  isDevelopment && typeof developmentServerUrl === 'string'
     ? developmentServerUrl
     : 'views://mainview/index.html';
 const dataDirectory = configurationDirectory(
@@ -44,17 +50,34 @@ const nativeQuitSignal = observeNativeQuitSignals(
   join(PATHS.RESOURCES_FOLDER, 'app/native/login.dylib'),
 );
 const login = openLoginManager(join(PATHS.RESOURCES_FOLDER, 'app/native/login.dylib'));
+const setMinimumWindowSize = openMinimumWindowSize(
+  join(PATHS.RESOURCES_FOLDER, 'app/native/login.dylib'),
+);
+const windowSize = await WindowSizeStore.open(dataDirectory);
 const controller = await McpGatewayController.open(join(dataDirectory, 'mcp.json'));
 const idleQuitStatus: QuitStatus = { attempt: 0, phase: 'idle', error: null };
 let quit: QuitCoordinator | undefined;
 const quitStatus = (): QuitStatus => quit?.status() ?? idleQuitStatus;
 const support = await resolveUpdateSupport();
 let updates: AppUpdater | undefined;
-const tray = new Tray({ image: 'views://assets/tray.png', template: true, width: 18, height: 18 });
+const TRAY_SIZE = 18;
+const tray = new Tray({
+  image: 'views://assets/tray.png',
+  template: true,
+  width: TRAY_SIZE,
+  height: TRAY_SIZE,
+});
+const setTrayRunning = openTrayIndicator(
+  join(PATHS.VIEWS_FOLDER, 'assets/tray.png'),
+  TRAY_SIZE,
+  join(PATHS.RESOURCES_FOLDER, 'app/native/login.dylib'),
+);
 let window: BrowserWindow | undefined;
 let pendingShowUpdates = false;
 let windowReady = false;
 let menuState = '';
+let trayRunning = false;
+let trayIndicatorFailed = false;
 let trayRemoved = false;
 let loginClosed = false;
 let requestInteractiveRendererQuit: (() => Promise<boolean>) | undefined;
@@ -70,6 +93,17 @@ const updateMenu = (): void => {
   if (trayRemoved) return;
   const quitFailed = quitStatus().phase === 'failed';
   const snapshot = controller.snapshot();
+  if (snapshot.running !== trayRunning) {
+    try {
+      setTrayRunning(snapshot.running);
+      trayRunning = snapshot.running;
+      trayIndicatorFailed = false;
+    } catch (error) {
+      // Keep the old state so the next refresh retries; report once per failure streak.
+      if (!trayIndicatorFailed) controller.recordLocalError(error);
+      trayIndicatorFailed = true;
+    }
+  }
   const update = updates?.status() ?? unsupportedUpdateStatus();
   const state = `${snapshot.running}:${Boolean(snapshot.configError)}:${quitFailed}:${update.supported}:${update.phase}:${update.availableVersion ?? ''}`;
   if (state === menuState) return;
@@ -120,6 +154,18 @@ const dispatchShowUpdates = (): void => {
   window?.webview.executeJavascript('window.dispatchEvent(new Event("mcp-gateway:show-updates"))');
 };
 
+// A saved size from a larger display must not open beyond the current one.
+const initialWindowSize = (): { width: number; height: number } => {
+  const saved = windowSize.current;
+  if (!saved) return MIN_WINDOW_SIZE;
+  const area = Screen.getPrimaryDisplay().workArea;
+  if (area.width <= 0 || area.height <= 0) return saved;
+  return {
+    width: Math.max(MIN_WINDOW_SIZE.width, Math.min(saved.width, area.width)),
+    height: Math.max(MIN_WINDOW_SIZE.height, Math.min(saved.height, area.height)),
+  };
+};
+
 const openWindow = (): void => {
   if (window) {
     restoreWindow(window);
@@ -153,14 +199,26 @@ const openWindow = (): void => {
     title: 'MCP Gateway',
     url: viewUrl,
     rpc,
-    frame: { width: 1120, height: 820 },
+    frame: initialWindowSize(),
+    titleBarStyle: 'hiddenInset',
     renderer: 'native',
     allowedProtocols: { views: true, appData: false },
     // Pinned native matcher uses last-match-wins; unmatched URLs otherwise default allow.
     navigationRules: JSON.stringify(['^*', viewUrl]),
   });
   window = created;
+  try {
+    setMinimumWindowSize(created, MIN_WINDOW_SIZE.width, MIN_WINDOW_SIZE.height);
+  } catch (error) {
+    controller.recordLocalError(error);
+  }
+  created.on('resize', (event) => {
+    const data = (event as { data?: { width?: unknown; height?: unknown } }).data;
+    if (typeof data?.width === 'number' && typeof data.height === 'number')
+      windowSize.schedule({ width: data.width, height: data.height });
+  });
   created.on('close', () => {
+    void windowSize.flush();
     if (window === created) {
       window = undefined;
       windowReady = false;
@@ -175,6 +233,7 @@ quit = new QuitCoordinator(
   async () => {
     updates?.stop();
     clearInterval(refresh);
+    await windowSize.flush();
     await controller.close();
     if (!trayRemoved) {
       tray.remove();
@@ -274,6 +333,13 @@ const dispatch = async (event: unknown): Promise<void> => {
       updateMenu();
       break;
     }
+    case 'open-devtools':
+      if (isDevelopment) {
+        openWindow();
+        // The pinned native toggle can crash when closing an open inspector.
+        window?.webview.openDevTools();
+      }
+      break;
     case 'close-window':
       window?.close();
       break;
@@ -311,6 +377,20 @@ ApplicationMenu.setApplicationMenu([
       { role: 'selectAll' },
     ],
   },
+  ...(isDevelopment
+    ? [
+        {
+          label: 'Developer',
+          submenu: [
+            {
+              label: 'Open Developer Tools',
+              action: 'open-devtools',
+              accelerator: 'Cmd+Option+I',
+            },
+          ],
+        },
+      ]
+    : []),
 ]);
 ApplicationMenu.on('application-menu-clicked', (event) => {
   void dispatch(event).catch(() => console.error('Menu action failed.'));

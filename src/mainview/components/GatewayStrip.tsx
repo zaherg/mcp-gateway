@@ -1,6 +1,9 @@
+import { Network } from 'lucide-react';
+
+import { Badge } from '@mcp-gateway/mainview/components/mac/badge';
+import { Button } from '@mcp-gateway/mainview/components/mac/button';
 import type { AppClient, AppResult, AppSnapshot } from '@mcp-gateway/shared/rpc';
 import type { GatewaySnapshot } from '@mcp-gateway/shared/types';
-import { ArrowUpRight, Network } from 'lucide-react';
 
 type Run = (
   operation: () => Promise<AppResult<AppSnapshot | null>>,
@@ -30,18 +33,17 @@ export const GatewayStrip = ({
       <div className="gateway-summary">
         <div className="inline">
           <h2>Gateway</h2>
-          <span className={`badge ${gateway?.running ? 'teal' : ''}`}>
+          <Badge variant={gateway?.running ? 'accent' : 'secondary'}>
             {gateway?.running ? 'Running' : 'Stopped'}
-          </span>
+          </Badge>
         </div>
         <p className="mono">
           {gateway?.running ? (gateway.address ?? 'Listener starting') : 'No active listener'}
         </p>
       </div>
       <div className="gateway-actions">
-        <button
-          type="button"
-          className={gateway?.running ? 'button' : 'button primary'}
+        <Button
+          variant={gateway?.running ? 'secondary' : 'default'}
           disabled={configurationLocked || (!gateway?.running && (dirty || !!gateway?.configError))}
           onClick={() =>
             void run(
@@ -51,8 +53,7 @@ export const GatewayStrip = ({
           }
         >
           {gateway?.running ? 'Stop gateway' : 'Start gateway'}
-          <ArrowUpRight size={15} />
-        </button>
+        </Button>
       </div>
     </section>
   );

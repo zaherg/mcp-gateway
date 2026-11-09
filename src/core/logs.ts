@@ -53,6 +53,8 @@ const diagnosticText = (values: readonly unknown[]): string => {
 
 export class LogBuffer {
   private entries: LogEntry[] = [];
+  // Serialized size of each retained entry (plus separator), measured once on append.
+  private readonly sizes = new WeakMap<LogEntry, number>();
   private bytes = 0;
   private sequence = 0;
   private generation = 0;
@@ -91,11 +93,13 @@ export class LogBuffer {
       entry.text = `${entry.text.slice(0, keep)}${marker}`;
       size = Buffer.byteLength(JSON.stringify(entry));
     }
+    // The loop above leaves `size` equal to the final entry's serialized length.
     this.entries.push(entry);
-    this.bytes += Buffer.byteLength(JSON.stringify(entry)) + 1;
+    this.sizes.set(entry, size + 1);
+    this.bytes += size + 1;
     while (this.entries.length > LOG_LIMITS.entries || this.bytes + 2 > LOG_LIMITS.bytes) {
       const removed = this.entries.shift();
-      if (removed) this.bytes -= Buffer.byteLength(JSON.stringify(removed)) + 1;
+      if (removed) this.bytes -= this.sizes.get(removed) ?? 0;
     }
   }
 
@@ -115,7 +119,7 @@ export class LogBuffer {
     let bytes = 512;
     for (const entry of this.entries) {
       if (entry.id <= cursor) continue;
-      const size = Buffer.byteLength(JSON.stringify(entry)) + 1;
+      const size = this.sizes.get(entry) ?? 0;
       if (entries.length >= LOG_LIMITS.batchEntries || bytes + size > LOG_LIMITS.batchBytes) break;
       entries.push({ ...entry });
       bytes += size;

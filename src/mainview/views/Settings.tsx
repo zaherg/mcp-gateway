@@ -1,7 +1,11 @@
+import { Eye, EyeOff, Settings2 } from 'lucide-react';
+
+import { Badge } from '@mcp-gateway/mainview/components/mac/badge';
+import { Button } from '@mcp-gateway/mainview/components/mac/button';
+import { Input } from '@mcp-gateway/mainview/components/mac/input';
 import { Field, Toggle } from '@mcp-gateway/mainview/components/ui';
 import type { AppSnapshot } from '@mcp-gateway/shared/rpc';
 import type { GatewayConfig, GatewaySnapshot } from '@mcp-gateway/shared/types';
-import { Eye, EyeOff, Settings2 } from 'lucide-react';
 
 export const Settings = ({
   config,
@@ -38,7 +42,7 @@ export const Settings = ({
               label="Interface / address"
               help="Select a local IPv4 interface. Loopback is available only on this computer."
             >
-              <input
+              <Input
                 aria-label="Interface / address"
                 readOnly={configurationLocked}
                 list="interfaces"
@@ -60,7 +64,7 @@ export const Settings = ({
               </datalist>
             </Field>
             <Field label="Port">
-              <input
+              <Input
                 type="number"
                 readOnly={configurationLocked}
                 min="1"
@@ -84,7 +88,7 @@ export const Settings = ({
             help="32–512 non-space ASCII characters. Client configurations include this secret."
           >
             <div className="token-input">
-              <input
+              <Input
                 autoComplete="off"
                 readOnly={configurationLocked}
                 spellCheck={false}
@@ -97,19 +101,18 @@ export const Settings = ({
                   })
                 }
               />
-              <button
-                type="button"
-                className="icon-button"
+              <Button
+                variant="ghost"
+                size="icon-lg"
                 aria-label={showToken ? 'Hide bearer token' : 'Show bearer token'}
                 onClick={() => setShowToken(!showToken)}
               >
-                {showToken ? <EyeOff size={17} /> : <Eye size={17} />}
-              </button>
+                {showToken ? <EyeOff /> : <Eye />}
+              </Button>
             </div>
           </Field>
-          <button
-            type="button"
-            className="button small"
+          <Button
+            size="lg"
             disabled={configurationLocked}
             onClick={() => {
               const bytes = crypto.getRandomValues(new Uint8Array(32));
@@ -123,7 +126,7 @@ export const Settings = ({
             }}
           >
             Generate secure token
-          </button>
+          </Button>
           <div className="startup-settings">
             <Toggle
               label="Launch app at login"
@@ -138,14 +141,14 @@ export const Settings = ({
               }
             />
             <div className="login-status">
-              <span className="badge">
+              <Badge variant="secondary">
                 Actual login registration:{' '}
                 {snapshot.login.supported
                   ? snapshot.login.enabled
                     ? 'Enabled'
                     : 'Disabled'
                   : 'Unsupported'}
-              </span>
+              </Badge>
               {snapshot.login.error && <p className="inline-error">{snapshot.login.error}</p>}
               <small>
                 Desired setting above is separate from the actual macOS registration shown here.

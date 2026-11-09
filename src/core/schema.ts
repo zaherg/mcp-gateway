@@ -1,5 +1,6 @@
-import { isRecord } from '@mcp-gateway/shared/config-document';
 import * as z from 'zod/v4';
+
+import { isRecord } from '@mcp-gateway/shared/config-document';
 
 /** `NaN` and `Infinity` must reach the later port check, as with the previous schema. */
 export const anyNumber = z.custom<number>((value) => typeof value === 'number');

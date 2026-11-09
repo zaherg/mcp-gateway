@@ -1,23 +1,6 @@
 import { spawn } from 'node:child_process';
 import { constants } from 'node:os';
 
-import { isHttpServer } from '@mcp-gateway/core/config';
-import { failure } from '@mcp-gateway/core/errors';
-import {
-  BACKEND_CAPACITY_ERROR,
-  type BackendCalls,
-  BackendOutputLimitError,
-  boundedBackendResponse,
-  MAX_BACKEND_MESSAGE_BYTES,
-  type ResourceAdmission,
-  type ResourceLease,
-  readBackendLines,
-  releaseAfterCleanup,
-} from '@mcp-gateway/core/limits';
-import { LogBuffer } from '@mcp-gateway/core/logs';
-import { BackendProcesses } from '@mcp-gateway/core/process';
-import { createSessions } from '@mcp-gateway/core/sessions';
-import type { HttpServerConfig, LogLevel, StdioServerConfig } from '@mcp-gateway/shared/types';
 import { JSONRPCMessageSchema } from '@modelcontextprotocol/sdk/types.js';
 import cors from 'cors';
 import { createParser } from 'eventsource-parser';
@@ -56,6 +39,25 @@ import {
   SPEAKS_FOR_MS,
   UpstreamModernChild,
 } from 'supergateway/dist/lib/upstreamModernChild.js';
+
+import { isHttpServer } from '@mcp-gateway/core/config';
+import { failure } from '@mcp-gateway/core/errors';
+import {
+  BACKEND_CAPACITY_ERROR,
+  type BackendCalls,
+  BackendOutputLimitError,
+  boundedBackendResponse,
+  MAX_BACKEND_MESSAGE_BYTES,
+  type ResourceAdmission,
+  type ResourceLease,
+  readBackendLines,
+  releaseAfterCleanup,
+} from '@mcp-gateway/core/limits';
+import { LogBuffer } from '@mcp-gateway/core/logs';
+import { BackendProcesses } from '@mcp-gateway/core/process';
+import { createSessions } from '@mcp-gateway/core/sessions';
+import { refuseUpstreamRedirects } from '@mcp-gateway/core/upstream-fetch';
+import type { HttpServerConfig, LogLevel, StdioServerConfig } from '@mcp-gateway/shared/types';
 
 export type GatewayMount = StatefulMount;
 
@@ -157,8 +159,12 @@ export const createMount = (
     debug: (...args) => capture('debug', args),
     warn: (...args) => capture('warn', args),
   };
+  // Configuration parsing already validated this URL; refuse rather than throw if that ever changes.
+  const upstreamUrl = isHttpServer(server) ? URL.parse(server.url) : null;
+  if (isHttpServer(server) && !upstreamUrl)
+    throw failure('BackendFailure', 'The backend mount could not be created.');
   const source: Source = isHttpServer(server)
-    ? { upstream: { type: 'streamableHttp', url: new URL(server.url), headers: server.headers } }
+    ? { upstream: { type: 'streamableHttp', url: upstreamUrl as URL, headers: server.headers } }
     : {
         stdioCmd: {
           command: server.command,
@@ -460,10 +466,16 @@ export const createMount = (
         else res.status(502).end();
       }
     });
+    // Only an upstream with configured headers can leak a secret to a redirect target.
+    const unguard =
+      isHttpServer(server) && upstreamUrl && Object.keys(server.headers ?? {}).length > 0
+        ? refuseUpstreamRedirects(upstreamUrl)
+        : undefined;
     return {
       app,
       close: async () => {
         closing = true;
+        unguard?.();
         await Promise.all([
           discovery?.close(),
           retained.close(),

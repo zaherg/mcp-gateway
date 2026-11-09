@@ -1,3 +1,5 @@
+import * as z from 'zod/v4';
+
 import { MAX_CONFIG_BYTES, parseConfig, SAFE_NAME } from '@mcp-gateway/core/config';
 import { GatewayError, RequestError } from '@mcp-gateway/core/errors';
 import { anyNumber } from '@mcp-gateway/core/schema';
@@ -11,7 +13,6 @@ import {
   type QuitStatus,
 } from '@mcp-gateway/shared/rpc';
 import type { GatewayController } from '@mcp-gateway/shared/types';
-import * as z from 'zod/v4';
 
 export interface LoginManager {
   status(): LoginStatus;

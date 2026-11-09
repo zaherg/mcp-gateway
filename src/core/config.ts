@@ -4,6 +4,8 @@ import * as fs from 'node:fs/promises';
 import { validateHeaderName, validateHeaderValue } from 'node:http';
 import { basename, dirname, isAbsolute, join, parse, resolve } from 'node:path';
 
+import * as z from 'zod/v4';
+
 import { failure, GatewayError } from '@mcp-gateway/core/errors';
 import { anyNumber, ownRecord } from '@mcp-gateway/core/schema';
 import {
@@ -12,11 +14,12 @@ import {
   parseConfigDocument,
 } from '@mcp-gateway/shared/config-document';
 import type { GatewayConfig, HttpServerConfig, StdioServerConfig } from '@mcp-gateway/shared/types';
-import * as z from 'zod/v4';
 
 const missing = (error: unknown) => (error as NodeJS.ErrnoException)?.code === 'ENOENT';
 
 export const MAX_CONFIG_BYTES = 1024 * 1024;
+// A lock with no readable pid is only treated as abandoned after this long.
+const STALE_UNOWNED_LOCK_MS = 10_000;
 export const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const StringMap = ownRecord(z.string());
 const StdioSchema = z.strictObject({
@@ -366,24 +369,74 @@ export class ConfigStore {
     });
   }
 
+  // A lock left behind by a process that died is recognizable: it names its pid.
+  // Only a lock whose owner is gone (or whose pid was never written and that is
+  // old) is removed; a live or unknown owner keeps the refusal.
+  private async lockIsStale(lockPath: string): Promise<boolean> {
+    let handle: fs.FileHandle;
+    try {
+      handle = await fs.open(
+        lockPath,
+        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+      );
+    } catch {
+      return false;
+    }
+    try {
+      const stat = await handle.stat();
+      if (!stat.isFile() || (process.getuid && stat.uid !== process.getuid())) return false;
+      const pid = Number((await handle.readFile('utf8')).trim());
+      if (!Number.isSafeInteger(pid) || pid <= 0)
+        return Date.now() - stat.mtimeMs > STALE_UNOWNED_LOCK_MS;
+      if (pid === process.pid) return false;
+      try {
+        process.kill(pid, 0);
+        return false;
+      } catch (error) {
+        return (error as NodeJS.ErrnoException).code === 'ESRCH';
+      }
+    } finally {
+      await handle.close();
+    }
+  }
+
+  private async acquireLock(lockPath: string): Promise<fs.FileHandle> {
+    for (let attempt = 0; ; attempt++) {
+      let lock: fs.FileHandle;
+      try {
+        lock = await fs.open(
+          lockPath,
+          constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+          0o600,
+        );
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+        if (attempt === 0 && (await this.lockIsStale(lockPath))) {
+          await fs.unlink(lockPath).catch((failed) => {
+            if (!missing(failed)) throw failed;
+          });
+          continue;
+        }
+        throw failure(
+          'ConfigLocked',
+          'Configuration is locked by another running writer. If mcp.json.lock beside the configuration is stale, quit every app instance and confirm no writer is active before removing it and retrying.',
+        );
+      }
+      try {
+        await lock.writeFile(String(process.pid));
+      } catch (error) {
+        await lock.close();
+        await fs.unlink(lockPath).catch(() => undefined);
+        throw error;
+      }
+      return lock;
+    }
+  }
+
   private async locked<A>(work: () => Promise<A>): Promise<A> {
     await safeParent(this.path);
     const lockPath = `${this.jsonPath}.lock`;
-    let lock: fs.FileHandle;
-    try {
-      lock = await fs.open(
-        lockPath,
-        constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
-        0o600,
-      );
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'EEXIST')
-        throw failure(
-          'ConfigLocked',
-          'Configuration is locked. If mcp.json.lock beside the configuration is stale, quit every app instance and confirm no writer is active before removing it and retrying.',
-        );
-      throw error;
-    }
+    const lock = await this.acquireLock(lockPath);
     try {
       return await work();
     } finally {

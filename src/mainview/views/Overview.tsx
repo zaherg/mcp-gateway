@@ -1,19 +1,20 @@
-import { type Editor, emptyEditor } from '@mcp-gateway/mainview/dialogs/ServerEditor';
-import type { AppClient, AppResult, AppSnapshot } from '@mcp-gateway/shared/rpc';
-import type { GatewayConfig, GatewaySnapshot } from '@mcp-gateway/shared/types';
 import {
   ArrowUpRight,
   CircleHelp,
   Code2,
   Copy,
-  Globe,
   Plus,
   RefreshCw,
   Server,
   ShieldCheck,
-  Terminal,
   Trash2,
 } from 'lucide-react';
+
+import { Badge } from '@mcp-gateway/mainview/components/mac/badge';
+import { Button } from '@mcp-gateway/mainview/components/mac/button';
+import { type Editor, emptyEditor } from '@mcp-gateway/mainview/dialogs/ServerEditor';
+import type { AppClient, AppResult, AppSnapshot } from '@mcp-gateway/shared/rpc';
+import type { GatewayConfig, GatewaySnapshot } from '@mcp-gateway/shared/types';
 
 type Run = (
   operation: () => Promise<AppResult<AppSnapshot | null>>,
@@ -53,18 +54,19 @@ export const Overview = ({
           <div>
             <h2 id="servers-heading">
               Your servers{' '}
-              <span className="count">{config ? Object.keys(config.mcpServers).length : '?'}</span>
+              <Badge variant="secondary">
+                {config ? Object.keys(config.mcpServers).length : '?'}
+              </Badge>
             </h2>
             <p>A separate endpoint for each configured MCP server.</p>
           </div>
-          <button
-            type="button"
-            className="button primary"
+          <Button
+            variant="default"
             disabled={configurationLocked || !config}
             onClick={() => openEditor()}
           >
-            <Plus size={16} /> Add server
-          </button>
+            <Plus /> Add server
+          </Button>
         </div>
         <div className="server-grid">
           {config &&
@@ -74,12 +76,16 @@ export const Overview = ({
               const http = 'url' in server;
               return (
                 <article className="server-card panel" key={name}>
-                  <div className="card-top">
-                    <span className={`server-icon ${http ? 'blue' : ''}`}>
-                      {http ? <Globe size={21} /> : <Terminal size={21} />}
-                    </span>
-                    <span
-                      className={`badge ${status === 'mounted' ? 'teal' : status === 'error' ? 'red' : ''}`}
+                  <div className="card-heading">
+                    <h3>{name}</h3>
+                    <Badge
+                      variant={
+                        status === 'mounted'
+                          ? 'accent'
+                          : status === 'error'
+                            ? 'danger'
+                            : 'secondary'
+                      }
                     >
                       {status === 'mounted'
                         ? 'Mounted'
@@ -88,18 +94,17 @@ export const Overview = ({
                           : status === 'error'
                             ? 'Error'
                             : 'Stopped'}
-                    </span>
+                    </Badge>
                   </div>
-                  <h3>{name}</h3>
                   <p className="transport">{http ? 'STREAMABLE HTTP' : 'LOCAL STDIO'}</p>
                   <p className="server-detail mono" title={http ? server.url : server.command}>
                     {http ? server.url : server.command}
                   </p>
                   <div className="endpoint">
                     <span className="mono">/mcp/{name}</span>
-                    <button
-                      type="button"
-                      className="icon-button"
+                    <Button
+                      variant="ghost"
+                      size="icon-lg"
                       aria-label={`Copy endpoint for ${name}`}
                       disabled={!live || dirty}
                       onClick={() =>
@@ -109,30 +114,30 @@ export const Overview = ({
                         )
                       }
                     >
-                      <Copy size={14} />
-                    </button>
+                      <Copy />
+                    </Button>
                   </div>
                   {live?.error && <p className="inline-error">{live.error.message}</p>}
                   <div className="card-actions">
-                    <button
-                      type="button"
-                      className="text-button"
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       disabled={configurationLocked}
                       onClick={() => openEditor(name)}
                     >
                       Edit server
-                    </button>
-                    <button
-                      type="button"
-                      className="text-button"
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       disabled={configurationLocked || dirty || !!gateway?.configError}
                       onClick={() => void toggleEndpoint(name, !server.disabled)}
                     >
                       {server.disabled ? 'Start' : 'Stop'}
-                    </button>
-                    <button
-                      type="button"
-                      className="icon-button"
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon-lg"
                       aria-label={`Restart ${name}`}
                       disabled={
                         configurationLocked ||
@@ -145,19 +150,19 @@ export const Overview = ({
                         void run(() => client.restartServer({ name }), `${name} restarted.`)
                       }
                     >
-                      <RefreshCw size={15} />
-                    </button>
-                    <button
-                      type="button"
-                      className="icon-button"
+                      <RefreshCw />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon-lg"
                       aria-label={`Delete ${name}`}
                       disabled={configurationLocked}
                       onClick={() => {
                         if (!configurationLocked) setDeleting(name);
                       }}
                     >
-                      <Trash2 size={15} />
-                    </button>
+                      <Trash2 />
+                    </Button>
                   </div>
                   <button
                     type="button"
@@ -187,9 +192,7 @@ export const Overview = ({
               <br />
               Each gets its own shareable MCP endpoint.
             </p>
-            <button
-              type="button"
-              className="button"
+            <Button
               disabled={configurationLocked}
               onClick={() => {
                 if (configurationLocked) return;
@@ -201,8 +204,8 @@ export const Overview = ({
                 setEditor(preset);
               }}
             >
-              Use macOS Bear preset <ArrowUpRight size={14} />
-            </button>
+              Use macOS Bear preset <ArrowUpRight />
+            </Button>
             <small>Optional, macOS only. Bear can expose all accessible notes and tools.</small>
           </div>
         )}

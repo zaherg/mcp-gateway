@@ -1,7 +1,9 @@
+import { ChevronRight, Network, Server, Settings2, ShieldCheck, Terminal } from 'lucide-react';
+import { type ReactNode, useLayoutEffect, useRef } from 'react';
+
+import { Button } from '@mcp-gateway/mainview/components/mac/button';
 import type { Editor } from '@mcp-gateway/mainview/dialogs/ServerEditor';
 import type { AppSnapshot, QuitStatus } from '@mcp-gateway/shared/rpc';
-import { ChevronRight, Network, Server, Settings2, ShieldCheck, Terminal } from 'lucide-react';
-import type { ReactNode } from 'react';
 
 export const Shell = ({
   tab,
@@ -28,9 +30,17 @@ export const Shell = ({
   children: ReactNode;
   dialogs: ReactNode;
 }) => {
+  const mainRef = useRef<HTMLElement>(null);
+
+  // The shared scroller keeps its offset across tabs; reset it on navigation only.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `tab` is the trigger, not a value the effect reads.
+  useLayoutEffect(() => {
+    if (mainRef.current) mainRef.current.scrollTop = 0;
+  }, [tab]);
+
   return (
     <div className="app-shell">
-      <aside className="sidebar">
+      <aside className="sidebar electrobun-webkit-app-region-drag">
         <div className="brand">
           <span className="brand-mark">
             <Network size={22} />
@@ -39,7 +49,7 @@ export const Shell = ({
             MCP Gateway<small>LOCAL CONNECTIONS</small>
           </span>
         </div>
-        <nav aria-label="Main navigation">
+        <nav aria-label="Main navigation" className="electrobun-webkit-app-region-no-drag">
           <button
             type="button"
             className={tab === 'overview' ? 'nav-item active' : 'nav-item'}
@@ -69,7 +79,7 @@ export const Shell = ({
           </span>
         </div>
       </aside>
-      <main>
+      <main ref={mainRef} data-tab={tab}>
         <header className="page-heading">
           <div>
             <p className="eyebrow">YOUR LOCAL MCP WORKSPACE</p>
@@ -89,10 +99,7 @@ export const Shell = ({
             </p>
           </div>
           <div>
-            <span className="mac-badge">{snapshot ? 'macOS' : 'Desktop'} · local</span>
-            <button
-              type="button"
-              className="button"
+            <Button
               data-action="quit"
               disabled={
                 busy ||
@@ -108,7 +115,7 @@ export const Shell = ({
                 : quitStatus.phase === 'failed'
                   ? 'Retry Quit'
                   : 'Quit MCP Gateway'}
-            </button>
+            </Button>
           </div>
         </header>
         {children}

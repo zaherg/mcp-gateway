@@ -1,18 +1,6 @@
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 
-import { failure } from '@mcp-gateway/core/errors';
-import {
-  BACKEND_CAPACITY_ERROR,
-  type BackendCalls,
-  boundedBackendResponse,
-  type ResourceLease,
-  readBackendLines,
-  releaseAfterCleanup,
-  type WorkOwner,
-} from '@mcp-gateway/core/limits';
-import type { BackendProcesses } from '@mcp-gateway/core/process';
-import type { LogLevel } from '@mcp-gateway/shared/types';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isInitializeRequest, isJSONRPCRequest } from '@modelcontextprotocol/sdk/types.js';
@@ -28,6 +16,19 @@ import type {
 } from 'supergateway/dist/gateways/stdioToStatefulStreamableHttp.js';
 import { spawnCommand } from 'supergateway/dist/lib/childCommand.js';
 import { readWhile } from 'supergateway/dist/lib/outputBackpressure.js';
+
+import { failure } from '@mcp-gateway/core/errors';
+import {
+  BACKEND_CAPACITY_ERROR,
+  type BackendCalls,
+  boundedBackendResponse,
+  type ResourceLease,
+  readBackendLines,
+  releaseAfterCleanup,
+  type WorkOwner,
+} from '@mcp-gateway/core/limits';
+import type { BackendProcesses } from '@mcp-gateway/core/process';
+import type { LogLevel } from '@mcp-gateway/shared/types';
 
 // Session-based MCP (2025-11-25 and earlier) for endpoints that opt in.
 // Supergateway 4.2.1's StatefulSessions owns the protocol: initialize,

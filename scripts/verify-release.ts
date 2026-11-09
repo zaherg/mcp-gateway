@@ -4,7 +4,6 @@ import { dirname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { runCommand } from '@mcp-gateway/core/process';
-
 import packageInfo from '../package.json';
 import {
   PRODUCTION_FEED,

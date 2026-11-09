@@ -1,8 +1,10 @@
+import { ArrowDownToLine, ArrowUpRight, CircleHelp, RefreshCw } from 'lucide-react';
+import type { RefObject } from 'react';
+
+import { Button } from '@mcp-gateway/mainview/components/mac/button';
 import { Toggle } from '@mcp-gateway/mainview/components/ui';
 import type { Editor } from '@mcp-gateway/mainview/dialogs/ServerEditor';
 import type { AppClient, AppResult, QuitStatus, UpdateStatus } from '@mcp-gateway/shared/rpc';
-import { ArrowDownToLine, ArrowUpRight, CircleHelp, RefreshCw } from 'lucide-react';
-import type { RefObject } from 'react';
 
 const updateCheckedLabel = (value: string | null): string => {
   if (!value) return 'Not checked yet.';
@@ -129,9 +131,7 @@ export const Updates = ({
             }
           />
           <div className="update-actions">
-            <button
-              type="button"
-              className="button"
+            <Button
               disabled={
                 updateBusy ||
                 configurationLocked ||
@@ -141,13 +141,11 @@ export const Updates = ({
               }
               onClick={() => void runUpdate(() => client.updatesCheck(), 'Update check completed.')}
             >
-              <RefreshCw size={15} />
+              <RefreshCw />
               {updateState.phase === 'checking' ? 'Checking…' : 'Check for Updates'}
-            </button>
+            </Button>
             {updateState.availableVersion && !updateReady && (
-              <button
-                type="button"
-                className="button"
+              <Button
                 disabled={
                   updateBusy ||
                   configurationLocked ||
@@ -159,14 +157,13 @@ export const Updates = ({
                   void runUpdate(() => client.updatesDownload(), 'The update download has started.')
                 }
               >
-                <ArrowDownToLine size={15} />
+                <ArrowDownToLine />
                 {updateState.phase === 'downloading' ? 'Downloading…' : 'Download Update'}
-              </button>
+              </Button>
             )}
             {updateReady && (
-              <button
-                type="button"
-                className="button primary"
+              <Button
+                variant="default"
                 disabled={
                   busy ||
                   !quitStatusKnown ||
@@ -178,9 +175,9 @@ export const Updates = ({
                 }
                 onClick={() => setConfirmUpdate(true)}
               >
-                <ArrowUpRight size={15} />
+                <ArrowUpRight />
                 Restart to Update
-              </button>
+              </Button>
             )}
           </div>
           {(editor || deleting) && updateReady && (

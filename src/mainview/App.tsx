@@ -1,4 +1,7 @@
-import { Banners } from '@mcp-gateway/mainview/components/Banners';
+import { Activity } from 'lucide-react';
+import { type FormEvent, useEffect, useRef, useState } from 'react';
+
+import { Banners } from '@mcp-gateway/mainview/components/banners/Banners';
 import { DraftBar } from '@mcp-gateway/mainview/components/DraftBar';
 import { GatewayStrip } from '@mcp-gateway/mainview/components/GatewayStrip';
 import { Shell } from '@mcp-gateway/mainview/components/Shell';
@@ -21,8 +24,6 @@ import { editConfigDocument } from '@mcp-gateway/shared/config-document';
 import type { AppClient, AppSnapshot } from '@mcp-gateway/shared/rpc';
 import { needsLoginRetry } from '@mcp-gateway/shared/rpc';
 import type { GatewayConfig } from '@mcp-gateway/shared/types';
-import { Activity } from 'lucide-react';
-import { type FormEvent, useEffect, useRef, useState } from 'react';
 
 export const App = ({ client }: { client: AppClient }) => {
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null);
@@ -201,6 +202,8 @@ export const App = ({ client }: { client: AppClient }) => {
     !stale &&
     needsLoginRetry(snapshot.login, config.gateway.launchAtLogin ?? false)
   );
+  // The retry action lives in the Settings draft bar, so only Settings offers it.
+  const showLoginRetry = retryLogin && tab === 'settings';
   const save = async (text = doc?.text) => {
     if (configurationLocked || !doc || text === undefined) return false;
     return run(
@@ -388,6 +391,7 @@ export const App = ({ client }: { client: AppClient }) => {
         configurationLocked={configurationLocked}
         snapshot={snapshot ?? undefined}
         loginWanted={parsed?.gateway.launchAtLogin ?? false}
+        loginInDraftBar={retryLogin && !dirty}
         stale={stale}
       />
       {(!snapshot || !doc) && tab === 'logs' ? (
@@ -403,7 +407,7 @@ export const App = ({ client }: { client: AppClient }) => {
           <fieldset disabled={busy} className="workspace">
             <DraftBar
               dirty={dirty}
-              retryLogin={retryLogin}
+              retryLogin={showLoginRetry}
               configurationLocked={configurationLocked}
               snapshot={snapshot}
               setDoc={setDoc}
@@ -472,7 +476,7 @@ export const App = ({ client }: { client: AppClient }) => {
                 filename={filename}
                 gateway={gateway}
                 dirty={dirty}
-                retryLogin={retryLogin}
+                retryLogin={showLoginRetry}
                 save={save}
                 rawOpen={rawOpen}
                 setRawOpen={setRawOpen}

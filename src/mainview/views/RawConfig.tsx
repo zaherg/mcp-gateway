@@ -1,9 +1,12 @@
+import { ArrowDownToLine, ChevronRight, Code2 } from 'lucide-react';
+import type { RefObject } from 'react';
+
+import { Button } from '@mcp-gateway/mainview/components/mac/button';
+import { Textarea } from '@mcp-gateway/mainview/components/mac/textarea';
 import { Field } from '@mcp-gateway/mainview/components/ui';
 import type { Document } from '@mcp-gateway/mainview/dialogs/ServerEditor';
 import type { ConfigFormat } from '@mcp-gateway/shared/config-document';
 import type { GatewaySnapshot } from '@mcp-gateway/shared/types';
-import { ArrowDownToLine, ChevronRight, Code2 } from 'lucide-react';
-import type { RefObject } from 'react';
 
 export const RawConfig = ({
   doc,
@@ -62,8 +65,8 @@ export const RawConfig = ({
             Changing the filename requires reopening the app.
           </p>
           <Field label={filename}>
-            <textarea
-              className="code-editor"
+            <Textarea
+              className="min-h-87.5 text-[11px] whitespace-pre [tab-size:2]"
               readOnly={configurationLocked}
               spellCheck={false}
               value={doc.text}
@@ -74,14 +77,13 @@ export const RawConfig = ({
               }}
             />
           </Field>
-          <button
-            type="button"
-            className="button primary"
+          <Button
+            variant="default"
             disabled={configurationLocked || (!dirty && !retryLogin)}
             onClick={() => void save()}
           >
-            <ArrowDownToLine size={15} /> Save {filename}
-          </button>
+            <ArrowDownToLine /> Save {filename}
+          </Button>
         </div>
       )}
     </section>

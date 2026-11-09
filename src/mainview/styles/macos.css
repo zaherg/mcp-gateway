@@ -1,0 +1,541 @@
+/*
+ * macOS 27 theme for shadcn/ui.
+ *
+ * Every visual value the components use lives here. Colors, text styles,
+ * control heights and control radii are what macOS 27 reports through
+ * AppKit's public API. Window chrome, materials and shadows were measured
+ * from macOS 27 screenshots at 1pt = 1px. The Design Sources page of the
+ * CupertinoUI docs lists the source of each group, including the values not
+ * measured yet.
+ */
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  /* Fonts. SF Pro is not redistributable; the system stack resolves to it on Apple devices. */
+  --font-macos:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro', 'Helvetica Neue', 'Segoe UI', Inter,
+    system-ui, sans-serif;
+  --font-macos-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  /* Accents */
+  --mac-blue: #0088ff;
+  --mac-red: #ff383c;
+  --mac-orange: #ff8d28;
+  --mac-yellow: #ffcc00;
+  --mac-green: #34c759;
+  --mac-mint: #00c8b3;
+  --mac-teal: #00c3d0;
+  --mac-cyan: #00c0e8;
+  --mac-indigo: #6155f5;
+  --mac-purple: #cb30e0;
+  --mac-pink: #ff2d55;
+  --mac-brown: #ac7f5e;
+  --mac-gray: #8e8e93;
+
+  /* Accent (the user-selectable highlight color on macOS) */
+  --mac-accent: var(--mac-blue);
+  --mac-accent-foreground: #ffffff;
+  /* Selected rows in a focused list, and the highlighted menu item */
+  --mac-selection: #0064e1;
+  --mac-menu-highlight: #0069f9;
+  /* Selected rows in an unfocused list */
+  --mac-selection-unfocused: rgb(0 0 0 / 0.14);
+  --mac-link: #0068da;
+
+  /* Labels */
+  --mac-label: rgb(0 0 0 / 0.85);
+  --mac-label-secondary: rgb(0 0 0 / 0.5);
+  --mac-label-tertiary: rgb(0 0 0 / 0.26);
+  --mac-label-quaternary: rgb(0 0 0 / 0.1);
+  --mac-label-quinary: rgb(0 0 0 / 0.05);
+
+  /* Fills */
+  --mac-fill-primary: rgb(0 0 0 / 0.1);
+  --mac-fill-secondary: rgb(0 0 0 / 0.08);
+  --mac-fill-tertiary: rgb(0 0 0 / 0.05);
+  --mac-fill-quaternary: rgb(0 0 0 / 0.03);
+  --mac-fill-quinary: rgb(0 0 0 / 0.008);
+
+  /* Controls: bordered buttons, pop-ups, tabss */
+  --mac-control: rgb(0 0 0 / 0.08);
+  --mac-control-pressed: rgb(0 0 0 / 0.16);
+  --mac-control-disabled: rgb(0 0 0 / 0.04);
+  /* Text fields */
+  --mac-field: #ffffff;
+  --mac-field-border: rgb(0 0 0 / 0.08);
+
+  /* Surfaces */
+  --mac-window: #ffffff;
+  --mac-content: #ffffff;
+  --mac-content-alternate: rgb(0 0 0 / 0.05);
+  --mac-group: var(--mac-fill-quaternary);
+  --mac-separator: rgb(0 0 0 / 0.05);
+  --mac-grid: rgb(0 0 0 / 0.1);
+  --mac-border: rgb(0 0 0 / 0.1);
+  --mac-sidebar: rgb(233 239 245 / 0.86);
+  --mac-sidebar-selection: rgb(0 0 0 / 0.06);
+  --mac-sidebar-label-inactive: #878787;
+  --mac-titlebar: rgb(255 255 255 / 0.92);
+
+  /* Liquid Glass (toolbar capsules, search fields in toolbars) */
+  --mac-glass: rgb(255 255 255 / 0.82);
+  --mac-glass-pressed: rgb(0 0 0 / 0.07);
+  --mac-glass-selected: rgb(0 0 0 / 0.08);
+  --mac-glass-edge: rgb(255 255 255 / 0.95);
+  --mac-glass-rim: rgb(0 0 0 / 0.1);
+  --mac-glass-shadow: 0 0 0 0.5px rgb(0 0 0 / 0.08), 0 8px 15px rgb(0 0 0 / 0.04);
+
+  /* Materials (translucent, blurred backgrounds) */
+  --mac-material-menu: rgb(244 244 246 / 0.74);
+  --mac-material-popover: rgb(246 246 246 / 0.8);
+  --mac-material-hud: rgb(246 246 246 / 0.86);
+  --mac-material-tooltip: rgb(246 246 246 / 0.9);
+  --mac-material-dock: rgb(255 255 255 / 0.32);
+  --mac-dock-label: rgb(246 246 246 / 0.85);
+  --mac-material-blur: 30px;
+  --mac-material-border: rgb(0 0 0 / 0.1);
+  --mac-material-highlight: rgb(255 255 255 / 0.5);
+  --mac-overlay: rgb(171 171 171 / 0.6);
+
+  /* Window controls */
+  --mac-traffic-close: #ff5f57;
+  --mac-traffic-minimize: #febc2e;
+  --mac-traffic-zoom: #28c840;
+  --mac-traffic-inactive: #dcdfe3;
+  --mac-traffic-edge: inset 0 0 0 0.5px rgb(0 0 0 / 0.12);
+
+  /* Shadows */
+  --mac-shadow-menu:
+    inset 0 0 0 1px rgb(255 255 255 / 0.55), 0 0 0 0.5px rgb(0 0 0 / 0.16),
+    0 8px 48px rgb(0 0 0 / 0.25);
+  --mac-shadow-popover: 0 0 0 0.5px var(--mac-material-border), 0 8px 48px rgb(0 0 0 / 0.2);
+  --mac-shadow-tooltip: 0 0 0 0.5px rgb(0 0 0 / 0.12), 0 2px 8px rgb(0 0 0 / 0.15);
+  --mac-shadow-dock-label:
+    inset 0 1px 0 rgb(255 255 255 / 0.8), 0 0 0 0.5px rgb(0 0 0 / 0.12), 0 2px 8px rgb(0 0 0 / 0.15);
+  /* Light catches the top and bottom edges of the Dock; the sides get a darker rim. */
+  --mac-shadow-dock:
+    inset 0 1px 0 rgb(255 255 255 / 0.75), inset 0 -1px 0 rgb(255 255 255 / 0.55), inset 1px 0 0 rgb(
+      0 0 0 / 0.1
+    ), inset -1px 0 0 rgb(0 0 0 / 0.1), inset 0 6px 6px -5px rgb(255 255 255 / 0.3), 0 8px 24px rgb(
+      0 0 0 / 0.12
+    );
+  --mac-shadow-window: 0 0 1px rgb(0 0 0 / 0.8), 0 18px 54px rgb(0 0 0 / 0.3);
+  --mac-shadow-window-inactive: 0 0 1px rgb(0 0 0 / 0.8), 0 7px 21px rgb(0 0 0 / 0.2);
+  --mac-window-rim: transparent;
+  --mac-focus-ring: 0 0 0 3.5px color-mix(in srgb, var(--mac-accent) 50%, transparent);
+
+  /* Radii */
+  --mac-radius-control: 6px;
+  --mac-radius-menu: 13px;
+  --mac-radius-item: 8px;
+  --mac-radius-group: 12px;
+  --mac-radius-popover: 20px;
+  --mac-radius-alert: 34px;
+  --mac-radius-window: 16px;
+
+  /* Control heights (mini, small, medium, large, extra large) */
+  --mac-control-mini: 16px;
+  --mac-control-small: 20px;
+  --mac-control-medium: 24px;
+  --mac-control-large: 28px;
+  --mac-control-xl: 36px;
+
+  /* shadcn tokens mapped onto macOS values, so unmodified shadcn components follow the theme too */
+  --radius: var(--mac-radius-control);
+  --background: var(--mac-window);
+  --foreground: var(--mac-label);
+  --card: var(--mac-content);
+  --card-foreground: var(--mac-label);
+  --popover: var(--mac-material-popover);
+  --popover-foreground: var(--mac-label);
+  --primary: var(--mac-accent);
+  --primary-foreground: var(--mac-accent-foreground);
+  --secondary: var(--mac-control);
+  --secondary-foreground: var(--mac-label);
+  --muted: var(--mac-fill-tertiary);
+  --muted-foreground: var(--mac-label-secondary);
+  --accent: var(--mac-accent);
+  --accent-foreground: var(--mac-accent-foreground);
+  --destructive: var(--mac-red);
+  --border: var(--mac-border);
+  --input: var(--mac-field-border);
+  --ring: var(--mac-accent);
+  --chart-1: var(--mac-blue);
+  --chart-2: var(--mac-green);
+  --chart-3: var(--mac-orange);
+  --chart-4: var(--mac-purple);
+  --chart-5: var(--mac-pink);
+  --sidebar: var(--mac-sidebar);
+  --sidebar-foreground: var(--mac-label);
+  --sidebar-primary: var(--mac-accent);
+  --sidebar-primary-foreground: var(--mac-accent-foreground);
+  --sidebar-accent: var(--mac-sidebar-selection);
+  --sidebar-accent-foreground: var(--mac-label);
+  --sidebar-border: var(--mac-separator);
+  --sidebar-ring: var(--mac-accent);
+}
+
+.dark {
+  --mac-blue: #0091ff;
+  --mac-red: #ff4245;
+  --mac-orange: #ff9230;
+  --mac-yellow: #ffd600;
+  --mac-green: #30d158;
+  --mac-mint: #00dac3;
+  --mac-teal: #00d2e0;
+  --mac-cyan: #3cd3fe;
+  --mac-indigo: #6d7cff;
+  --mac-purple: #db34f2;
+  --mac-pink: #ff375f;
+  --mac-brown: #b78a66;
+  --mac-gray: #98989d;
+
+  --mac-selection: #0059d1;
+  --mac-selection-unfocused: rgb(255 255 255 / 0.18);
+  --mac-link: #419cff;
+
+  --mac-label: rgb(255 255 255 / 0.85);
+  --mac-label-secondary: rgb(255 255 255 / 0.55);
+  --mac-label-tertiary: rgb(255 255 255 / 0.25);
+  --mac-label-quaternary: rgb(255 255 255 / 0.1);
+  --mac-label-quinary: rgb(255 255 255 / 0.05);
+
+  --mac-fill-primary: rgb(255 255 255 / 0.1);
+  --mac-fill-secondary: rgb(255 255 255 / 0.08);
+  --mac-fill-tertiary: rgb(255 255 255 / 0.05);
+  --mac-fill-quaternary: rgb(255 255 255 / 0.03);
+  --mac-fill-quinary: rgb(255 255 255 / 0.008);
+
+  --mac-control: rgb(255 255 255 / 0.08);
+  --mac-control-pressed: rgb(255 255 255 / 0.16);
+  --mac-control-disabled: rgb(255 255 255 / 0.04);
+  --mac-field: #1e1e1e;
+  --mac-field-border: rgb(255 255 255 / 0.04);
+
+  --mac-window: #1e1f20;
+  --mac-content: #1e2023;
+  --mac-content-alternate: rgb(255 255 255 / 0.05);
+  --mac-separator: rgb(255 255 255 / 0.05);
+  --mac-grid: rgb(255 255 255 / 0.1);
+  --mac-border: rgb(255 255 255 / 0.1);
+  --mac-sidebar: rgb(41 44 50 / 0.9);
+  --mac-sidebar-selection: rgb(255 255 255 / 0.12);
+  --mac-sidebar-label-inactive: rgb(255 255 255 / 0.35);
+  --mac-titlebar: #232528;
+
+  --mac-glass: #323435;
+  --mac-glass-pressed: rgb(255 255 255 / 0.08);
+  --mac-glass-selected: rgb(255 255 255 / 0.1);
+  --mac-glass-edge: rgb(255 255 255 / 0.17);
+  --mac-glass-rim: rgb(0 0 0 / 0.72);
+  --mac-glass-shadow: 0 0 0 transparent;
+
+  --mac-material-menu: rgb(48 52 60 / 0.6);
+  --mac-material-popover: rgb(36 36 36 / 0.82);
+  --mac-material-hud: rgb(30 30 30 / 0.86);
+  --mac-material-tooltip: rgb(20 20 20 / 0.72);
+  /* The dark Dock barely tints the wallpaper: it brightens what is behind it. */
+  --mac-material-dock: rgb(255 255 255 / 0.015);
+  --mac-material-dock-saturation: 100%;
+  --mac-material-dock-brightness: 1.15;
+  --mac-dock-label: rgb(68 68 70 / 0.42);
+  --mac-dock-label-saturation: 100%;
+  --mac-material-border: rgb(255 255 255 / 0.15);
+  --mac-material-highlight: rgb(255 255 255 / 0.08);
+  --mac-overlay: rgb(23 23 23 / 0.62);
+
+  --mac-traffic-close: linear-gradient(#f4534a 45%, #ef6861);
+  --mac-traffic-minimize: #fcba00;
+  --mac-traffic-zoom: linear-gradient(#2cc100, #00bc01 40%, #00bc01 55%, #4fc337);
+  --mac-traffic-inactive: #4b4d52;
+  --mac-traffic-edge:
+    inset 0 0.75px 0 rgb(255 255 255 / 0.5), inset 0 -0.75px 0 rgb(255 255 255 / 0.4);
+
+  --mac-shadow-menu:
+    inset 0 0 0 1px rgb(255 255 255 / 0.1), 0 0 0 1px rgb(0 0 0 / 0.85),
+    0 8px 48px rgb(0 0 0 / 0.45);
+  --mac-shadow-popover:
+    0 0 0 0.5px var(--mac-material-border), 0 0 0 1px rgb(0 0 0 / 0.5), 0 8px 48px rgb(0 0 0 / 0.45);
+  --mac-shadow-tooltip:
+    inset 0 0 0 0.6px rgb(255 255 255 / 0.15), 0 0 2px rgb(0 0 0 / 0.4), 0 2px 8px rgb(0 0 0 / 0.2);
+  --mac-shadow-dock-label:
+    inset 0 1px 0 rgb(255 255 255 / 0.18), inset 0 5px 5px -4px rgb(255 255 255 / 0.07);
+  --mac-shadow-dock:
+    inset 0 1px 0 rgb(190 215 255 / 0.34), inset 0 -1px 0 rgb(190 215 255 / 0.33), inset 1px 0 0 rgb(
+      0 0 0 / 0.8
+    ), inset -1px 0 0 rgb(0 0 0 / 0.8), inset 0 6px 6px -5px rgb(190 215 255 / 0.1), inset 0 -6px 6px -5px rgb(
+      190 215 255 / 0.09
+    ), 0 8px 24px rgb(0 0 0 / 0.2);
+  --mac-shadow-window: 0 0 0 1px rgb(0 0 0 / 0.92), 0 18px 54px rgb(0 0 0 / 0.57);
+  --mac-shadow-window-inactive: 0 0 0 1px rgb(0 0 0 / 0.92), 0 7px 21px rgb(0 0 0 / 0.35);
+  --mac-window-rim: rgb(255 255 255 / 0.1);
+}
+
+/* An inactive (unfocused) window greys out its accent color, like macOS does. */
+[data-slot='window'][data-inactive] {
+  --mac-accent: rgb(0 0 0 / 0.14);
+  --mac-selection: var(--mac-selection-unfocused);
+  --mac-sidebar: rgb(240 244 248 / 0.97);
+  --mac-sidebar-selection: rgb(0 0 0 / 0.04);
+  --mac-titlebar: #ffffff;
+}
+
+.dark [data-slot='window'][data-inactive],
+.dark[data-slot='window'][data-inactive] {
+  --mac-accent: rgb(255 255 255 / 0.21);
+  --mac-content: #202226;
+  --mac-sidebar: #24272d;
+  --mac-sidebar-selection: rgb(255 255 255 / 0.065);
+  --mac-titlebar: #282a2d;
+  --mac-glass: #2e3032;
+}
+
+@theme inline {
+  --font-sans: var(--font-macos);
+  --font-mono: var(--font-macos-mono);
+
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 2px);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --color-mac-blue: var(--mac-blue);
+  --color-mac-red: var(--mac-red);
+  --color-mac-orange: var(--mac-orange);
+  --color-mac-yellow: var(--mac-yellow);
+  --color-mac-green: var(--mac-green);
+  --color-mac-mint: var(--mac-mint);
+  --color-mac-teal: var(--mac-teal);
+  --color-mac-cyan: var(--mac-cyan);
+  --color-mac-indigo: var(--mac-indigo);
+  --color-mac-purple: var(--mac-purple);
+  --color-mac-pink: var(--mac-pink);
+  --color-mac-brown: var(--mac-brown);
+  --color-mac-gray: var(--mac-gray);
+  --color-mac-accent: var(--mac-accent);
+  --color-mac-accent-foreground: var(--mac-accent-foreground);
+  --color-mac-selection: var(--mac-selection);
+  --color-mac-selection-unfocused: var(--mac-selection-unfocused);
+  --color-mac-menu-highlight: var(--mac-menu-highlight);
+  --color-mac-link: var(--mac-link);
+  --color-mac-label: var(--mac-label);
+  --color-mac-label-secondary: var(--mac-label-secondary);
+  --color-mac-label-tertiary: var(--mac-label-tertiary);
+  --color-mac-label-quaternary: var(--mac-label-quaternary);
+  --color-mac-label-quinary: var(--mac-label-quinary);
+  --color-mac-fill: var(--mac-fill-tertiary);
+  --color-mac-fill-primary: var(--mac-fill-primary);
+  --color-mac-fill-secondary: var(--mac-fill-secondary);
+  --color-mac-fill-tertiary: var(--mac-fill-tertiary);
+  --color-mac-fill-quaternary: var(--mac-fill-quaternary);
+  --color-mac-fill-quinary: var(--mac-fill-quinary);
+  --color-mac-fill-strong: var(--mac-fill-primary);
+  --color-mac-control: var(--mac-control);
+  --color-mac-control-pressed: var(--mac-control-pressed);
+  --color-mac-control-disabled: var(--mac-control-disabled);
+  --color-mac-field: var(--mac-field);
+  --color-mac-field-border: var(--mac-field-border);
+  --color-mac-window: var(--mac-window);
+  --color-mac-content: var(--mac-content);
+  --color-mac-content-alternate: var(--mac-content-alternate);
+  --color-mac-group: var(--mac-group);
+  --color-mac-separator: var(--mac-separator);
+  --color-mac-grid: var(--mac-grid);
+  --color-mac-border: var(--mac-border);
+  --color-mac-sidebar: var(--mac-sidebar);
+  --color-mac-sidebar-selection: var(--mac-sidebar-selection);
+  --color-mac-titlebar: var(--mac-titlebar);
+  --color-mac-glass: var(--mac-glass);
+  --color-mac-glass-pressed: var(--mac-glass-pressed);
+  --color-mac-glass-selected: var(--mac-glass-selected);
+  --color-mac-overlay: var(--mac-overlay);
+
+  --radius-mac-control: var(--mac-radius-control);
+  --radius-mac-menu: var(--mac-radius-menu);
+  --radius-mac-item: var(--mac-radius-item);
+  --radius-mac-group: var(--mac-radius-group);
+  --radius-mac-popover: var(--mac-radius-popover);
+  --radius-mac-alert: var(--mac-radius-alert);
+  --radius-mac-window: var(--mac-radius-window);
+
+  --shadow-mac-menu: var(--mac-shadow-menu);
+  --shadow-mac-popover: var(--mac-shadow-popover);
+  --shadow-mac-tooltip: var(--mac-shadow-tooltip);
+  --shadow-mac-dock: var(--mac-shadow-dock);
+  --shadow-mac-dock-label: var(--mac-shadow-dock-label);
+  --shadow-mac-window: var(--mac-shadow-window);
+  --shadow-mac-window-inactive: var(--mac-shadow-window-inactive);
+  --shadow-mac-focus: var(--mac-focus-ring);
+
+  /* macOS text styles: size / line height */
+  --text-mac-large-title: 26px;
+  --text-mac-large-title--line-height: 32px;
+  --text-mac-title-1: 22px;
+  --text-mac-title-1--line-height: 26px;
+  --text-mac-title-2: 17px;
+  --text-mac-title-2--line-height: 22px;
+  --text-mac-title-3: 15px;
+  --text-mac-title-3--line-height: 20px;
+  --text-mac-headline: 13px;
+  --text-mac-headline--line-height: 16px;
+  --text-mac-body: 13px;
+  --text-mac-body--line-height: 16px;
+  --text-mac-callout: 12px;
+  --text-mac-callout--line-height: 15px;
+  --text-mac-subheadline: 11px;
+  --text-mac-subheadline--line-height: 14px;
+  --text-mac-footnote: 10px;
+  --text-mac-footnote--line-height: 13px;
+  --text-mac-caption: 10px;
+  --text-mac-caption--line-height: 13px;
+}
+
+/* Translucent, blurred backgrounds used by menus, popovers, sidebars and title bars. */
+@utility mac-material-menu {
+  background-color: var(--mac-material-menu);
+  -webkit-backdrop-filter: blur(var(--mac-material-blur)) saturate(180%);
+  backdrop-filter: blur(var(--mac-material-blur)) saturate(180%);
+}
+
+@utility mac-material-popover {
+  background-color: var(--mac-material-popover);
+  -webkit-backdrop-filter: blur(var(--mac-material-blur)) saturate(180%);
+  backdrop-filter: blur(var(--mac-material-blur)) saturate(180%);
+}
+
+@utility mac-material-hud {
+  background-color: var(--mac-material-hud);
+  -webkit-backdrop-filter: blur(var(--mac-material-blur)) saturate(180%);
+  backdrop-filter: blur(var(--mac-material-blur)) saturate(180%);
+}
+
+@utility mac-material-tooltip {
+  background-color: var(--mac-material-tooltip);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+}
+
+@utility mac-material-dock {
+  background-color: var(--mac-material-dock);
+  -webkit-backdrop-filter: blur(var(--mac-material-blur))
+    saturate(var(--mac-material-dock-saturation, 180%))
+    brightness(var(--mac-material-dock-brightness, 1));
+  backdrop-filter: blur(var(--mac-material-blur))
+    saturate(var(--mac-material-dock-saturation, 180%))
+    brightness(var(--mac-material-dock-brightness, 1));
+}
+
+/* The label above a Dock icon: a capsule with an arrow pointing at it. */
+@utility mac-material-dock-label {
+  background-color: var(--mac-dock-label);
+  -webkit-backdrop-filter: blur(20px) saturate(var(--mac-dock-label-saturation, 180%));
+  backdrop-filter: blur(20px) saturate(var(--mac-dock-label-saturation, 180%));
+}
+
+@utility mac-material-sidebar {
+  background-color: var(--mac-sidebar);
+  -webkit-backdrop-filter: blur(var(--mac-material-blur)) saturate(180%);
+  backdrop-filter: blur(var(--mac-material-blur)) saturate(180%);
+}
+
+@utility mac-material-titlebar {
+  background-color: var(--mac-titlebar);
+  -webkit-backdrop-filter: blur(var(--mac-material-blur)) saturate(180%);
+  backdrop-filter: blur(var(--mac-material-blur)) saturate(180%);
+}
+
+/*
+ * Liquid Glass: the capsule behind toolbar items and toolbar search fields.
+ * Light catches the top and bottom edges; the sides get a darker rim.
+ */
+@utility mac-glass {
+  background-color: var(--mac-glass);
+  box-shadow:
+    inset 0 1px 0 var(--mac-glass-edge),
+    inset 0 -1px 0 var(--mac-glass-edge),
+    inset 1px 0 0 var(--mac-glass-rim),
+    inset -1px 0 0 var(--mac-glass-rim),
+    var(--mac-glass-shadow);
+}
+
+/* The macOS focus ring: a soft accent halo plus a crisp inner edge. */
+@utility mac-focus-ring {
+  outline: none;
+  box-shadow:
+    0 0 0 3.5px color-mix(in srgb, var(--mac-accent) 50%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--mac-accent) 50%, transparent);
+}
+
+/* Rounded alternating stripes behind 20px table rows (every second row). */
+/* Text that shimmers while something is in progress, as in shadcn's Trace
+   and Attachment: a lighter band sweeps across the label color. */
+@utility shimmer {
+  background-image: linear-gradient(
+    100deg,
+    currentColor 35%,
+    color-mix(in srgb, currentColor 30%, transparent) 50%,
+    currentColor 65%
+  );
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: mac-shimmer 2.2s linear infinite;
+}
+
+@utility shimmer-none {
+  animation: none;
+  background-image: none;
+  -webkit-text-fill-color: currentColor;
+}
+
+@keyframes mac-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+
+@utility mac-table-stripes {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='40'%3E%3Crect y='20' width='100%25' height='20' rx='5'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='40'%3E%3Crect y='20' width='100%25' height='20' rx='5'/%3E%3C/svg%3E");
+  -webkit-mask-size: 100% 40px;
+  mask-size: 100% 40px;
+  -webkit-mask-repeat: repeat-y;
+  mask-repeat: repeat-y;
+}

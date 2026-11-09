@@ -1,4 +1,11 @@
-- Dont write any tests for this project
-- Ignore github CI for this project.
-- Always follow the plans as is, if you have any issues with it raise them, but never change without asking or requesting confirmation.
-- Always delete the data from `.cache` and `build` these folders should always stay empty after every session
+# Rules for this project
+
+1. Never write tests.
+2. Never create, edit, or consider GitHub CI or workflow files.
+3. If a plan exists, follow it exactly.
+   - If a plan step is wrong or blocked, stop and ask.
+   - Never deviate from the plan until the user confirms.
+4. Before ending every session, delete everything inside `.cache/` and `build/`.
+   - Keep the folders themselves.
+   - Keep `.gitignore` files directly inside them.
+   - Nothing else may remain.

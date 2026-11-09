@@ -20,11 +20,11 @@
                     "level": "on",
                     "options": {
                         "groups": [
-                            [":BUN:", ":NODE:", ":PACKAGE_WITH_PROTOCOL:"],
+                            [":BUN:", ":NODE:", ":PACKAGE_WITH_PROTOCOL:", "!:STYLE:"],
                             ":BLANK_LINE:",
-                            [":PACKAGE:"],
+                            [":PACKAGE:", "!@mcp-gateway/**", "!:STYLE:"],
                             ":BLANK_LINE:",
-                            [":ALIAS:", ":PATH:"],
+                            ["@mcp-gateway/**", ":ALIAS:", ":PATH:", "!:STYLE:"],
                             ":BLANK_LINE:",
                             [":STYLE:"]
                         ]

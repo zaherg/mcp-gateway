@@ -2,11 +2,12 @@ import { randomBytes } from 'node:crypto';
 import { lstat, open, readFile, rename, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { Updater, type UpdateStatusEntry } from 'electrobun/main';
+
 import { ensureParent } from '@mcp-gateway/core/config';
 import { RequestError } from '@mcp-gateway/core/errors';
 import type { QuitCoordinator } from '@mcp-gateway/main/lifecycle';
 import type { QuitStatus, UpdateStatus } from '@mcp-gateway/shared/rpc';
-import { Updater, type UpdateStatusEntry } from 'electrobun/main';
 
 const PREFERENCE_FILE = 'updates.json';
 const STABLE_VERSION = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;

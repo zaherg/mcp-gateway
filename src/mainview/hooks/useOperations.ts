@@ -1,6 +1,7 @@
+import type { Dispatch, RefObject, SetStateAction } from 'react';
+
 import type { Document } from '@mcp-gateway/mainview/dialogs/ServerEditor';
 import type { AppResult, AppSnapshot, UpdateStatus } from '@mcp-gateway/shared/rpc';
-import type { Dispatch, RefObject, SetStateAction } from 'react';
 
 export const useOperations = ({
   quitGeneration,

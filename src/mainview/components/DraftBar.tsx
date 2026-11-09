@@ -1,3 +1,4 @@
+import { Button } from '@mcp-gateway/mainview/components/mac/button';
 import type { Document } from '@mcp-gateway/mainview/dialogs/ServerEditor';
 import type { AppSnapshot } from '@mcp-gateway/shared/rpc';
 
@@ -26,14 +27,12 @@ export const DraftBar = ({
         <small>
           {dirty
             ? 'Live endpoints still use the saved configuration.'
-            : 'Save again to retry the requested login setting.'}
+            : `${snapshot.login.error ? `${snapshot.login.error} ` : ''}Save again to retry the requested login setting.`}
         </small>
       </span>
       <div>
         {dirty && (
-          <button
-            type="button"
-            className="button"
+          <Button
             disabled={configurationLocked}
             onClick={() => {
               if (
@@ -50,16 +49,11 @@ export const DraftBar = ({
             }}
           >
             Discard
-          </button>
+          </Button>
         )}
-        <button
-          type="button"
-          className="button primary"
-          disabled={configurationLocked}
-          onClick={() => void save()}
-        >
+        <Button variant="default" disabled={configurationLocked} onClick={() => void save()}>
           {dirty ? 'Save changes' : 'Retry login registration'}
-        </button>
+        </Button>
       </div>
     </div>
   );

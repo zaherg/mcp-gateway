@@ -1,8 +1,16 @@
-import { Alert, Field, Modal } from '@mcp-gateway/mainview/components/ui';
+import type { FormEvent, RefObject } from 'react';
+
+import { Button } from '@mcp-gateway/mainview/components/mac/button';
+import { Input } from '@mcp-gateway/mainview/components/mac/input';
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from '@mcp-gateway/mainview/components/mac/native-select';
+import { Textarea } from '@mcp-gateway/mainview/components/mac/textarea';
+import { Alert, CheckboxRow, Field, Modal } from '@mcp-gateway/mainview/components/ui';
 import type { ConfigFormat } from '@mcp-gateway/shared/config-document';
 import { parseConfigDocument } from '@mcp-gateway/shared/config-document';
 import type { GatewayConfig, HttpServerConfig, StdioServerConfig } from '@mcp-gateway/shared/types';
-import type { FormEvent, RefObject } from 'react';
 
 export type Backend = StdioServerConfig | HttpServerConfig;
 export type Document = { text: string; revision: string; dirty: boolean };
@@ -124,7 +132,7 @@ export const ServerEditor = ({
           label="Server name"
           help="Used in /mcp/server-name. Letters, numbers, hyphens and underscores."
         >
-          <input
+          <Input
             required
             value={editor.name}
             readOnly={configurationLocked}
@@ -132,16 +140,16 @@ export const ServerEditor = ({
           />
         </Field>
         <Field label="Transport">
-          <select
+          <NativeSelect
             value={editor.type}
             disabled={configurationLocked}
             onChange={(event) =>
               onChange({ type: event.target.value === 'http' ? 'http' : 'stdio' })
             }
           >
-            <option value="stdio">Local command (stdio)</option>
-            <option value="http">Streamable HTTP</option>
-          </select>
+            <NativeSelectOption value="stdio">Local command (stdio)</NativeSelectOption>
+            <NativeSelectOption value="http">Streamable HTTP</NativeSelectOption>
+          </NativeSelect>
         </Field>
         {editor.type === 'stdio' ? (
           <>
@@ -149,7 +157,7 @@ export const ServerEditor = ({
               label="Command"
               help="Executable path only. Arguments are passed separately, never through a shell."
             >
-              <input
+              <Input
                 required
                 value={editor.command}
                 readOnly={configurationLocked}
@@ -158,7 +166,7 @@ export const ServerEditor = ({
               />
             </Field>
             <Field label="Arguments (JSON array)">
-              <textarea
+              <Textarea
                 spellCheck={false}
                 value={editor.args}
                 readOnly={configurationLocked}
@@ -167,7 +175,7 @@ export const ServerEditor = ({
             </Field>
             <div className="form-grid">
               <Field label="Environment (JSON object)">
-                <textarea
+                <Textarea
                   spellCheck={false}
                   value={editor.env}
                   readOnly={configurationLocked}
@@ -175,7 +183,7 @@ export const ServerEditor = ({
                 />
               </Field>
               <Field label="Working directory" help="Optional absolute path.">
-                <input
+                <Input
                   value={editor.cwd}
                   readOnly={configurationLocked}
                   placeholder="/Users/you"
@@ -183,9 +191,9 @@ export const ServerEditor = ({
                 />
               </Field>
             </div>
-            <button
-              type="button"
-              className="text-button"
+            <Button
+              variant="link"
+              className="h-auto px-0"
               disabled={configurationLocked}
               onClick={() =>
                 onChange({
@@ -196,12 +204,12 @@ export const ServerEditor = ({
               }
             >
               Fill macOS Bear preset (all accessible notes & tools)
-            </button>
+            </Button>
           </>
         ) : (
           <>
             <Field label="Upstream URL" help="HTTP(S), without embedded credentials or fragments.">
-              <input
+              <Input
                 required
                 value={editor.url}
                 readOnly={configurationLocked}
@@ -213,7 +221,7 @@ export const ServerEditor = ({
               label="Headers (JSON object)"
               help="String values only. Prefer environment references such as ${API_TOKEN}."
             >
-              <textarea
+              <Textarea
                 spellCheck={false}
                 value={editor.headers}
                 readOnly={configurationLocked}
@@ -222,31 +230,23 @@ export const ServerEditor = ({
             </Field>
           </>
         )}
-        <label className="checkbox-row">
-          <input
-            type="checkbox"
-            checked={editor.legacyProtocol}
-            disabled={configurationLocked}
-            onChange={(event) => onChange({ legacyProtocol: event.target.checked })}
-          />{' '}
-          Allow session-based clients (MCP 2025-11-25 and earlier)
-        </label>
-        <label className="checkbox-row">
-          <input
-            type="checkbox"
-            checked={editor.disabled}
-            disabled={configurationLocked}
-            onChange={(event) => onChange({ disabled: event.target.checked })}
-          />{' '}
-          Disabled (do not mount this endpoint)
-        </label>
+        <CheckboxRow
+          label="Allow session-based clients (MCP 2025-11-25 and earlier)"
+          checked={editor.legacyProtocol}
+          disabled={configurationLocked}
+          onChange={(legacyProtocol) => onChange({ legacyProtocol })}
+        />
+        <CheckboxRow
+          label="Disabled (do not mount this endpoint)"
+          checked={editor.disabled}
+          disabled={configurationLocked}
+          onChange={(disabled) => onChange({ disabled })}
+        />
         <div className="dialog-actions">
-          <button type="button" className="button" onClick={onClose}>
-            Cancel
-          </button>
-          <button type="submit" className="button primary" disabled={configurationLocked}>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button type="submit" variant="default" disabled={configurationLocked}>
             Apply to draft
-          </button>
+          </Button>
         </div>
         <small className="dialog-footnote">
           Review and save changes to update the running gateway.

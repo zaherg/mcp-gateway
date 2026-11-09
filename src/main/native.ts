@@ -1,4 +1,4 @@
-import { dlopen, FFIType } from 'bun:ffi';
+import { dlopen, FFIType, type Pointer } from 'bun:ffi';
 import { readFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 
@@ -105,6 +105,47 @@ export const observeNativeQuitSignals = (path: string): (() => boolean) => {
   if (library.symbols.mcp_quit_signal_install() !== 0)
     throw new Error('Native Quit signal observation could not be installed.');
   return () => library.symbols.mcp_quit_signal_requested() !== 0;
+};
+
+export type MinimumWindowSize = (
+  window: { ptr: Pointer | null },
+  width: number,
+  height: number,
+) => void;
+
+// Electrobun has no minimum-size option, so the NSWindow minimum is set natively.
+export const openMinimumWindowSize = (path: string): MinimumWindowSize => {
+  const library = dlopen(path, {
+    mcp_window_set_min_content_size: {
+      args: [FFIType.ptr, FFIType.f64, FFIType.f64],
+      returns: FFIType.i32,
+    },
+  });
+  return (window, width, height) => {
+    const pointer = window.ptr;
+    if (!pointer) throw new Error('The window no longer exists.');
+    const status = library.symbols.mcp_window_set_min_content_size(pointer, width, height);
+    if (status !== 0) throw new Error(`The native window minimum size was refused (${status}).`);
+  };
+};
+
+// The glyph is redrawn natively because the template flag cannot carry the dot's color.
+export const openTrayIndicator = (
+  glyphPath: string,
+  size: number,
+  libraryPath: string,
+): ((running: boolean) => void) => {
+  const library = dlopen(libraryPath, {
+    mcp_tray_set_running: {
+      args: [FFIType.cstring, FFIType.f64, FFIType.i32],
+      returns: FFIType.i32,
+    },
+  });
+  const path = Buffer.from(`${glyphPath}\0`);
+  return (running) => {
+    const status = library.symbols.mcp_tray_set_running(path, size, running ? 1 : 0);
+    if (status !== 0) throw new Error(`The tray indicator could not be updated (${status}).`);
+  };
 };
 
 const absolutePath = (path: string, name: string): string => {
