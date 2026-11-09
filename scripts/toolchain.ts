@@ -19,7 +19,9 @@ export const buildPlan = (
   return {
     signed: mode === 'stable',
     arguments:
-      mode === 'dev' ? ['dev'] : ['build', `--env=${mode === 'dev-build' ? 'dev' : 'stable'}`],
+      mode === 'dev'
+        ? ['dev', '--watch']
+        : ['build', `--env=${mode === 'dev-build' ? 'dev' : 'stable'}`],
   };
 };
 

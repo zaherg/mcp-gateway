@@ -102,8 +102,14 @@ Install Bun 1.4.4 and Node. macOS builds also need Command Line Tools.
 ```sh
 bun install --frozen-lockfile --ignore-scripts --cache-dir .cache/bun
 bun run build  # Development package
-bun run dev    # Build and launch
+bun run dev    # Launch with React hot reload and main-process restart
 ```
+
+`bun run dev` starts Vite on `127.0.0.1:5173` and refuses to start if that port is occupied.
+Renderer edits use React Fast Refresh; main-process and shared-code edits rebuild and restart the app, discarding unsaved drafts and interrupting gateway requests.
+Stop the command with `Ctrl+C`; it closes Vite and the development app.
+Restart the command after changing native code, dependencies, or build scripts.
+`bun run build` and release builds still load bundled assets without a development server.
 
 `bun run release` signs and notarizes the app. It requires exactly one Developer ID Application identity in Keychain, plus `APPLE_ID`, `APPLE_TEAM_ID`, and `APPLE_APP_PASSWORD` as environment variables or in `.env`.
 By default, it writes to `build/v<version>/` and `artifacts/v<version>/`, using the version from `package.json`.

@@ -23,11 +23,19 @@ import Electrobun, {
   ApplicationMenu,
   BrowserView,
   BrowserWindow,
+  BuildConfig,
   PATHS,
   Tray,
   Utils,
 } from 'electrobun/main';
 
+const buildConfig = BuildConfig.getSync();
+const developmentServerUrl = buildConfig.runtime?.developmentServerUrl;
+// Packaged builds must never grant the RPC bridge to a development server.
+const viewUrl =
+  buildConfig.channel === 'dev' && typeof developmentServerUrl === 'string'
+    ? developmentServerUrl
+    : 'views://mainview/index.html';
 const dataDirectory = configurationDirectory(
   Utils.paths.config,
   installedIdentifier(PATHS.RESOURCES_FOLDER),
@@ -143,13 +151,13 @@ const openWindow = (): void => {
     rpc.request.interactiveQuit(undefined, { maxRequestTime: 5_000 });
   const created = new BrowserWindow({
     title: 'MCP Gateway',
-    url: 'views://mainview/index.html',
+    url: viewUrl,
     rpc,
     frame: { width: 1120, height: 820 },
     renderer: 'native',
     allowedProtocols: { views: true, appData: false },
     // Pinned native matcher uses last-match-wins; unmatched URLs otherwise default allow.
-    navigationRules: JSON.stringify(['^*', 'views://mainview/index.html']),
+    navigationRules: JSON.stringify(['^*', viewUrl]),
   });
   window = created;
   created.on('close', () => {

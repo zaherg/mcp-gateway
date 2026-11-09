@@ -1,6 +1,8 @@
 import { copyFile, mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
+import { createServer } from 'vite';
+
 import packageInfo from '../package.json';
 import { assertEmptyReleaseOutputs, buildIdentity, releaseOutputEnvironment } from './build-config';
 import { buildPlan, command, prepareToolchain, toolchainEnvironment } from './toolchain';
@@ -16,6 +18,8 @@ const environment = {
     ? releaseOutputEnvironment(packageInfo.version, toolchainEnvironment, kind)
     : toolchainEnvironment),
   MCP_GATEWAY_BUILD_KIND: kind,
+  // Only the owned Vite server may opt a build into loading a development URL.
+  MCP_GATEWAY_DEV_SERVER_URL: undefined,
   CLANG_MODULE_CACHE_PATH: resolve(root, '.cache/clang'),
   SWIFT_MODULECACHE_PATH: resolve(root, '.cache/swift'),
 };
@@ -135,7 +139,20 @@ const signedBuild = async () => {
 };
 
 if (plan.signed) await signedBuild();
-else
+else if (process.argv[2] === 'dev') {
+  // Ctrl+C reaches every process in the terminal's group, so no signal handling is needed.
+  const server = await createServer({ clearScreen: false });
+  try {
+    await server.listen();
+    server.printUrls();
+    await command(['node', 'node_modules/electrobun/bin/electrobun.cjs', ...plan.arguments], {
+      ...environment,
+      MCP_GATEWAY_DEV_SERVER_URL: server.resolvedUrls?.local[0],
+    });
+  } finally {
+    await server.close();
+  }
+} else
   await command(
     ['node', 'node_modules/electrobun/bin/electrobun.cjs', ...plan.arguments],
     environment,

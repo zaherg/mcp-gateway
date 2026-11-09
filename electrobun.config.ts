@@ -26,7 +26,9 @@ export default {
       '.cache/native/login.dylib': 'native/login.dylib',
       '.cache/runtime-deps/node_modules': 'node_modules',
     },
-    watchIgnore: ['dist/**', '.cache/**', 'node_modules/**', 'release/**'],
+    watch: ['src/main', 'src/core', 'src/shared'],
+    // Vite owns renderer updates; rebuilding the app would discard React state.
+    watchIgnore: ['src/mainview/**', 'dist/**', '.cache/**', 'node_modules/**', 'release/**'],
     mac: {
       bundleCEF: false,
       icons: 'assets/App.iconset',
@@ -35,6 +37,9 @@ export default {
       createDmg: true,
     },
   },
-  runtime: { exitOnLastWindowClosed: false },
+  runtime: {
+    exitOnLastWindowClosed: false,
+    developmentServerUrl: process.env.MCP_GATEWAY_DEV_SERVER_URL,
+  },
   release: { baseUrl: identity.feed },
 } satisfies ElectrobunConfig;
