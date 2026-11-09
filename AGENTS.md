@@ -9,3 +9,5 @@
    - Keep the folders themselves.
    - Keep `.gitignore` files directly inside them.
    - Nothing else may remain.
+   - After each release, keep only the latest version in `artifacts/`.
+   - Delete the folders of all older versions, including their timestamped variants.
