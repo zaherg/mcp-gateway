@@ -1,17 +1,17 @@
-import { MAX_CONFIG_BYTES, parseConfig, SAFE_NAME } from "@mcp-gateway/core/config";
-import { GatewayError, RequestError } from "@mcp-gateway/core/errors";
-import { anyNumber } from "@mcp-gateway/core/schema";
-import { createSerialQueue } from "@mcp-gateway/core/serial-queue";
-import { type UpdateRuntime, unsupportedUpdateStatus } from "@mcp-gateway/main/app-updater";
+import { MAX_CONFIG_BYTES, parseConfig, SAFE_NAME } from '@mcp-gateway/core/config';
+import { GatewayError, RequestError } from '@mcp-gateway/core/errors';
+import { anyNumber } from '@mcp-gateway/core/schema';
+import { createSerialQueue } from '@mcp-gateway/core/serial-queue';
+import { type UpdateRuntime, unsupportedUpdateStatus } from '@mcp-gateway/main/app-updater';
 import {
   type AppResult,
   type AppSnapshot,
   type LoginStatus,
   needsLoginRetry,
   type QuitStatus,
-} from "@mcp-gateway/shared/rpc";
-import type { GatewayController } from "@mcp-gateway/shared/types";
-import * as z from "zod/v4";
+} from '@mcp-gateway/shared/rpc';
+import type { GatewayController } from '@mcp-gateway/shared/types';
+import * as z from 'zod/v4';
 
 export interface LoginManager {
   status(): LoginStatus;
@@ -26,18 +26,18 @@ const AutomaticRequest = z.strictObject({ automatic: z.boolean() });
 
 const decode = <A>(schema: z.ZodType<A>, input: unknown): A => {
   const result = schema.safeParse(input);
-  if (!result.success) throw new RequestError("The application request is invalid.");
+  if (!result.success) throw new RequestError('The application request is invalid.');
   return result.data;
 };
 
 const empty = (input: unknown): void => {
   if (input !== undefined && input !== null)
-    throw new RequestError("This operation does not accept parameters.");
+    throw new RequestError('This operation does not accept parameters.');
 };
 
 const serverName = (input: unknown): string => {
   const { name } = decode(NameRequest, input);
-  if (!SAFE_NAME.test(name)) throw new RequestError("Select a configured server.");
+  if (!SAFE_NAME.test(name)) throw new RequestError('Select a configured server.');
   return name;
 };
 
@@ -60,7 +60,7 @@ export class AppService {
 
   private snapshot(): AppSnapshot {
     // A later cleanup step can fail after the login library has been released.
-    if (this.desktop.quitStatus().phase === "idle") this.loginStatus = this.login.status();
+    if (this.desktop.quitStatus().phase === 'idle') this.loginStatus = this.login.status();
     return {
       gateway: this.controller.snapshot(),
       login: this.loginStatus,
@@ -82,8 +82,8 @@ export class AppService {
         ...(error instanceof GatewayError || error instanceof RequestError
           ? { code: error.code, message: error.message }
           : {
-              code: "OperationFailed",
-              message: "The application operation failed. Open Logs for details.",
+              code: 'OperationFailed',
+              message: 'The application operation failed. Open Logs for details.',
             }),
       },
     };
@@ -113,7 +113,7 @@ export class AppService {
       this.run(() => {
         const query = decode(LogRequest, input);
         if (!Number.isSafeInteger(query.after) || query.after < 0)
-          throw new RequestError("The log query is invalid.");
+          throw new RequestError('The log query is invalid.');
         return this.controller.readLogs({ after: query.after });
       }),
     clearLogs: (input?: unknown) =>
@@ -165,13 +165,13 @@ export class AppService {
       const operation = this.controller.operation();
       return this.run(async () => {
         if (
-          this.desktop.quitStatus().phase !== "idle" ||
-          this.updates?.status().phase === "restarting"
+          this.desktop.quitStatus().phase !== 'idle' ||
+          this.updates?.status().phase === 'restarting'
         )
-          throw new RequestError("Quit cleanup has started. Retry Quit to close the app.");
+          throw new RequestError('Quit cleanup has started. Retry Quit to close the app.');
         const { text, expectedRevision } = decode(SaveRequest, input);
         if (Buffer.byteLength(text) > MAX_CONFIG_BYTES || !/^[a-f0-9]{64}$/.test(expectedRevision))
-          throw new RequestError("The configuration request is invalid.");
+          throw new RequestError('The configuration request is invalid.');
         const previous = this.controller.snapshot();
         const config = parseConfig(text, process.env, previous.configFormat);
         // Persist first: a stale/invalid save must never mutate macOS registration.
@@ -179,7 +179,7 @@ export class AppService {
         await this.controller.saveConfig(text, expectedRevision, operation);
         // Quit cleanup may have begun while this save waited; do not touch a
         // login library that native cleanup may already have released.
-        if (this.desktop.quitStatus().phase !== "idle") return this.snapshot();
+        if (this.desktop.quitStatus().phase !== 'idle') return this.snapshot();
         let previousLogin = false;
         try {
           previousLogin =
@@ -199,7 +199,7 @@ export class AppService {
       this.run(() => {
         const name = serverName(input);
         const server = this.controller.snapshot().servers.find((entry) => entry.name === name);
-        if (!server) throw new RequestError("Select a configured server.");
+        if (!server) throw new RequestError('Select a configured server.');
         this.copyText(server.endpoint);
         return null;
       }),
@@ -208,9 +208,9 @@ export class AppService {
         const name = serverName(input);
         const snapshot = this.controller.snapshot();
         if (snapshot.configError)
-          throw new RequestError("Correct the configuration before copying it.");
+          throw new RequestError('Correct the configuration before copying it.');
         const server = snapshot.servers.find((entry) => entry.name === name);
-        if (!server) throw new RequestError("Select a configured server.");
+        if (!server) throw new RequestError('Select a configured server.');
         const config = parseConfig(snapshot.configText, process.env, snapshot.configFormat);
         // A local, explicit copy action is the only place expanded credentials leave main.
         this.copyText(
@@ -258,7 +258,7 @@ export class AppService {
   };
 
   private requireUpdates(): UpdateRuntime {
-    if (!this.updates) throw new RequestError("Updates are unavailable in this build.");
+    if (!this.updates) throw new RequestError('Updates are unavailable in this build.');
     return this.updates;
   }
 }

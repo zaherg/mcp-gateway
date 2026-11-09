@@ -1,6 +1,6 @@
-import type { Document } from "@mcp-gateway/mainview/dialogs/ServerEditor";
-import type { AppResult, AppSnapshot, UpdateStatus } from "@mcp-gateway/shared/rpc";
-import type { Dispatch, RefObject, SetStateAction } from "react";
+import type { Document } from '@mcp-gateway/mainview/dialogs/ServerEditor';
+import type { AppResult, AppSnapshot, UpdateStatus } from '@mcp-gateway/shared/rpc';
+import type { Dispatch, RefObject, SetStateAction } from 'react';
 
 export const useOperations = ({
   quitGeneration,
@@ -34,7 +34,7 @@ export const useOperations = ({
     setBusy(true);
     setError(null);
     setErrorOccurrence(null);
-    setNotice("");
+    setNotice('');
     generation.current++;
     try {
       const result = await operation();
@@ -42,7 +42,7 @@ export const useOperations = ({
       if (!result.ok) {
         setErrorOccurrence(result.error.occurrenceId ?? null);
         setError(
-          `${result.error.code}: ${result.error.message}${saved ? " Your draft is preserved. Review external changes before retrying." : ""}`,
+          `${result.error.code}: ${result.error.message}${saved ? ' Your draft is preserved. Review external changes before retrying.' : ''}`,
         );
         return false;
       }
@@ -60,7 +60,7 @@ export const useOperations = ({
     } catch {
       if (terminalGeneration === quitGeneration.current)
         setError(
-          "The native operation failed. Your draft is preserved. Check application status before retrying.",
+          'The native operation failed. Your draft is preserved. Check application status before retrying.',
         );
       return false;
     } finally {
@@ -77,7 +77,7 @@ export const useOperations = ({
     const terminalGeneration = quitGeneration.current;
     setUpdateBusy(true);
     setError(null);
-    setNotice("");
+    setNotice('');
     try {
       const result = await operation();
       if (terminalGeneration !== quitGeneration.current) return false;
@@ -91,7 +91,7 @@ export const useOperations = ({
       return true;
     } catch {
       if (terminalGeneration === quitGeneration.current)
-        setError("The update operation failed. Check application status before retrying.");
+        setError('The update operation failed. Check application status before retrying.');
       return false;
     } finally {
       setUpdateBusy(false);

@@ -1,14 +1,15 @@
-import type { IncomingMessage } from "node:http";
-import type { Readable } from "node:stream";
-import { MIMEType } from "node:util";
-import { type JSONRPCMessage, JSONRPCMessageSchema } from "@modelcontextprotocol/sdk/types.js";
+import type { IncomingMessage } from 'node:http';
+import type { Readable } from 'node:stream';
+import { MIMEType } from 'node:util';
+
+import { type JSONRPCMessage, JSONRPCMessageSchema } from '@modelcontextprotocol/sdk/types.js';
 
 export const MAX_BACKEND_MESSAGE_BYTES = 4 * 1024 * 1024;
 
 export class BackendOutputLimitError extends Error {
   constructor() {
-    super("Backend message exceeds the 4 MiB limit.");
-    this.name = "BackendOutputLimitError";
+    super('Backend message exceeds the 4 MiB limit.');
+    this.name = 'BackendOutputLimitError';
   }
 }
 
@@ -41,9 +42,9 @@ export const readBackendLines = (
         chunk.copy(buffer, length, start, end);
         length = size;
         if (newline < 0) break;
-        const text = buffer.subarray(0, length).toString("utf8");
+        const text = buffer.subarray(0, length).toString('utf8');
         length = 0;
-        deliver(text.endsWith("\r") ? text.slice(0, -1) : text);
+        deliver(text.endsWith('\r') ? text.slice(0, -1) : text);
         start = newline + 1;
       }
       const held = output();
@@ -60,14 +61,14 @@ export const readBackendLines = (
   const stop = (error: unknown) => {
     if (failed) return;
     failed = true;
-    stdout.off("data", data);
+    stdout.off('data', data);
     stdout.pause();
     buffer = Buffer.alloc(0);
     length = 0;
-    fail(error instanceof Error ? error : new Error("Backend output failed."));
+    fail(error instanceof Error ? error : new Error('Backend output failed.'));
   };
-  stdout.on("data", data);
-  stdout.once("close", () => {
+  stdout.on('data', data);
+  stdout.once('close', () => {
     buffer = Buffer.alloc(0);
   });
 };
@@ -103,9 +104,9 @@ export const boundedBackendResponse = (
 ): Response => {
   if (!response.body) return response;
   const reader = response.body.getReader();
-  const type = response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
+  const type = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase();
   // The legacy SDK collects unsuccessful responses with text(), even when labeled SSE.
-  const events = response.ok && type === "text/event-stream" ? new BackendEventBudget() : undefined;
+  const events = response.ok && type === 'text/event-stream' ? new BackendEventBudget() : undefined;
   let bytes = 0;
   let cancelled = false;
   const body = new ReadableStream<Uint8Array>(
@@ -130,7 +131,7 @@ export const boundedBackendResponse = (
           try {
             await reader.cancel(error);
           } catch (cleanup) {
-            reported = new AggregateError([error, cleanup], "Backend response cleanup failed.");
+            reported = new AggregateError([error, cleanup], 'Backend response cleanup failed.');
           } finally {
             reader.releaseLock();
           }
@@ -178,7 +179,7 @@ export type WorkOwner = object;
 /** Fixed sanitized refusal for a validated transport that already owns the response. */
 export const BACKEND_CAPACITY_ERROR = {
   code: 1001,
-  message: "Backend work capacity is exhausted. Retry when outstanding calls finish.",
+  message: 'Backend work capacity is exhausted. Retry when outstanding calls finish.',
 } as const;
 
 export class BackendCalls {
@@ -272,7 +273,7 @@ export interface ResourceLease {
 
 export class RequestBodyError extends Error {
   constructor(readonly status: 400 | 413 | 415) {
-    super("Invalid MCP request body");
+    super('Invalid MCP request body');
   }
 }
 
@@ -283,12 +284,12 @@ export const readRequestBody = async (
   signal: AbortSignal,
 ): Promise<readonly JSONRPCMessage[]> => {
   try {
-    const mime = new MIMEType(request.headers["content-type"] ?? "");
+    const mime = new MIMEType(request.headers['content-type'] ?? '');
     if (
-      mime.essence !== "application/json" ||
-      (mime.params.get("charset") ?? "utf-8").toLowerCase() !== "utf-8"
+      mime.essence !== 'application/json' ||
+      (mime.params.get('charset') ?? 'utf-8').toLowerCase() !== 'utf-8'
     )
-      throw new Error("Unsupported media type");
+      throw new Error('Unsupported media type');
   } catch {
     throw new RequestBodyError(415);
   }
@@ -296,11 +297,11 @@ export const readRequestBody = async (
     const chunks: Buffer[] = [];
     let length = 0;
     const cleanup = () => {
-      signal.removeEventListener("abort", aborted);
-      request.off("data", data);
-      request.off("end", end);
-      request.off("error", failed);
-      request.off("close", aborted);
+      signal.removeEventListener('abort', aborted);
+      request.off('data', data);
+      request.off('end', end);
+      request.off('error', failed);
+      request.off('close', aborted);
     };
     const failed = (error: unknown) => {
       cleanup();
@@ -323,15 +324,15 @@ export const readRequestBody = async (
       aborted();
       return;
     }
-    signal.addEventListener("abort", aborted, { once: true });
-    request.on("data", data);
-    request.once("end", end);
-    request.once("error", failed);
-    request.once("close", aborted);
+    signal.addEventListener('abort', aborted, { once: true });
+    request.on('data', data);
+    request.once('end', end);
+    request.once('error', failed);
+    request.once('close', aborted);
   });
   let body: unknown;
   try {
-    body = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    body = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
   } catch {
     throw new RequestBodyError(400);
   }

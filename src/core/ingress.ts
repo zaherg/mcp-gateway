@@ -1,30 +1,31 @@
-import { createHash, timingSafeEqual } from "node:crypto";
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import type { Socket } from "node:net";
-import type { GatewayMount } from "@mcp-gateway/core/adapter";
-import { backendSummary, closeMount, createMount } from "@mcp-gateway/core/adapter";
-import { isHttpServer, serverFingerprint } from "@mcp-gateway/core/config";
-import { failure, visible } from "@mcp-gateway/core/errors";
+import { createHash, timingSafeEqual } from 'node:crypto';
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import type { Socket } from 'node:net';
+
+import type { GatewayMount } from '@mcp-gateway/core/adapter';
+import { backendSummary, closeMount, createMount } from '@mcp-gateway/core/adapter';
+import { isHttpServer, serverFingerprint } from '@mcp-gateway/core/config';
+import { failure, visible } from '@mcp-gateway/core/errors';
 import {
   BackendCalls,
   MAX_BACKEND_CALLS,
   RequestBodyError,
   ResourceAdmission,
   readRequestBody,
-} from "@mcp-gateway/core/limits";
-import { LogBuffer } from "@mcp-gateway/core/logs";
+} from '@mcp-gateway/core/limits';
+import { LogBuffer } from '@mcp-gateway/core/logs';
 import {
   peerAllowed,
   rejectSelfProxy,
   type SelfProxyOptions,
   selectInterface,
-} from "@mcp-gateway/core/network";
+} from '@mcp-gateway/core/network';
 import type {
   GatewayConfig,
   InterfaceChoice,
   ServerSnapshot,
   VisibleError,
-} from "@mcp-gateway/shared/types";
+} from '@mcp-gateway/shared/types';
 
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
 const MAX_CONCURRENT_REQUESTS = 32;
@@ -42,7 +43,7 @@ interface Endpoint {
   /** Also serves session-based MCP: GET event streams and DELETE. */
   sessions: boolean;
 }
-const digest = (text: string) => createHash("sha256").update(text).digest();
+const digest = (text: string) => createHash('sha256').update(text).digest();
 
 export class GatewayIngress {
   private readonly server: Server;
@@ -77,17 +78,17 @@ export class GatewayIngress {
     this.server.maxConnections = MAX_CONNECTIONS;
     this.server.maxRequestsPerSocket = 100;
     this.server.keepAliveTimeout = 5_000;
-    this.server.on("connection", (socket) => {
+    this.server.on('connection', (socket) => {
       this.sockets.add(socket);
-      socket.once("close", () => this.sockets.delete(socket));
+      socket.once('close', () => this.sockets.delete(socket));
     });
-    this.server.on("clientError", (_error, socket) => {
-      socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+    this.server.on('clientError', (_error, socket) => {
+      socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
     });
-    this.server.on("error", (error) => {
-      this.logs.append({ server: null, level: "error", source: "controller" }, [error]);
+    this.server.on('error', (error) => {
+      this.logs.append({ server: null, level: 'error', source: 'controller' }, [error]);
       if (!this.closed) {
-        this.report(visible(failure("ListenerFailure", "The listener reported an error.")));
+        this.report(visible(failure('ListenerFailure', 'The listener reported an error.')));
         void this.close().catch((error) => this.report(visible(error)));
       }
     });
@@ -108,13 +109,13 @@ export class GatewayIngress {
         const failed = (error: Error) =>
           reject(
             failure(
-              "ListenerFailure",
+              'ListenerFailure',
               `The listener could not bind the selected address and port. ${backendSummary([error])}`,
             ),
           );
-        ingress.server.once("error", failed);
+        ingress.server.once('error', failed);
         ingress.server.listen(config.gateway.port, config.gateway.host, () => {
-          ingress.server.off("error", failed);
+          ingress.server.off('error', failed);
           resolve();
         });
       });
@@ -146,16 +147,16 @@ export class GatewayIngress {
       const error = this.backendErrors.get(name);
       return {
         name,
-        type: isHttpServer(server) ? "http" : "stdio",
+        type: isHttpServer(server) ? 'http' : 'stdio',
         endpoint: `${this.address}/mcp/${name}`,
         enabled: !server.disabled,
         status: server.disabled
-          ? "disabled"
+          ? 'disabled'
           : this.endpoints.has(name) && !this.closed
-            ? "mounted"
+            ? 'mounted'
             : this.backendErrors.has(name)
-              ? "error"
-              : "stopped",
+              ? 'error'
+              : 'stopped',
         error: error ? { ...error } : null,
       };
     });
@@ -166,8 +167,8 @@ export class GatewayIngress {
     this.report(
       visible(
         failure(
-          "NetworkPolicy",
-          "The selected interface is no longer assigned. The listener stopped and restarts when the address returns.",
+          'NetworkPolicy',
+          'The selected interface is no longer assigned. The listener stopped and restarts when the address returns.',
         ),
       ),
     );
@@ -178,7 +179,7 @@ export class GatewayIngress {
 
   async reconcile(config: GatewayConfig, control?: SelfProxyOptions): Promise<void> {
     await rejectSelfProxy(config, control);
-    if (this.closed) throw failure("Closed", "The listener is closed.");
+    if (this.closed) throw failure('Closed', 'The listener is closed.');
     this.config = config;
     await Promise.all([...this.closingMounts.keys()].map((name) => this.remove(name)));
     for (const name of this.backendErrors.keys()) {
@@ -189,7 +190,7 @@ export class GatewayIngress {
       if (!next || next.disabled || endpoint.fingerprint !== serverFingerprint(next))
         await this.remove(name);
     }
-    if (this.closed) throw failure("Closed", "The listener is closed.");
+    if (this.closed) throw failure('Closed', 'The listener is closed.');
     for (const [name, server] of Object.entries(config.mcpServers)) {
       if (server.disabled || this.endpoints.has(name)) continue;
       this.backendErrors.delete(name);
@@ -197,7 +198,7 @@ export class GatewayIngress {
         name,
         server,
         (message) => {
-          const error = visible(failure("BackendFailure", message));
+          const error = visible(failure('BackendFailure', message));
           this.backendErrors.set(name, error);
           this.report(error);
         },
@@ -218,7 +219,7 @@ export class GatewayIngress {
   async restart(name: string, control?: SelfProxyOptions): Promise<void> {
     const server = this.config.mcpServers[name];
     if (!Object.hasOwn(this.config.mcpServers, name) || !server || server.disabled)
-      throw failure("BackendFailure", "Select an enabled configured server to restart.");
+      throw failure('BackendFailure', 'Select an enabled configured server to restart.');
     await this.remove(name);
     await this.reconcile(this.config, control);
   }
@@ -233,7 +234,7 @@ export class GatewayIngress {
     const mount = this.closingMounts.get(name);
     if (!mount) return;
     await closeMount(mount, (error) =>
-      this.logs.append({ server: name, level: "error", source: "logger" }, [error]),
+      this.logs.append({ server: name, level: 'error', source: 'logger' }, [error]),
     );
     if (this.closingMounts.get(name) === mount) this.closingMounts.delete(name);
   }
@@ -241,17 +242,17 @@ export class GatewayIngress {
   private handle(req: IncomingMessage, res: ServerResponse): void {
     const reject = (status: number) => {
       res.statusCode = status;
-      res.setHeader("Connection", "close");
-      if (status === 401) res.setHeader("WWW-Authenticate", "Bearer");
+      res.setHeader('Connection', 'close');
+      if (status === 401) res.setHeader('WWW-Authenticate', 'Bearer');
       res.end();
     };
-    res.setHeader("Cache-Control", "no-store");
-    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
     const authorization = req.headers.authorization;
     const presented =
-      typeof authorization === "string" && /^Bearer /i.test(authorization)
+      typeof authorization === 'string' && /^Bearer /i.test(authorization)
         ? authorization.slice(7)
-        : "";
+        : '';
     if (!timingSafeEqual(digest(presented), digest(this.config.gateway.token))) {
       reject(401);
       return;
@@ -268,7 +269,7 @@ export class GatewayIngress {
       this.lostInterface();
       return;
     }
-    if (!peerAllowed(req.socket.remoteAddress ?? "", this.selected)) {
+    if (!peerAllowed(req.socket.remoteAddress ?? '', this.selected)) {
       reject(403);
       return;
     }
@@ -283,7 +284,7 @@ export class GatewayIngress {
       reject(403);
       return;
     }
-    const match = /^\/mcp\/([A-Za-z0-9][A-Za-z0-9_-]{0,63})$/.exec(req.url ?? "");
+    const match = /^\/mcp\/([A-Za-z0-9][A-Za-z0-9_-]{0,63})$/.exec(req.url ?? '');
     if (!match) {
       reject(404);
       return;
@@ -296,24 +297,24 @@ export class GatewayIngress {
     }
     // MCP 2026-07-28 is stateless: every message is a POST. Session-based MCP
     // adds a session's GET event stream and its DELETE.
-    const methods = endpoint.sessions ? ["POST", "GET", "DELETE"] : ["POST"];
-    if (!methods.includes(req.method ?? "")) {
-      res.setHeader("Allow", methods.join(", "));
+    const methods = endpoint.sessions ? ['POST', 'GET', 'DELETE'] : ['POST'];
+    if (!methods.includes(req.method ?? '')) {
+      res.setHeader('Allow', methods.join(', '));
       reject(405);
       return;
     }
-    const post = req.method === "POST";
-    const stream = req.method === "GET";
-    const length = req.headers["content-length"];
+    const post = req.method === 'POST';
+    const stream = req.method === 'GET';
+    const length = req.headers['content-length'];
     if (length !== undefined && (!/^\d+$/.test(length) || Number(length) > MAX_BODY_BYTES)) {
       reject(413);
       return;
     }
-    if (!post && (req.headers["transfer-encoding"] !== undefined || Number(length ?? 0) > 0)) {
+    if (!post && (req.headers['transfer-encoding'] !== undefined || Number(length ?? 0) > 0)) {
       reject(400);
       return;
     }
-    if (req.headers["content-encoding"] && req.headers["content-encoding"] !== "identity") {
+    if (req.headers['content-encoding'] && req.headers['content-encoding'] !== 'identity') {
       reject(415);
       return;
     }
@@ -334,8 +335,8 @@ export class GatewayIngress {
       controller.abort();
       res.destroy();
     };
-    req.once("error", requestError);
-    req.once("close", () => req.off("error", requestError));
+    req.once('error', requestError);
+    req.once('close', () => req.off('error', requestError));
     let finished = false;
     const timeout = setTimeout(() => {
       // An open event stream lives as long as its session; only its opening is bounded.
@@ -354,8 +355,8 @@ export class GatewayIngress {
       endpoint.responses.delete(res);
     };
     endpoint.responses.add(res);
-    res.once("finish", done);
-    res.once("close", done);
+    res.once('finish', done);
+    res.once('close', done);
     void (async () => {
       try {
         if (post) await readRequestBody(req, MAX_BODY_BYTES, controller.signal);
@@ -370,7 +371,7 @@ export class GatewayIngress {
       } catch (error) {
         if (finished || controller.signal.aborted) return;
         if (!(error instanceof RequestBodyError))
-          this.logs.append({ server: name, level: "error", source: "controller" }, [error]);
+          this.logs.append({ server: name, level: 'error', source: 'controller' }, [error]);
         if (!res.headersSent) reject(error instanceof RequestBodyError ? error.status : 502);
         else res.destroy();
       }
@@ -399,7 +400,7 @@ export class GatewayIngress {
     const names = new Set([...this.endpoints.keys(), ...this.closingMounts.keys()]);
     const results = await Promise.allSettled([...names].map((name) => this.remove(name)));
     await this.listenerStopped;
-    if (results.some((result) => result.status === "rejected"))
-      throw failure("ShutdownFailure", "One or more backends did not close cleanly.");
+    if (results.some((result) => result.status === 'rejected'))
+      throw failure('ShutdownFailure', 'One or more backends did not close cleanly.');
   }
 }

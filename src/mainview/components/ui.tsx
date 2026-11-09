@@ -1,4 +1,4 @@
-import { X } from "lucide-react";
+import { X } from 'lucide-react';
 import {
   Children,
   cloneElement,
@@ -8,23 +8,23 @@ import {
   useEffect,
   useId,
   useRef,
-} from "react";
+} from 'react';
 
 export const Alert = ({
   children,
-  kind = "error",
+  kind = 'error',
   onDismiss,
-  label = "Dismiss error",
+  label = 'Dismiss error',
   role,
 }: {
   children: ReactNode;
-  kind?: "error" | "success" | "warning";
+  kind?: 'error' | 'success' | 'warning';
   onDismiss: () => void;
   label?: string;
-  role?: "alert" | "status";
+  role?: 'alert' | 'status';
 }) => {
   return (
-    <div className={`alert ${kind}`} role={role ?? (kind === "success" ? "status" : "alert")}>
+    <div className={`alert ${kind}`} role={role ?? (kind === 'success' ? 'status' : 'alert')}>
       <span>{children}</span>
       <button type="button" className="icon-button" aria-label={label} onClick={onDismiss}>
         <X size={16} />
@@ -44,10 +44,10 @@ export const Field = ({
 }) => {
   const id = useId();
   const associate = (node: ReactNode): ReactNode => {
-    if (!isValidElement<{ id?: string; "aria-describedby"?: string; children?: ReactNode }>(node))
+    if (!isValidElement<{ id?: string; 'aria-describedby'?: string; children?: ReactNode }>(node))
       return node;
-    if (typeof node.type === "string" && ["input", "select", "textarea"].includes(node.type)) {
-      return cloneElement(node, { id, "aria-describedby": help ? `${id}-help` : undefined });
+    if (typeof node.type === 'string' && ['input', 'select', 'textarea'].includes(node.type)) {
+      return cloneElement(node, { id, 'aria-describedby': help ? `${id}-help` : undefined });
     }
     return node.props.children
       ? cloneElement(node, { children: Children.map(node.props.children, associate) })
@@ -112,7 +112,7 @@ export const Modal = ({
     dialog?.showModal();
     return () => {
       dialog?.close();
-      if (opener instanceof HTMLElement && opener.isConnected && !opener.matches(":disabled"))
+      if (opener instanceof HTMLElement && opener.isConnected && !opener.matches(':disabled'))
         opener.focus();
       else fallbackFocus.current?.focus();
     };

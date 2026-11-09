@@ -1,9 +1,10 @@
-import { dlopen, FFIType } from "bun:ffi";
-import { readFileSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
-import type { LoginManager } from "@mcp-gateway/main/service";
-import { PRODUCTION_IDENTIFIER, TEST_IDENTIFIER } from "@mcp-gateway/shared/identity";
-import type { LoginStatus } from "@mcp-gateway/shared/rpc";
+import { dlopen, FFIType } from 'bun:ffi';
+import { readFileSync } from 'node:fs';
+import { isAbsolute, join } from 'node:path';
+
+import type { LoginManager } from '@mcp-gateway/main/service';
+import { PRODUCTION_IDENTIFIER, TEST_IDENTIFIER } from '@mcp-gateway/shared/identity';
+import type { LoginStatus } from '@mcp-gateway/shared/rpc';
 
 interface LoginNative {
   status(): number;
@@ -27,11 +28,11 @@ class MacLoginManager implements LoginManager {
       error:
         this.operationError ??
         (status === -1
-          ? "Login startup requires the signed release on macOS 13 or newer."
+          ? 'Login startup requires the signed release on macOS 13 or newer.'
           : status === 2
-            ? "Approve MCP Gateway under System Settings > General > Login Items."
+            ? 'Approve MCP Gateway under System Settings > General > Login Items.'
             : status === 3
-              ? "macOS could not locate this app for login startup."
+              ? 'macOS could not locate this app for login startup.'
               : null),
     };
     if (result.error !== this.lastStatusError) this.occurrence++;
@@ -45,23 +46,23 @@ class MacLoginManager implements LoginManager {
     this.operationError = null;
     if (!this.status().supported) {
       this.operationError =
-        "Configuration saved, but login registration is unavailable in this build.";
+        'Configuration saved, but login registration is unavailable in this build.';
       return this.status();
     }
     this.requestedState = enabled ? 1 : 0;
     if (this.native.set(enabled) !== 0) {
       this.operationError =
-        "Configuration saved, but macOS refused the login change. Check System Settings > General > Login Items, then save again.";
+        'Configuration saved, but macOS refused the login change. Check System Settings > General > Login Items, then save again.';
     } else if (this.native.status() !== (enabled ? 1 : 0)) {
       this.operationError =
-        "Configuration saved; macOS login status does not yet match. Check approval in System Settings > General > Login Items.";
+        'Configuration saved; macOS login status does not yet match. Check approval in System Settings > General > Login Items.';
     }
     return this.status();
   }
 }
 
 const closedError: () => never = () => {
-  throw new Error("closed");
+  throw new Error('closed');
 };
 
 export const openLoginManager = (path: string) => {
@@ -102,12 +103,12 @@ export const observeNativeQuitSignals = (path: string): (() => boolean) => {
   // This separate reference lives until process exit: signal handlers must remain
   // mapped even after the login owner closes its own reference during cleanup.
   if (library.symbols.mcp_quit_signal_install() !== 0)
-    throw new Error("Native Quit signal observation could not be installed.");
+    throw new Error('Native Quit signal observation could not be installed.');
   return () => library.symbols.mcp_quit_signal_requested() !== 0;
 };
 
 const absolutePath = (path: string, name: string): string => {
-  if (!isAbsolute(path) || path.includes("\0"))
+  if (!isAbsolute(path) || path.includes('\0'))
     throw new Error(`${name} must be an absolute path.`);
   return path;
 };
@@ -117,12 +118,12 @@ type AppIdentifier = typeof PRODUCTION_IDENTIFIER | typeof TEST_IDENTIFIER;
 export const installedIdentifier = (resourcesFolder: string): AppIdentifier => {
   let identifier: unknown;
   try {
-    identifier = JSON.parse(readFileSync(join(resourcesFolder, "version.json"), "utf8")).identifier;
+    identifier = JSON.parse(readFileSync(join(resourcesFolder, 'version.json'), 'utf8')).identifier;
   } catch (error) {
     throw new Error("The app's version.json is missing or invalid.", { cause: error });
   }
   if (identifier !== PRODUCTION_IDENTIFIER && identifier !== TEST_IDENTIFIER)
-    throw new Error("Unsupported app identifier in version.json.");
+    throw new Error('Unsupported app identifier in version.json.');
   return identifier;
 };
 
@@ -130,8 +131,8 @@ export const installedIdentifier = (resourcesFolder: string): AppIdentifier => {
 // their own folder to stay off the production configuration.
 export const configurationDirectory = (configBase: string, identifier: AppIdentifier): string => {
   return join(
-    absolutePath(configBase, "Configuration base"),
-    identifier === TEST_IDENTIFIER ? "MCP Gateway Test" : "MCP Gateway",
+    absolutePath(configBase, 'Configuration base'),
+    identifier === TEST_IDENTIFIER ? 'MCP Gateway Test' : 'MCP Gateway',
   );
 };
 

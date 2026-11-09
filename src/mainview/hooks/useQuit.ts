@@ -1,6 +1,6 @@
-import type { Editor } from "@mcp-gateway/mainview/dialogs/ServerEditor";
-import type { AppClient, AppSnapshot, QuitStatus } from "@mcp-gateway/shared/rpc";
-import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
+import type { Editor } from '@mcp-gateway/mainview/dialogs/ServerEditor';
+import type { AppClient, AppSnapshot, QuitStatus } from '@mcp-gateway/shared/rpc';
+import { type RefObject, useCallback, useEffect, useRef, useState } from 'react';
 
 export const useQuit = ({
   client,
@@ -33,7 +33,7 @@ export const useQuit = ({
 }) => {
   const [quitStatus, setQuitStatus] = useState<QuitStatus>({
     attempt: 0,
-    phase: "idle",
+    phase: 'idle',
     error: null,
   });
   const [quitStatusKnown, setQuitStatusKnown] = useState(false);
@@ -42,8 +42,8 @@ export const useQuit = ({
   const quitAttempt = useRef(0);
   const quitGeneration = useRef(0);
   const quitRequestPending = useRef(false);
-  const quitting = requestingQuit || quitStatus.phase === "pending" || quitStatus.phase === "ready";
-  const shutdownStarted = requestingQuit || quitStatus.phase !== "idle" || updateRestarting;
+  const quitting = requestingQuit || quitStatus.phase === 'pending' || quitStatus.phase === 'ready';
+  const shutdownStarted = requestingQuit || quitStatus.phase !== 'idle' || updateRestarting;
   const configurationLocked = !quitStatusKnown || shutdownStarted;
 
   const acceptQuitStatus = useCallback(
@@ -52,8 +52,8 @@ export const useQuit = ({
       quitAttempt.current = status.attempt;
       setQuitStatusKnown(true);
       setQuitStatus(status);
-      if (status.phase !== "idle") setConfirmQuit(false);
-      if (status.phase === "failed") setNotice("");
+      if (status.phase !== 'idle') setConfirmQuit(false);
+      if (status.phase === 'failed') setNotice('');
     },
     [setConfirmQuit, setNotice],
   );
@@ -89,7 +89,7 @@ export const useQuit = ({
     quitRequestPending.current = true;
     quitGeneration.current++;
     setError(null);
-    setNotice("");
+    setNotice('');
     try {
       const result = await client.quit();
       if (!result.ok) {
@@ -97,10 +97,10 @@ export const useQuit = ({
         return;
       }
       acceptQuitStatus(result.value.status);
-      if (result.value.status.phase !== "failed")
-        setNotice("Quit requested. Waiting for gateway cleanup.");
+      if (result.value.status.phase !== 'failed')
+        setNotice('Quit requested. Waiting for gateway cleanup.');
     } catch {
-      setError("Could not request Quit. Check application status before retrying.");
+      setError('Could not request Quit. Check application status before retrying.');
     } finally {
       quitRequestPending.current = false;
       setRequestingQuit(false);
@@ -109,7 +109,7 @@ export const useQuit = ({
 
   const requestUpdateRestart = async () => {
     if (quitting || updateRestarting) return;
-    if (snapshot?.update.phase !== "ready") return;
+    if (snapshot?.update.phase !== 'ready') return;
     setConfirmUpdate(false);
     generation.current++;
     setRequestingQuit(true);
@@ -117,7 +117,7 @@ export const useQuit = ({
     quitRequestPending.current = true;
     quitGeneration.current++;
     setError(null);
-    setNotice("");
+    setNotice('');
     try {
       const result = await client.updatesRestart();
       if (!result.ok) {
@@ -125,10 +125,10 @@ export const useQuit = ({
         return;
       }
       acceptQuitStatus(result.value.status);
-      if (result.value.status.phase !== "failed")
-        setNotice("Restart requested. Waiting for gateway cleanup.");
+      if (result.value.status.phase !== 'failed')
+        setNotice('Restart requested. Waiting for gateway cleanup.');
     } catch {
-      setError("Could not request the update restart. Check application status before retrying.");
+      setError('Could not request the update restart. Check application status before retrying.');
     } finally {
       quitRequestPending.current = false;
       setRequestingQuit(false);
@@ -138,8 +138,8 @@ export const useQuit = ({
   const interactiveQuit = useRef<() => boolean>(() => false);
   interactiveQuit.current = () => {
     if (confirmQuit || quitting || quitRequestPending.current) return true;
-    if (busy || (!snapshot && quitStatus.phase !== "failed")) {
-      setError("Quit could not be requested while the window is busy. Try again when it is ready.");
+    if (busy || (!snapshot && quitStatus.phase !== 'failed')) {
+      setError('Quit could not be requested while the window is busy. Try again when it is ready.');
       return true;
     }
     setConfirmUpdate(false);
@@ -151,8 +151,8 @@ export const useQuit = ({
     const request = (event: Event) => {
       if (interactiveQuit.current()) event.preventDefault();
     };
-    window.addEventListener("mcp-gateway:request-quit", request);
-    return () => window.removeEventListener("mcp-gateway:request-quit", request);
+    window.addEventListener('mcp-gateway:request-quit', request);
+    return () => window.removeEventListener('mcp-gateway:request-quit', request);
   }, []);
 
   return {

@@ -1,15 +1,16 @@
-import { type FSWatcher, lstatSync, watch } from "node:fs";
-import { lstat } from "node:fs/promises";
-import { dirname } from "node:path";
+import { type FSWatcher, lstatSync, watch } from 'node:fs';
+import { lstat } from 'node:fs/promises';
+import { dirname } from 'node:path';
+
 import {
   type ConfigDocument,
   ConfigStore,
   isHttpServer,
   parseConfig,
-} from "@mcp-gateway/core/config";
-import { failure, GatewayError, visible } from "@mcp-gateway/core/errors";
-import { GatewayIngress } from "@mcp-gateway/core/ingress";
-import { LogBuffer } from "@mcp-gateway/core/logs";
+} from '@mcp-gateway/core/config';
+import { failure, GatewayError, visible } from '@mcp-gateway/core/errors';
+import { GatewayIngress } from '@mcp-gateway/core/ingress';
+import { LogBuffer } from '@mcp-gateway/core/logs';
 import {
   interfaceChoices,
   isSelfProxyCancelled,
@@ -17,8 +18,8 @@ import {
   SELF_PROXY_DEADLINE_MS,
   type SelfProxyOptions,
   selectInterface,
-} from "@mcp-gateway/core/network";
-import { createSerialQueue } from "@mcp-gateway/core/serial-queue";
+} from '@mcp-gateway/core/network';
+import { createSerialQueue } from '@mcp-gateway/core/serial-queue';
 import type {
   GatewayConfig,
   GatewayController,
@@ -26,13 +27,13 @@ import type {
   GatewaySnapshot,
   LogQuery,
   VisibleError,
-} from "@mcp-gateway/shared/types";
+} from '@mcp-gateway/shared/types';
 
 /** Local native/UI API. Snapshots contain explicit config credentials; do not log them. */
 export class McpGatewayController implements GatewayController {
   private readonly queue = createSerialQueue();
   private readonly store: ConfigStore;
-  private document: ConfigDocument = { text: "", revision: "" };
+  private document: ConfigDocument = { text: '', revision: '' };
   private config: GatewayConfig | undefined;
   private ingress: GatewayIngress | undefined;
   private closingIngress: GatewayIngress | undefined;
@@ -46,8 +47,8 @@ export class McpGatewayController implements GatewayController {
     return this.logs.clear();
   }
   recordLocalError(error: unknown): void {
-    this.logs.append({ server: null, level: "error", source: "controller" }, [
-      "Local application operation failed:",
+    this.logs.append({ server: null, level: 'error', source: 'controller' }, [
+      'Local application operation failed:',
       error,
     ]);
   }
@@ -79,11 +80,11 @@ export class McpGatewayController implements GatewayController {
         );
         selectInterface(controller.config.gateway.host);
         await rejectSelfProxy(controller.config, control);
-        controller.event("info", "Configuration loaded.");
+        controller.event('info', 'Configuration loaded.');
       } catch (error) {
-        controller.logs.append({ server: null, level: "error", source: "controller" }, [error]);
+        controller.logs.append({ server: null, level: 'error', source: 'controller' }, [error]);
         controller.configError = visible(error);
-        controller.event("error", "Configuration could not be loaded.");
+        controller.event('error', 'Configuration could not be loaded.');
       }
       controller.observe();
       if (controller.config?.gateway.autoStart && !controller.configError) {
@@ -112,10 +113,10 @@ export class McpGatewayController implements GatewayController {
         (running ? this.ingress?.snapshots() : undefined) ??
         Object.entries(config?.mcpServers ?? {}).map(([name, server]) => ({
           name,
-          type: isHttpServer(server) ? ("http" as const) : ("stdio" as const),
+          type: isHttpServer(server) ? ('http' as const) : ('stdio' as const),
           endpoint: `http://${config?.gateway.host}:${config?.gateway.port}/mcp/${name}`,
           enabled: !server.disabled,
-          status: server.disabled ? ("disabled" as const) : ("stopped" as const),
+          status: server.disabled ? ('disabled' as const) : ('stopped' as const),
           error: null,
         })),
       configError: this.configError ? { ...this.configError } : null,
@@ -123,8 +124,8 @@ export class McpGatewayController implements GatewayController {
     };
   }
 
-  private event(level: "info" | "error", message: string): void {
-    this.logs.append({ server: null, level, source: "controller" }, [message]);
+  private event(level: 'info' | 'error', message: string): void {
+    this.logs.append({ server: null, level, source: 'controller' }, [message]);
   }
 
   private serial<A>(work: () => Promise<A>): Promise<A> {
@@ -132,10 +133,10 @@ export class McpGatewayController implements GatewayController {
       try {
         return await work();
       } catch (error) {
-        this.logs.append({ server: null, level: "error", source: "controller" }, [error]);
+        this.logs.append({ server: null, level: 'error', source: 'controller' }, [error]);
         throw error instanceof GatewayError
           ? error
-          : failure("BackendFailure", "The gateway operation failed.");
+          : failure('BackendFailure', 'The gateway operation failed.');
       }
     });
   }
@@ -170,27 +171,27 @@ export class McpGatewayController implements GatewayController {
   }
 
   private ensureOpen(): void {
-    if (this.closed || this.closing) throw failure("Closed", "The controller is closed.");
+    if (this.closed || this.closing) throw failure('Closed', 'The controller is closed.');
   }
 
   private report = (error: VisibleError): void => {
-    this.logs.append({ server: null, level: "error", source: "controller" }, [error]);
+    this.logs.append({ server: null, level: 'error', source: 'controller' }, [error]);
     this.operationalError = error;
-    this.event("error", error.message);
+    this.event('error', error.message);
   };
 
   private async startOwned(control: SelfProxyOptions): Promise<void> {
     this.ensureOpen();
     if (!this.watchHealthy)
       throw failure(
-        "ConfigIO",
-        "Configuration watching is unavailable; reopen the controller before starting.",
+        'ConfigIO',
+        'Configuration watching is unavailable; reopen the controller before starting.',
       );
     if (this.ingress?.running) return;
     // Read the authoritative bytes again, even if a watch notification is delayed.
     await this.refresh(control);
     if (!this.config || this.configError)
-      throw failure("InvalidConfig", "Correct the on-disk configuration before starting.");
+      throw failure('InvalidConfig', 'Correct the on-disk configuration before starting.');
     await this.stopOwned();
     const config = this.config;
     try {
@@ -203,20 +204,20 @@ export class McpGatewayController implements GatewayController {
       ).catch((error) => {
         throw error instanceof GatewayError
           ? error
-          : failure("ListenerFailure", "The listener could not start.");
+          : failure('ListenerFailure', 'The listener could not start.');
       });
       this.closingIngress = ingress;
       this.ensureOpen();
       if (!this.watchHealthy)
         throw failure(
-          "ConfigIO",
-          "Configuration watching is unavailable; reopen the controller before starting.",
+          'ConfigIO',
+          'Configuration watching is unavailable; reopen the controller before starting.',
         );
       this.ingress = ingress;
       this.closingIngress = undefined;
       this.cancelInterfaceRecovery();
       this.operationalError = null;
-      this.event("info", "Gateway listener started; backends initialize on client requests.");
+      this.event('info', 'Gateway listener started; backends initialize on client requests.');
     } catch (error) {
       await this.stopOwned();
       throw error;
@@ -233,8 +234,8 @@ export class McpGatewayController implements GatewayController {
     try {
       await ingress.close();
       if (this.closingIngress === ingress) this.closingIngress = undefined;
-      if (this.operationalError?.code === "ShutdownFailure") this.operationalError = null;
-      this.event("info", "Gateway listener stopped.");
+      if (this.operationalError?.code === 'ShutdownFailure') this.operationalError = null;
+      this.event('info', 'Gateway listener stopped.');
     } catch (error) {
       this.report(visible(error));
       throw error;
@@ -270,7 +271,7 @@ export class McpGatewayController implements GatewayController {
         return;
       }
       try {
-        selectInterface(this.config?.gateway.host ?? "");
+        selectInterface(this.config?.gateway.host ?? '');
       } catch {
         return;
       }
@@ -278,7 +279,7 @@ export class McpGatewayController implements GatewayController {
       void this.serial(async () => {
         if (signal.aborted || this.ingress?.running) return;
         await this.startOwned(this.control(signal));
-        this.event("info", "The selected interface returned; the gateway listener restarted.");
+        this.event('info', 'The selected interface returned; the gateway listener restarted.');
       }).catch((error) => {
         if (!isSelfProxyCancelled(error)) this.report(visible(error));
       });
@@ -308,10 +309,10 @@ export class McpGatewayController implements GatewayController {
       const control = this.control(signal);
       this.ensureOpen();
       if (!this.ingress?.running)
-        throw failure("BackendFailure", "Start the gateway before restarting a server.");
+        throw failure('BackendFailure', 'Start the gateway before restarting a server.');
       try {
         await this.ingress.restart(name, control);
-        this.event("info", "A backend endpoint was restarted.");
+        this.event('info', 'A backend endpoint was restarted.');
       } catch (error) {
         if (!isSelfProxyCancelled(error)) this.report(visible(error));
         throw error;
@@ -354,8 +355,8 @@ export class McpGatewayController implements GatewayController {
       ? null
       : visible(
           failure(
-            "ConfigIO",
-            "Configuration watching is unavailable; reopen the controller before starting.",
+            'ConfigIO',
+            'Configuration watching is unavailable; reopen the controller before starting.',
           ),
         );
     if (!running) return;
@@ -402,9 +403,9 @@ export class McpGatewayController implements GatewayController {
       // Invalid external source stays visible for repair, while the validated
       // config retains the last accepted state.
       if (document) this.document = document;
-      this.logs.append({ server: null, level: "error", source: "controller" }, [error]);
+      this.logs.append({ server: null, level: 'error', source: 'controller' }, [error]);
       this.configError = visible(error);
-      this.event("error", "Invalid external configuration; listener stopped.");
+      this.event('error', 'Invalid external configuration; listener stopped.');
       await this.stopOwned();
       return null;
     }
@@ -416,8 +417,8 @@ export class McpGatewayController implements GatewayController {
     void this.serial(async () => {
       this.configError = visible(
         failure(
-          "ConfigIO",
-          "Configuration watching is unavailable; reopen the controller before starting.",
+          'ConfigIO',
+          'Configuration watching is unavailable; reopen the controller before starting.',
         ),
       );
       await this.stopOwned();
@@ -428,7 +429,7 @@ export class McpGatewayController implements GatewayController {
     try {
       const identity = lstatSync(dirname(this.store.path));
       if (!identity.isDirectory() || identity.isSymbolicLink())
-        throw failure("UnsafeFile", "The configuration directory is unsafe.");
+        throw failure('UnsafeFile', 'The configuration directory is unsafe.');
       this.watcher = watch(dirname(this.store.path), () => {
         if (this.closed || this.closing || !this.watchHealthy) return;
         // Capture cancellation ownership when the event is admitted, before the
@@ -462,8 +463,8 @@ export class McpGatewayController implements GatewayController {
         }, 20);
       });
       this.watchHealthy = true;
-      this.watcher.on("error", this.failWatcher);
-      this.watcher.on("close", this.failWatcher);
+      this.watcher.on('error', this.failWatcher);
+      this.watcher.on('close', this.failWatcher);
       this.closeWatcher = () => {
         if (this.watchTimer) clearTimeout(this.watchTimer);
         this.watchHealthy = false;
@@ -473,7 +474,7 @@ export class McpGatewayController implements GatewayController {
       this.watchHealthy = false;
       this.watcher?.close();
       this.configError = visible(
-        failure("ConfigIO", "The configuration directory could not be watched."),
+        failure('ConfigIO', 'The configuration directory could not be watched.'),
       );
     }
   }

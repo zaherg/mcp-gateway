@@ -1,35 +1,35 @@
-import { Banners } from "@mcp-gateway/mainview/components/Banners";
-import { DraftBar } from "@mcp-gateway/mainview/components/DraftBar";
-import { GatewayStrip } from "@mcp-gateway/mainview/components/GatewayStrip";
-import { Shell } from "@mcp-gateway/mainview/components/Shell";
-import { ConfirmDialogs } from "@mcp-gateway/mainview/dialogs/ConfirmDialogs";
+import { Banners } from '@mcp-gateway/mainview/components/Banners';
+import { DraftBar } from '@mcp-gateway/mainview/components/DraftBar';
+import { GatewayStrip } from '@mcp-gateway/mainview/components/GatewayStrip';
+import { Shell } from '@mcp-gateway/mainview/components/Shell';
+import { ConfirmDialogs } from '@mcp-gateway/mainview/dialogs/ConfirmDialogs';
 import {
   type Document,
   type Editor,
   emptyEditor,
   formConfig,
   ServerEditor,
-} from "@mcp-gateway/mainview/dialogs/ServerEditor";
-import { useOperations } from "@mcp-gateway/mainview/hooks/useOperations";
-import { useQuit } from "@mcp-gateway/mainview/hooks/useQuit";
-import { Logs } from "@mcp-gateway/mainview/Logs";
-import { Overview } from "@mcp-gateway/mainview/views/Overview";
-import { RawConfig } from "@mcp-gateway/mainview/views/RawConfig";
-import { Settings } from "@mcp-gateway/mainview/views/Settings";
-import { Updates } from "@mcp-gateway/mainview/views/Updates";
-import { editConfigDocument } from "@mcp-gateway/shared/config-document";
-import type { AppClient, AppSnapshot } from "@mcp-gateway/shared/rpc";
-import { needsLoginRetry } from "@mcp-gateway/shared/rpc";
-import type { GatewayConfig } from "@mcp-gateway/shared/types";
-import { Activity } from "lucide-react";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+} from '@mcp-gateway/mainview/dialogs/ServerEditor';
+import { useOperations } from '@mcp-gateway/mainview/hooks/useOperations';
+import { useQuit } from '@mcp-gateway/mainview/hooks/useQuit';
+import { Logs } from '@mcp-gateway/mainview/Logs';
+import { Overview } from '@mcp-gateway/mainview/views/Overview';
+import { RawConfig } from '@mcp-gateway/mainview/views/RawConfig';
+import { Settings } from '@mcp-gateway/mainview/views/Settings';
+import { Updates } from '@mcp-gateway/mainview/views/Updates';
+import { editConfigDocument } from '@mcp-gateway/shared/config-document';
+import type { AppClient, AppSnapshot } from '@mcp-gateway/shared/rpc';
+import { needsLoginRetry } from '@mcp-gateway/shared/rpc';
+import type { GatewayConfig } from '@mcp-gateway/shared/types';
+import { Activity } from 'lucide-react';
+import { type FormEvent, useEffect, useRef, useState } from 'react';
 
 export const App = ({ client }: { client: AppClient }) => {
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null);
   const [doc, setDoc] = useState<Document | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [errorOccurrence, setErrorOccurrence] = useState<string | null>(null);
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
   const [updateBusy, setUpdateBusy] = useState(false);
   const [confirmQuit, setConfirmQuit] = useState(false);
@@ -41,7 +41,7 @@ export const App = ({ client }: { client: AppClient }) => {
   const [rawOpen, setRawOpen] = useState(false);
   const fallbackFocus = useRef<HTMLButtonElement>(null);
   const updatesHeading = useRef<HTMLHeadingElement>(null);
-  const [tab, setTab] = useState<"overview" | "settings" | "logs">("overview");
+  const [tab, setTab] = useState<'overview' | 'settings' | 'logs'>('overview');
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const dismiss = (id: string) => setDismissed((previous) => new Set([...previous, id]));
   const errorOccurrenceRef = useRef(errorOccurrence);
@@ -53,7 +53,7 @@ export const App = ({ client }: { client: AppClient }) => {
   editingRef.current = editor !== null || deleting !== null;
   const generation = useRef(0);
   const updateState = snapshot?.update;
-  const updateRestarting = updateState?.phase === "restarting";
+  const updateRestarting = updateState?.phase === 'restarting';
   const dirty = doc?.dirty ?? false;
 
   const {
@@ -109,7 +109,7 @@ export const App = ({ client }: { client: AppClient }) => {
       `operation-${errorOccurrenceRef.current}`,
       `config-${errorOccurrenceRef.current}`,
       `quit-${quitStatus.attempt}`,
-      `update-${snapshot?.update.phase}-${snapshot?.update.availableVersion ?? ""}-${snapshot?.update.error ?? ""}`,
+      `update-${snapshot?.update.phase}-${snapshot?.update.availableVersion ?? ''}-${snapshot?.update.error ?? ''}`,
     ]);
     setDismissed((previous) => {
       const retained = Array.from(previous).filter((id) => active.has(id));
@@ -150,7 +150,7 @@ export const App = ({ client }: { client: AppClient }) => {
       } catch {
         if (!cancelled && !pollFailed.current) {
           setErrorOccurrence(null);
-          setError("Could not read application status. The native connection may be unavailable.");
+          setError('Could not read application status. The native connection may be unavailable.');
         }
         pollFailed.current = true;
       } finally {
@@ -166,15 +166,15 @@ export const App = ({ client }: { client: AppClient }) => {
 
   useEffect(() => {
     const showUpdates = () => {
-      setTab("settings");
+      setTab('settings');
       requestAnimationFrame(() => updatesHeading.current?.focus());
     };
-    window.addEventListener("mcp-gateway:show-updates", showUpdates);
-    return () => window.removeEventListener("mcp-gateway:show-updates", showUpdates);
+    window.addEventListener('mcp-gateway:show-updates', showUpdates);
+    return () => window.removeEventListener('mcp-gateway:show-updates', showUpdates);
   }, []);
 
-  const format = snapshot?.gateway.configFormat ?? "json";
-  const filename = snapshot?.gateway.configPath.split("/").at(-1) ?? "mcp.json";
+  const format = snapshot?.gateway.configFormat ?? 'json';
+  const filename = snapshot?.gateway.configPath.split('/').at(-1) ?? 'mcp.json';
   const update = (config: GatewayConfig, rename?: { from: string; to: string }) => {
     if (configurationLocked) return;
     setDoc((previous) => {
@@ -183,16 +183,16 @@ export const App = ({ client }: { client: AppClient }) => {
         previous.text,
         config,
         format,
-        rename ? { path: ["mcpServers"], ...rename } : undefined,
+        rename ? { path: ['mcpServers'], ...rename } : undefined,
       );
       return { ...previous, text, dirty: previous.dirty || text !== previous.text };
     });
-    setNotice("");
+    setNotice('');
   };
   const parsed = doc ? formConfig(doc.text, format) : null;
   const config = snapshot?.gateway.configError && !doc?.dirty ? null : parsed;
   const gateway = snapshot?.gateway;
-  const updateReady = updateState?.phase === "ready";
+  const updateReady = updateState?.phase === 'ready';
   const stale = !!doc && !!gateway && doc.revision !== gateway.revision;
   const retryLogin = !!(
     config &&
@@ -205,7 +205,7 @@ export const App = ({ client }: { client: AppClient }) => {
     if (configurationLocked || !doc || text === undefined) return false;
     return run(
       () => client.saveConfig({ text, expectedRevision: doc.revision }),
-      "Configuration saved.",
+      'Configuration saved.',
       true,
     );
   };
@@ -223,15 +223,15 @@ export const App = ({ client }: { client: AppClient }) => {
       next.name = name;
       next.disabled = server.disabled ?? false;
       next.legacyProtocol = server.legacyProtocol ?? false;
-      if ("url" in server) {
-        next.type = "http";
+      if ('url' in server) {
+        next.type = 'http';
         next.url = server.url;
         next.headers = JSON.stringify(server.headers ?? {}, null, 2);
       } else {
         next.command = server.command;
         next.args = JSON.stringify(server.args ?? [], null, 2);
         next.env = JSON.stringify(server.env ?? {}, null, 2);
-        next.cwd = server.cwd ?? "";
+        next.cwd = server.cwd ?? '';
       }
     }
     setEditorError(null);
@@ -241,44 +241,44 @@ export const App = ({ client }: { client: AppClient }) => {
     event.preventDefault();
     if (!editor || !config || configurationLocked) return;
     if (editor.name !== editor.original && Object.hasOwn(config.mcpServers, editor.name)) {
-      setEditorError("A server with this name already exists.");
+      setEditorError('A server with this name already exists.');
       return;
     }
     let args: string[] | undefined;
     let env: Record<string, string> | undefined;
     let headers: Record<string, string> | undefined;
     try {
-      if (editor.type === "stdio") {
-        const parsedArgs = JSON.parse(editor.args || "[]");
-        if (!Array.isArray(parsedArgs) || !parsedArgs.every((arg) => typeof arg === "string"))
-          throw new Error("Arguments must be a JSON array of strings.");
+      if (editor.type === 'stdio') {
+        const parsedArgs = JSON.parse(editor.args || '[]');
+        if (!Array.isArray(parsedArgs) || !parsedArgs.every((arg) => typeof arg === 'string'))
+          throw new Error('Arguments must be a JSON array of strings.');
         args = parsedArgs;
-        const parsedEnv = JSON.parse(editor.env || "{}");
+        const parsedEnv = JSON.parse(editor.env || '{}');
         if (
           parsedEnv === null ||
-          typeof parsedEnv !== "object" ||
+          typeof parsedEnv !== 'object' ||
           Array.isArray(parsedEnv) ||
-          !Object.values(parsedEnv).every((value) => typeof value === "string")
+          !Object.values(parsedEnv).every((value) => typeof value === 'string')
         )
-          throw new Error("Environment must be a JSON object with string values.");
+          throw new Error('Environment must be a JSON object with string values.');
         env = parsedEnv as Record<string, string>;
       } else {
-        const parsedHeaders = JSON.parse(editor.headers || "{}");
+        const parsedHeaders = JSON.parse(editor.headers || '{}');
         if (
           parsedHeaders === null ||
-          typeof parsedHeaders !== "object" ||
+          typeof parsedHeaders !== 'object' ||
           Array.isArray(parsedHeaders) ||
-          !Object.values(parsedHeaders).every((value) => typeof value === "string")
+          !Object.values(parsedHeaders).every((value) => typeof value === 'string')
         )
-          throw new Error("Headers must be a JSON object with string values.");
+          throw new Error('Headers must be a JSON object with string values.');
         headers = parsedHeaders as Record<string, string>;
       }
     } catch (failure) {
-      setEditorError(failure instanceof Error ? failure.message : "The server fields are invalid.");
+      setEditorError(failure instanceof Error ? failure.message : 'The server fields are invalid.');
       return;
     }
     const server =
-      editor.type === "stdio"
+      editor.type === 'stdio'
         ? {
             command: editor.command,
             args,
@@ -390,7 +390,7 @@ export const App = ({ client }: { client: AppClient }) => {
         loginWanted={parsed?.gateway.launchAtLogin ?? false}
         stale={stale}
       />
-      {(!snapshot || !doc) && tab === "logs" ? (
+      {(!snapshot || !doc) && tab === 'logs' ? (
         <Logs client={client} servers={[]} />
       ) : !snapshot || !doc ? (
         <section className="panel loading" aria-busy="true">
@@ -401,13 +401,6 @@ export const App = ({ client }: { client: AppClient }) => {
       ) : (
         <>
           <fieldset disabled={busy} className="workspace">
-            <GatewayStrip
-              gateway={gateway}
-              dirty={dirty}
-              configurationLocked={configurationLocked}
-              run={run}
-              client={client}
-            />
             <DraftBar
               dirty={dirty}
               retryLogin={retryLogin}
@@ -417,22 +410,31 @@ export const App = ({ client }: { client: AppClient }) => {
               setError={setError}
               save={save}
             />
-            {tab === "logs" ? (
+            {tab === 'logs' ? (
               <Logs client={client} servers={gateway?.servers.map((server) => server.name) ?? []} />
-            ) : tab === "overview" ? (
-              <Overview
-                gateway={gateway}
-                config={config}
-                dirty={dirty}
-                configurationLocked={configurationLocked}
-                run={run}
-                client={client}
-                openEditor={openEditor}
-                toggleEndpoint={toggleEndpoint}
-                setDeleting={setDeleting}
-                setEditor={setEditor}
-                setEditorError={setEditorError}
-              />
+            ) : tab === 'overview' ? (
+              <>
+                <GatewayStrip
+                  gateway={gateway}
+                  dirty={dirty}
+                  configurationLocked={configurationLocked}
+                  run={run}
+                  client={client}
+                />
+                <Overview
+                  gateway={gateway}
+                  config={config}
+                  dirty={dirty}
+                  configurationLocked={configurationLocked}
+                  run={run}
+                  client={client}
+                  openEditor={openEditor}
+                  toggleEndpoint={toggleEndpoint}
+                  setDeleting={setDeleting}
+                  setEditor={setEditor}
+                  setEditorError={setEditorError}
+                />
+              </>
             ) : (
               <Settings
                 config={config}
@@ -445,7 +447,7 @@ export const App = ({ client }: { client: AppClient }) => {
                 filename={filename}
               />
             )}
-            {tab === "settings" && updateState && (
+            {tab === 'settings' && updateState && (
               <Updates
                 updateState={updateState}
                 updateBusy={updateBusy}
@@ -461,7 +463,7 @@ export const App = ({ client }: { client: AppClient }) => {
                 updatesHeading={updatesHeading}
               />
             )}
-            {tab !== "logs" && (
+            {tab !== 'logs' && (
               <RawConfig
                 doc={doc}
                 setDoc={setDoc}
@@ -481,8 +483,8 @@ export const App = ({ client }: { client: AppClient }) => {
           </fieldset>
           <footer className="page-footer">
             <span>
-              <span className={`dot ${gateway?.running ? "online" : ""}`} />
-              {gateway?.running ? "Listener active" : "No active listener"}
+              <span className={`dot ${gateway?.running ? 'online' : ''}`} />
+              {gateway?.running ? 'Listener active' : 'No active listener'}
             </span>
             <span>Closing this window keeps the app running. Use Quit to stop it.</span>
           </footer>

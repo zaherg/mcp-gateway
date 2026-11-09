@@ -1,15 +1,15 @@
-import { Alert, Field, Modal } from "@mcp-gateway/mainview/components/ui";
-import type { ConfigFormat } from "@mcp-gateway/shared/config-document";
-import { parseConfigDocument } from "@mcp-gateway/shared/config-document";
-import type { GatewayConfig, HttpServerConfig, StdioServerConfig } from "@mcp-gateway/shared/types";
-import type { FormEvent, RefObject } from "react";
+import { Alert, Field, Modal } from '@mcp-gateway/mainview/components/ui';
+import type { ConfigFormat } from '@mcp-gateway/shared/config-document';
+import { parseConfigDocument } from '@mcp-gateway/shared/config-document';
+import type { GatewayConfig, HttpServerConfig, StdioServerConfig } from '@mcp-gateway/shared/types';
+import type { FormEvent, RefObject } from 'react';
 
 export type Backend = StdioServerConfig | HttpServerConfig;
 export type Document = { text: string; revision: string; dirty: boolean };
 export type Editor = {
   original: string | null;
   name: string;
-  type: "stdio" | "http";
+  type: 'stdio' | 'http';
   command: string;
   args: string;
   env: string;
@@ -21,28 +21,28 @@ export type Editor = {
 };
 
 export const isRecord = (value: unknown): value is Record<string, unknown> => {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 };
 const stringMap = (value: unknown): value is Record<string, string> => {
-  return isRecord(value) && Object.values(value).every((item) => typeof item === "string");
+  return isRecord(value) && Object.values(value).every((item) => typeof item === 'string');
 };
 const isBackend = (value: unknown): value is Backend => {
   if (
     !isRecord(value) ||
-    (value.disabled !== undefined && typeof value.disabled !== "boolean") ||
-    (value.legacyProtocol !== undefined && typeof value.legacyProtocol !== "boolean")
+    (value.disabled !== undefined && typeof value.disabled !== 'boolean') ||
+    (value.legacyProtocol !== undefined && typeof value.legacyProtocol !== 'boolean')
   )
     return false;
-  if ("url" in value)
+  if ('url' in value)
     return (
-      typeof value.url === "string" && (value.headers === undefined || stringMap(value.headers))
+      typeof value.url === 'string' && (value.headers === undefined || stringMap(value.headers))
     );
   return (
-    typeof value.command === "string" &&
+    typeof value.command === 'string' &&
     (value.args === undefined ||
-      (Array.isArray(value.args) && value.args.every((arg) => typeof arg === "string"))) &&
+      (Array.isArray(value.args) && value.args.every((arg) => typeof arg === 'string'))) &&
     (value.env === undefined || stringMap(value.env)) &&
-    (value.cwd === undefined || typeof value.cwd === "string")
+    (value.cwd === undefined || typeof value.cwd === 'string')
   );
 };
 // This guard is for rendering only. Native validation remains authoritative on every save.
@@ -52,11 +52,11 @@ export const formConfig = (text: string, format: ConfigFormat): GatewayConfig | 
     if (!isRecord(value) || !isRecord(value.gateway) || !isRecord(value.mcpServers)) return null;
     const gateway = value.gateway;
     if (
-      typeof gateway.host !== "string" ||
-      typeof gateway.port !== "number" ||
-      typeof gateway.token !== "string" ||
-      (gateway.autoStart !== undefined && typeof gateway.autoStart !== "boolean") ||
-      (gateway.launchAtLogin !== undefined && typeof gateway.launchAtLogin !== "boolean") ||
+      typeof gateway.host !== 'string' ||
+      typeof gateway.port !== 'number' ||
+      typeof gateway.token !== 'string' ||
+      (gateway.autoStart !== undefined && typeof gateway.autoStart !== 'boolean') ||
+      (gateway.launchAtLogin !== undefined && typeof gateway.launchAtLogin !== 'boolean') ||
       !Object.values(value.mcpServers).every(isBackend)
     )
       return null;
@@ -76,14 +76,14 @@ export const formConfig = (text: string, format: ConfigFormat): GatewayConfig | 
 };
 export const emptyEditor = (): Editor => ({
   original: null,
-  name: "",
-  type: "stdio",
-  command: "",
-  args: "[]",
-  env: "{}",
-  cwd: "",
-  url: "",
-  headers: "{}",
+  name: '',
+  type: 'stdio',
+  command: '',
+  args: '[]',
+  env: '{}',
+  cwd: '',
+  url: '',
+  headers: '{}',
   disabled: false,
   legacyProtocol: false,
 });
@@ -109,15 +109,15 @@ export const ServerEditor = ({
 }) => {
   return (
     <Modal
-      title={editor.original ? "Edit server" : "Add a server"}
+      title={editor.original ? 'Edit server' : 'Add a server'}
       onClose={onClose}
       fallbackFocus={fallbackFocus}
     >
       <form onSubmit={onSubmit}>
         <p className="dialog-intro">
           {configurationLocked
-            ? "Quit cleanup has started. This draft is read-only; select and copy fields before closing."
-            : "Connect a local tool or an existing MCP endpoint."}
+            ? 'Quit cleanup has started. This draft is read-only; select and copy fields before closing.'
+            : 'Connect a local tool or an existing MCP endpoint.'}
         </p>
         {editorError && <Alert onDismiss={onDismissError}>{editorError}</Alert>}
         <Field
@@ -136,14 +136,14 @@ export const ServerEditor = ({
             value={editor.type}
             disabled={configurationLocked}
             onChange={(event) =>
-              onChange({ type: event.target.value === "http" ? "http" : "stdio" })
+              onChange({ type: event.target.value === 'http' ? 'http' : 'stdio' })
             }
           >
             <option value="stdio">Local command (stdio)</option>
             <option value="http">Streamable HTTP</option>
           </select>
         </Field>
-        {editor.type === "stdio" ? (
+        {editor.type === 'stdio' ? (
           <>
             <Field
               label="Command"
@@ -189,8 +189,8 @@ export const ServerEditor = ({
               disabled={configurationLocked}
               onClick={() =>
                 onChange({
-                  name: editor.name || "bear",
-                  command: "/Applications/Bear.app/Contents/MacOS/bearcli",
+                  name: editor.name || 'bear',
+                  command: '/Applications/Bear.app/Contents/MacOS/bearcli',
                   args: '["mcp-server"]',
                 })
               }
@@ -228,7 +228,7 @@ export const ServerEditor = ({
             checked={editor.legacyProtocol}
             disabled={configurationLocked}
             onChange={(event) => onChange({ legacyProtocol: event.target.checked })}
-          />{" "}
+          />{' '}
           Allow session-based clients (MCP 2025-11-25 and earlier)
         </label>
         <label className="checkbox-row">
@@ -237,7 +237,7 @@ export const ServerEditor = ({
             checked={editor.disabled}
             disabled={configurationLocked}
             onChange={(event) => onChange({ disabled: event.target.checked })}
-          />{" "}
+          />{' '}
           Disabled (do not mount this endpoint)
         </label>
         <div className="dialog-actions">

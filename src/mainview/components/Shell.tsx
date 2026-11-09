@@ -1,7 +1,7 @@
-import type { Editor } from "@mcp-gateway/mainview/dialogs/ServerEditor";
-import type { AppSnapshot, QuitStatus } from "@mcp-gateway/shared/rpc";
-import { ChevronRight, Network, Server, Settings2, ShieldCheck, Terminal } from "lucide-react";
-import type { ReactNode } from "react";
+import type { Editor } from '@mcp-gateway/mainview/dialogs/ServerEditor';
+import type { AppSnapshot, QuitStatus } from '@mcp-gateway/shared/rpc';
+import { ChevronRight, Network, Server, Settings2, ShieldCheck, Terminal } from 'lucide-react';
+import type { ReactNode } from 'react';
 
 export const Shell = ({
   tab,
@@ -16,8 +16,8 @@ export const Shell = ({
   children,
   dialogs,
 }: {
-  tab: "overview" | "settings" | "logs";
-  setTab: (tab: "overview" | "settings" | "logs") => void;
+  tab: 'overview' | 'settings' | 'logs';
+  setTab: (tab: 'overview' | 'settings' | 'logs') => void;
   snapshot: AppSnapshot | null;
   busy: boolean;
   quitting: boolean;
@@ -42,22 +42,22 @@ export const Shell = ({
         <nav aria-label="Main navigation">
           <button
             type="button"
-            className={tab === "overview" ? "nav-item active" : "nav-item"}
-            onClick={() => setTab("overview")}
+            className={tab === 'overview' ? 'nav-item active' : 'nav-item'}
+            onClick={() => setTab('overview')}
           >
             <Server size={17} /> Overview <ChevronRight size={14} />
           </button>
           <button
             type="button"
-            className={tab === "settings" ? "nav-item active" : "nav-item"}
-            onClick={() => setTab("settings")}
+            className={tab === 'settings' ? 'nav-item active' : 'nav-item'}
+            onClick={() => setTab('settings')}
           >
             <Settings2 size={17} /> Settings <ChevronRight size={14} />
           </button>
           <button
             type="button"
-            className={tab === "logs" ? "nav-item active" : "nav-item"}
-            onClick={() => setTab("logs")}
+            className={tab === 'logs' ? 'nav-item active' : 'nav-item'}
+            onClick={() => setTab('logs')}
           >
             <Terminal size={17} /> Logs <ChevronRight size={14} />
           </button>
@@ -74,22 +74,22 @@ export const Shell = ({
           <div>
             <p className="eyebrow">YOUR LOCAL MCP WORKSPACE</p>
             <h1>
-              {tab === "overview"
-                ? "MCP server connections"
-                : tab === "logs"
-                  ? "Local diagnostic logs"
-                  : "Gateway settings"}
+              {tab === 'overview'
+                ? 'MCP server connections'
+                : tab === 'logs'
+                  ? 'Local diagnostic logs'
+                  : 'Gateway settings'}
             </h1>
             <p className="subtitle">
-              {tab === "overview"
-                ? "Manage separate MCP endpoints for authorized clients on your LAN."
-                : tab === "logs"
-                  ? "Inspect backend output locally. Diagnostic values are not redacted."
-                  : "Control the listener, startup behavior, and authoritative configuration."}
+              {tab === 'overview'
+                ? 'Manage separate MCP endpoints for authorized clients on your LAN.'
+                : tab === 'logs'
+                  ? 'Inspect backend output locally. Diagnostic values are not redacted.'
+                  : 'Control the listener, startup behavior, and authoritative configuration.'}
             </p>
           </div>
           <div>
-            <span className="mac-badge">{snapshot ? "macOS" : "Desktop"} · local</span>
+            <span className="mac-badge">{snapshot ? 'macOS' : 'Desktop'} · local</span>
             <button
               type="button"
               className="button"
@@ -99,15 +99,15 @@ export const Shell = ({
                 quitting ||
                 !!editor ||
                 !!deleting ||
-                (!snapshot && quitStatus.phase !== "failed")
+                (!snapshot && quitStatus.phase !== 'failed')
               }
               onClick={() => interactiveQuit.current()}
             >
               {quitting
-                ? "Quitting…"
-                : quitStatus.phase === "failed"
-                  ? "Retry Quit"
-                  : "Quit MCP Gateway"}
+                ? 'Quitting…'
+                : quitStatus.phase === 'failed'
+                  ? 'Retry Quit'
+                  : 'Quit MCP Gateway'}
             </button>
           </div>
         </header>

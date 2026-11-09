@@ -1,4 +1,4 @@
-import type { GatewaySnapshot, LogPage, LogQuery } from "@mcp-gateway/shared/types";
+import type { GatewaySnapshot, LogPage, LogQuery } from '@mcp-gateway/shared/types';
 
 export interface LoginStatus {
   occurrenceId?: string;
@@ -12,8 +12,8 @@ export const needsLoginRetry = (status: LoginStatus, wanted: boolean): boolean =
 };
 
 export type QuitStatus =
-  | { attempt: number; phase: "idle" | "pending" | "ready"; error: null }
-  | { attempt: number; phase: "failed"; error: string };
+  | { attempt: number; phase: 'idle' | 'pending' | 'ready'; error: null }
+  | { attempt: number; phase: 'failed'; error: string };
 
 export interface QuitRequest {
   requested: true;
@@ -21,13 +21,13 @@ export interface QuitRequest {
 }
 
 export type UpdatePhase =
-  | "idle"
-  | "checking"
-  | "available"
-  | "downloading"
-  | "ready"
-  | "restarting"
-  | "error";
+  | 'idle'
+  | 'checking'
+  | 'available'
+  | 'downloading'
+  | 'ready'
+  | 'restarting'
+  | 'error';
 
 export interface UpdateStatus {
   supported: boolean;

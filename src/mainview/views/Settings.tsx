@@ -1,7 +1,7 @@
-import { Field, Toggle } from "@mcp-gateway/mainview/components/ui";
-import type { AppSnapshot } from "@mcp-gateway/shared/rpc";
-import type { GatewayConfig, GatewaySnapshot } from "@mcp-gateway/shared/types";
-import { Eye, EyeOff, Settings2 } from "lucide-react";
+import { Field, Toggle } from '@mcp-gateway/mainview/components/ui';
+import type { AppSnapshot } from '@mcp-gateway/shared/rpc';
+import type { GatewayConfig, GatewaySnapshot } from '@mcp-gateway/shared/types';
+import { Eye, EyeOff, Settings2 } from 'lucide-react';
 
 export const Settings = ({
   config,
@@ -54,7 +54,7 @@ export const Settings = ({
                 {gateway?.interfaces.map((item) => (
                   <option key={`${item.name}-${item.address}`} value={item.address}>
                     {item.name}
-                    {item.loopback ? " · this computer only" : " · LAN"}
+                    {item.loopback ? ' · this computer only' : ' · LAN'}
                   </option>
                 ))}
               </datalist>
@@ -65,14 +65,14 @@ export const Settings = ({
                 readOnly={configurationLocked}
                 min="1"
                 max="65535"
-                value={config.gateway.port === 0 ? "" : config.gateway.port}
+                value={config.gateway.port === 0 ? '' : config.gateway.port}
                 onChange={(event) =>
                   update({
                     ...config,
                     // Keep an empty port editable; zero is explicitly rejected by native validation.
                     gateway: {
                       ...config.gateway,
-                      port: event.target.value === "" ? 0 : event.target.valueAsNumber,
+                      port: event.target.value === '' ? 0 : event.target.valueAsNumber,
                     },
                   })
                 }
@@ -88,7 +88,7 @@ export const Settings = ({
                 autoComplete="off"
                 readOnly={configurationLocked}
                 spellCheck={false}
-                type={showToken ? "text" : "password"}
+                type={showToken ? 'text' : 'password'}
                 value={config.gateway.token}
                 onChange={(event) =>
                   update({
@@ -100,7 +100,7 @@ export const Settings = ({
               <button
                 type="button"
                 className="icon-button"
-                aria-label={showToken ? "Hide bearer token" : "Show bearer token"}
+                aria-label={showToken ? 'Hide bearer token' : 'Show bearer token'}
                 onClick={() => setShowToken(!showToken)}
               >
                 {showToken ? <EyeOff size={17} /> : <Eye size={17} />}
@@ -117,7 +117,7 @@ export const Settings = ({
                 ...config,
                 gateway: {
                   ...config.gateway,
-                  token: Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(""),
+                  token: Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join(''),
                 },
               });
             }}
@@ -139,12 +139,12 @@ export const Settings = ({
             />
             <div className="login-status">
               <span className="badge">
-                Actual login registration:{" "}
+                Actual login registration:{' '}
                 {snapshot.login.supported
                   ? snapshot.login.enabled
-                    ? "Enabled"
-                    : "Disabled"
-                  : "Unsupported"}
+                    ? 'Enabled'
+                    : 'Disabled'
+                  : 'Unsupported'}
               </span>
               {snapshot.login.error && <p className="inline-error">{snapshot.login.error}</p>}
               <small>

@@ -1,7 +1,8 @@
-import { spawn } from "node:child_process";
-import { constants } from "node:os";
-import { isHttpServer } from "@mcp-gateway/core/config";
-import { failure } from "@mcp-gateway/core/errors";
+import { spawn } from 'node:child_process';
+import { constants } from 'node:os';
+
+import { isHttpServer } from '@mcp-gateway/core/config';
+import { failure } from '@mcp-gateway/core/errors';
 import {
   BACKEND_CAPACITY_ERROR,
   type BackendCalls,
@@ -12,15 +13,15 @@ import {
   type ResourceLease,
   readBackendLines,
   releaseAfterCleanup,
-} from "@mcp-gateway/core/limits";
-import { LogBuffer } from "@mcp-gateway/core/logs";
-import { BackendProcesses } from "@mcp-gateway/core/process";
-import { createSessions } from "@mcp-gateway/core/sessions";
-import type { HttpServerConfig, LogLevel, StdioServerConfig } from "@mcp-gateway/shared/types";
-import { JSONRPCMessageSchema } from "@modelcontextprotocol/sdk/types.js";
-import cors from "cors";
-import { createParser } from "eventsource-parser";
-import express from "express";
+} from '@mcp-gateway/core/limits';
+import { LogBuffer } from '@mcp-gateway/core/logs';
+import { BackendProcesses } from '@mcp-gateway/core/process';
+import { createSessions } from '@mcp-gateway/core/sessions';
+import type { HttpServerConfig, LogLevel, StdioServerConfig } from '@mcp-gateway/shared/types';
+import { JSONRPCMessageSchema } from '@modelcontextprotocol/sdk/types.js';
+import cors from 'cors';
+import { createParser } from 'eventsource-parser';
+import express from 'express';
 import type {
   GatewayLogger,
   GatewayRequest,
@@ -28,19 +29,19 @@ import type {
   Source,
   StatefulMount,
   Upstream,
-} from "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js";
-import { spawnCommand } from "supergateway/dist/lib/childCommand.js";
-import { getVersion } from "supergateway/dist/lib/getVersion.js";
-import { HeaderMismatch } from "supergateway/dist/lib/headerMismatch.js";
+} from 'supergateway/dist/gateways/stdioToStatefulStreamableHttp.js';
+import { spawnCommand } from 'supergateway/dist/lib/childCommand.js';
+import { getVersion } from 'supergateway/dist/lib/getVersion.js';
+import { HeaderMismatch } from 'supergateway/dist/lib/headerMismatch.js';
 import {
   admit,
   headerValue,
   paramHeaders,
   rejectWith,
-} from "supergateway/dist/lib/modernAdmission.js";
-import { ModernRequest } from "supergateway/dist/lib/modernRequest.js";
-import { PerRequestHTTPServerTransport } from "supergateway/dist/lib/modernSdk.js";
-import { OwnedStdioTransport } from "supergateway/dist/lib/ownedStdioTransport.js";
+} from 'supergateway/dist/lib/modernAdmission.js';
+import { ModernRequest } from 'supergateway/dist/lib/modernRequest.js';
+import { PerRequestHTTPServerTransport } from 'supergateway/dist/lib/modernSdk.js';
+import { OwnedStdioTransport } from 'supergateway/dist/lib/ownedStdioTransport.js';
 import {
   CONTINUATION_TIMEOUT,
   isContinuationHandle,
@@ -48,13 +49,13 @@ import {
   RETAINED_CHILD_LIMIT,
   RetainedChildren,
   type ReusedChild,
-} from "supergateway/dist/lib/retainedChildren.js";
-import { streamableHttpApp } from "supergateway/dist/lib/streamableHttpApp.js";
+} from 'supergateway/dist/lib/retainedChildren.js';
+import { streamableHttpApp } from 'supergateway/dist/lib/streamableHttpApp.js';
 import {
   MODERN_VERSION,
   SPEAKS_FOR_MS,
   UpstreamModernChild,
-} from "supergateway/dist/lib/upstreamModernChild.js";
+} from 'supergateway/dist/lib/upstreamModernChild.js';
 
 export type GatewayMount = StatefulMount;
 
@@ -63,7 +64,7 @@ const SHUTDOWN_MS = 8_000;
 /** Session-based (pre-2026-07-28) MCP is served only by endpoints that opt in. */
 const UNSUPPORTED_PROTOCOL_ERROR = {
   code: -32600,
-  message: "Only MCP protocol version 2026-07-28 is supported.",
+  message: 'Only MCP protocol version 2026-07-28 is supported.',
 } as const;
 
 /**
@@ -74,9 +75,9 @@ const createLineFeed = (push: (text: string) => void): ((text: string) => void) 
   let afterCR = false;
   return (text) => {
     if (!text) return;
-    const normalized = afterCR && text.startsWith("\n") ? text.slice(1) : text;
-    afterCR = text.endsWith("\r");
-    push(normalized.replace(/\r\n?/g, "\n"));
+    const normalized = afterCR && text.startsWith('\n') ? text.slice(1) : text;
+    afterCR = text.endsWith('\r');
+    push(normalized.replace(/\r\n?/g, '\n'));
   };
 };
 
@@ -86,20 +87,20 @@ class CapacityError extends Error {}
 // them: its own HTTP transport failed, or its headers did not mirror the body.
 // They stay in Logs and never mark the backend as failed, as in sessions.ts.
 const CLIENT_TRANSPORT_ERRORS = new Set([
-  "Modern HTTP transport error:",
-  "Modern HTTP adapter error:",
-  "Failed to send MCP error:",
+  'Modern HTTP transport error:',
+  'Modern HTTP adapter error:',
+  'Failed to send MCP error:',
 ]);
 const clientCaused = (args: readonly unknown[]): boolean =>
-  (typeof args[0] === "string" && CLIENT_TRANSPORT_ERRORS.has(args[0])) ||
+  (typeof args[0] === 'string' && CLIENT_TRANSPORT_ERRORS.has(args[0])) ||
   args.some((value) => value instanceof HeaderMismatch);
 
 // Only the owned close promise proves that backend work ended.
 const cleanupConfirmed = (child: ModernChild): boolean => {
-  return "cleanedUp" in child && child.cleanedUp === true;
+  return 'cleanedUp' in child && child.cleanedUp === true;
 };
 
-type ModernSend = Parameters<PerRequestHTTPServerTransport["send"]>;
+type ModernSend = Parameters<PerRequestHTTPServerTransport['send']>;
 
 // A per-request transport that reports its terminal reply. Only a message for
 // this request's own id ends its work; progress, unrelated late replies and
@@ -114,7 +115,7 @@ class WorkTransport extends PerRequestHTTPServerTransport {
     this.replied = replied;
   }
   override async send(message: ModernSend[0], options?: ModernSend[1]): Promise<void> {
-    if (!("method" in message) && "id" in message) this.replied(message);
+    if (!('method' in message) && 'id' in message) this.replied(message);
     await super.send(message, options);
   }
 }
@@ -133,31 +134,31 @@ export const createMount = (
 ): GatewayMount => {
   let closing = false;
   const capture = (level: LogLevel, args: unknown[], diagnose = true) => {
-    const stderr = typeof args[0] === "string" && args[0].startsWith("Child stderr:");
-    logs.append({ server: name, level, source: stderr ? "stderr" : "logger" }, args);
+    const stderr = typeof args[0] === 'string' && args[0].startsWith('Child stderr:');
+    logs.append({ server: name, level, source: stderr ? 'stderr' : 'logger' }, args);
     // Upstream HTTP transports also report a synthetic null/null "child" exit
     // on close. Preserve that log without replacing the actual HTTP failure.
     const upstreamClosed =
-      isHttpServer(server) && args[0] === "Child exited: code=null, signal=null";
+      isHttpServer(server) && args[0] === 'Child exited: code=null, signal=null';
     if (
       diagnose &&
       !closing &&
-      level === "error" &&
+      level === 'error' &&
       !stderr &&
       !upstreamClosed &&
       !clientCaused(args)
     )
       onDiagnostic(backendSummary(args));
   };
-  const diagnostic = (...args: unknown[]) => capture("error", args);
+  const diagnostic = (...args: unknown[]) => capture('error', args);
   const logger: GatewayLogger = {
-    info: (...args) => capture("info", args),
+    info: (...args) => capture('info', args),
     error: diagnostic,
-    debug: (...args) => capture("debug", args),
-    warn: (...args) => capture("warn", args),
+    debug: (...args) => capture('debug', args),
+    warn: (...args) => capture('warn', args),
   };
   const source: Source = isHttpServer(server)
-    ? { upstream: { type: "streamableHttp", url: new URL(server.url), headers: server.headers } }
+    ? { upstream: { type: 'streamableHttp', url: new URL(server.url), headers: server.headers } }
     : {
         stdioCmd: {
           command: server.command,
@@ -168,7 +169,7 @@ export const createMount = (
       };
   const children = new BackendProcesses(logger);
   const reserve = () => {
-    if (children.closing) throw failure("Closed", "The backend is closing.");
+    if (children.closing) throw failure('Closed', 'The backend is closing.');
     const lease = admission.acquire();
     if (!lease) throw new CapacityError();
     return lease;
@@ -181,15 +182,15 @@ export const createMount = (
     cleanedUp = false;
 
     override async start(): Promise<void> {
-      if (!source.stdioCmd) throw new Error("Expected stdio source");
+      if (!source.stdioCmd) throw new Error('Expected stdio source');
       const child = spawnCommand(spawn, source.stdioCmd, {
         ...children.spawnOptions,
-        stdio: "pipe",
+        stdio: 'pipe',
       });
       this.child = child;
       this.stop = children.own(child);
       this.watch(child);
-      child.stderr.on("data", (chunk) => logger.error("Child stderr:", chunk.toString("utf8")));
+      child.stderr.on('data', (chunk) => logger.error('Child stderr:', chunk.toString('utf8')));
       readBackendLines(
         child.stdout,
         (line) => this.deliver(line),
@@ -201,7 +202,7 @@ export const createMount = (
     }
 
     constructor(lease: ResourceLease) {
-      if (!source.stdioCmd) throw new Error("Expected stdio source");
+      if (!source.stdioCmd) throw new Error('Expected stdio source');
       super(source.stdioCmd, children, logger);
       this.close = children.track(() =>
         releaseAfterCleanup(super.close(), () => {
@@ -216,7 +217,7 @@ export const createMount = (
     override close: () => Promise<void>;
     cleanedUp = false;
 
-    override async send(message: Parameters<ModernChild["send"]>[0]): Promise<void> {
+    override async send(message: Parameters<ModernChild['send']>[0]): Promise<void> {
       const pending = super.send(message);
       this.sending.add(pending);
       try {
@@ -231,11 +232,11 @@ export const createMount = (
     }
 
     override async events(response: Response, deliver: (value: unknown) => void): Promise<void> {
-      if (!response.body) throw new Error("Upstream event stream has no body");
+      if (!response.body) throw new Error('Upstream event stream has no body');
       const parser = createParser({
         maxBufferSize: MAX_BACKEND_MESSAGE_BYTES,
         onError: (error) => {
-          if (error.type === "max-buffer-size-exceeded") throw new BackendOutputLimitError();
+          if (error.type === 'max-buffer-size-exceeded') throw new BackendOutputLimitError();
         },
         onEvent: ({ data }) => {
           if (Buffer.byteLength(data) > MAX_BACKEND_MESSAGE_BYTES)
@@ -243,7 +244,7 @@ export const createMount = (
           if (data) deliver(JSON.parse(data));
         },
       });
-      const decoder = new TextDecoder("utf-8", { fatal: true });
+      const decoder = new TextDecoder('utf-8', { fatal: true });
       const feed = createLineFeed((text) => parser.feed(text));
       for await (const chunk of response.body) {
         feed(decoder.decode(chunk, { stream: true }));
@@ -257,7 +258,7 @@ export const createMount = (
       lease: ResourceLease,
       declared: { version: string | undefined; params: Record<string, string> },
     ) {
-      if (!source.upstream) throw new Error("Expected upstream source");
+      if (!source.upstream) throw new Error('Expected upstream source');
       super(source.upstream, declared, logger);
       this.close = children.track(() =>
         releaseAfterCleanup(
@@ -338,7 +339,7 @@ export const createMount = (
         const value = headerValue(req);
         const route = await admit(req, res, value, speaks);
         if (res.destroyed || res.writableEnded || children.closing) return;
-        if (typeof route === "boolean") {
+        if (typeof route === 'boolean') {
           // true: admission already answered. false: a session-protocol request.
           if (route) return;
           if (sessions) await sessions.post(req, res);
@@ -349,12 +350,12 @@ export const createMount = (
         // older revision, or initialize with a modern envelope, to the backend.
         if (
           route.classification.revision !== MODERN_VERSION ||
-          route.message.method === "initialize"
+          route.message.method === 'initialize'
         ) {
           rejectWith(req, res, 400, UNSUPPORTED_PROTOCOL_ERROR);
           return;
         }
-        const requestId = route.messageKind === "request" ? route.message.id : undefined;
+        const requestId = route.messageKind === 'request' ? route.message.id : undefined;
         const work = requestId === undefined ? undefined : calls.owner();
         if (work && requestId !== undefined && !calls.admit(work, requestId)) {
           // Still at the HTTP admission boundary, before any continuation is
@@ -373,33 +374,33 @@ export const createMount = (
           const transport = new WorkTransport(
             { classification: route.classification },
             (message) => {
-              const id = "id" in message ? message.id : undefined;
+              const id = 'id' in message ? message.id : undefined;
               if (
                 requestId !== undefined &&
-                (typeof id === "string" || typeof id === "number") &&
+                (typeof id === 'string' || typeof id === 'number') &&
                 id === requestId
               )
                 releaseWork();
             },
           );
           const continuation =
-            route.messageKind === "request" ? route.message.params?.requestState : undefined;
+            route.messageKind === 'request' ? route.message.params?.requestState : undefined;
           let reused: ReusedChild | undefined;
           if (isContinuationHandle(continuation)) {
             const waiting = new AbortController();
             const abort = () => waiting.abort();
-            res.once("close", abort);
+            res.once('close', abort);
             try {
               reused = await retained.take(continuation, waiting.signal);
             } finally {
-              res.off("close", abort);
+              res.off('close', abort);
             }
             if (!reused) {
               await transport.close();
               if (!res.destroyed) {
                 rejectWith(req, res, 400, {
                   code: -32602,
-                  message: "Continuation expired or backend unavailable",
+                  message: 'Continuation expired or backend unavailable',
                 });
               }
               return;
@@ -413,7 +414,7 @@ export const createMount = (
               child = source.stdioCmd
                 ? new LeasedStdio(lease)
                 : new LeasedUpstream(lease, {
-                    version: value("mcp-protocol-version"),
+                    version: value('mcp-protocol-version'),
                     params: paramHeaders(req),
                   });
             } catch (error) {
@@ -473,49 +474,49 @@ export const createMount = (
     };
   } catch (error) {
     diagnostic(error);
-    throw failure("BackendFailure", "The backend mount could not be created.");
+    throw failure('BackendFailure', 'The backend mount could not be created.');
   }
 };
 
 const validExit = (code: string, signal: string): boolean => {
   return (
-    (code === "null" || (Number(code) >= -1 && Number(code) <= 255)) &&
-    (signal === "null" || Object.hasOwn(constants.signals, signal))
+    (code === 'null' || (Number(code) >= -1 && Number(code) <= 255)) &&
+    (signal === 'null' || Object.hasOwn(constants.signals, signal))
   );
 };
 
 /** Only allowlisted codes and numeric statuses may enter status summaries. */
 export const backendSummary = (args: readonly unknown[]): string => {
   const codes = new Set([
-    "ENOENT",
-    "EACCES",
-    "EPERM",
-    "ECONNREFUSED",
-    "ECONNRESET",
-    "ETIMEDOUT",
-    "EADDRINUSE",
-    "ENOTFOUND",
+    'ENOENT',
+    'EACCES',
+    'EPERM',
+    'ECONNREFUSED',
+    'ECONNRESET',
+    'ETIMEDOUT',
+    'EADDRINUSE',
+    'ENOTFOUND',
   ]);
   const pending = [...args];
   const seen = new Set<object>();
   for (let index = 0; index < Math.min(pending.length, 16); index++) {
     const value = pending[index];
-    if (value && typeof value === "object") {
+    if (value && typeof value === 'object') {
       if (seen.has(value)) continue;
       seen.add(value);
       try {
-        const cause = Object.getOwnPropertyDescriptor(value, "cause")?.value;
+        const cause = Object.getOwnPropertyDescriptor(value, 'cause')?.value;
         if (cause) pending.push(cause);
-        const code = Object.getOwnPropertyDescriptor(value, "code")?.value;
-        if (typeof code === "string" && codes.has(code))
+        const code = Object.getOwnPropertyDescriptor(value, 'code')?.value;
+        if (typeof code === 'string' && codes.has(code))
           return `Backend failed (${code}). Check the executable, permissions or connection. Open Logs for details.`;
         const status =
-          Object.getOwnPropertyDescriptor(value, "status")?.value ??
-          (typeof code === "number" ? code : undefined);
+          Object.getOwnPropertyDescriptor(value, 'status')?.value ??
+          (typeof code === 'number' ? code : undefined);
         if (Number.isInteger(status) && status >= 400 && status <= 599)
           return `Backend HTTP request failed (${status}). Open Logs for details.`;
-        const message = Object.getOwnPropertyDescriptor(value, "message")?.value;
-        if (typeof message === "string") {
+        const message = Object.getOwnPropertyDescriptor(value, 'message')?.value;
+        if (typeof message === 'string') {
           const remote = /^The remote server answered ([45]\d{2})$/.exec(message);
           if (remote) return `Backend HTTP request failed (${remote[1]}). Open Logs for details.`;
           const http = /^Streamable HTTP error: Error POSTing to endpoint: ([45]\d{2})\b/.exec(
@@ -532,13 +533,13 @@ export const backendSummary = (args: readonly unknown[]): string => {
         /* Unreadable diagnostics still remain a generic failure. */
       }
     }
-    if (typeof value === "string") {
+    if (typeof value === 'string') {
       const exit = /^Child exited: code=(-?\d+|null), signal=(SIG[A-Z0-9]+|null)$/.exec(value);
       if (exit && validExit(exit[1], exit[2]))
         return `Backend process exited (code ${exit[1]}, signal ${exit[2]}). Open Logs for details.`;
     }
   }
-  return "A backend operation failed. Open Logs for details.";
+  return 'A backend operation failed. Open Logs for details.';
 };
 
 // Deadlines bound each wait, not ownership of the underlying cleanup. A raw
@@ -560,30 +561,30 @@ export const closeMount = async (
       completion,
       new Promise<never>((_resolve, reject) => {
         timer = setTimeout(
-          () => reject(failure("ShutdownFailure", "Backend cleanup exceeded its deadline.")),
+          () => reject(failure('ShutdownFailure', 'Backend cleanup exceeded its deadline.')),
           SHUTDOWN_MS,
         );
       }),
     ]);
   } catch (error) {
     onFailure?.(error);
-    throw failure("ShutdownFailure", "Backend cleanup did not complete successfully.");
+    throw failure('ShutdownFailure', 'Backend cleanup did not complete successfully.');
   } finally {
     if (timer) clearTimeout(timer);
   }
 };
 const MAX_DISCOVERY_BYTES = 64 * 1024;
 const DISCOVERY_TIMEOUT_MS = 10_000;
-const DISCOVERY_ID = "supergateway-discover";
+const DISCOVERY_ID = 'supergateway-discover';
 
 const discoveryResult = (data: string): boolean | undefined => {
   const message = JSONRPCMessageSchema.parse(JSON.parse(data));
-  if (!("id" in message) || "method" in message || message.id !== DISCOVERY_ID) return undefined;
-  if (!("result" in message)) return false;
+  if (!('id' in message) || 'method' in message || message.id !== DISCOVERY_ID) return undefined;
+  if (!('result' in message)) return false;
   const versions = message.result.supportedVersions;
   return (
     Array.isArray(versions) &&
-    versions.every((version) => typeof version === "string") &&
+    versions.every((version) => typeof version === 'string') &&
     versions.includes(MODERN_VERSION)
   );
 };
@@ -623,30 +624,30 @@ class UpstreamDiscovery {
       let response: Response;
       try {
         response = await fetch(this.upstream.url, {
-          method: "POST",
+          method: 'POST',
           signal: AbortSignal.any([
             this.lifetime.signal,
             AbortSignal.timeout(DISCOVERY_TIMEOUT_MS),
           ]),
           headers: {
             ...this.upstream.headers,
-            "content-type": "application/json",
-            accept: "application/json, text/event-stream",
-            "mcp-protocol-version": MODERN_VERSION,
-            "mcp-method": "server/discover",
+            'content-type': 'application/json',
+            accept: 'application/json, text/event-stream',
+            'mcp-protocol-version': MODERN_VERSION,
+            'mcp-method': 'server/discover',
           },
           body: JSON.stringify({
-            jsonrpc: "2.0",
+            jsonrpc: '2.0',
             id: DISCOVERY_ID,
-            method: "server/discover",
+            method: 'server/discover',
             params: {
               _meta: {
-                "io.modelcontextprotocol/protocolVersion": MODERN_VERSION,
-                "io.modelcontextprotocol/clientInfo": {
-                  name: "supergateway",
+                'io.modelcontextprotocol/protocolVersion': MODERN_VERSION,
+                'io.modelcontextprotocol/clientInfo': {
+                  name: 'supergateway',
                   version: getVersion(),
                 },
-                "io.modelcontextprotocol/clientCapabilities": {},
+                'io.modelcontextprotocol/clientCapabilities': {},
               },
             },
           }),
@@ -657,9 +658,9 @@ class UpstreamDiscovery {
       if (!response.body) return response.status >= 500 ? undefined : false;
       const reader = response.body.getReader();
       const chunks: Uint8Array[] = [];
-      const decoder = new TextDecoder("utf-8", { fatal: true });
+      const decoder = new TextDecoder('utf-8', { fatal: true });
       let result: boolean | undefined;
-      const parser = response.headers.get("content-type")?.includes("text/event-stream")
+      const parser = response.headers.get('content-type')?.includes('text/event-stream')
         ? createParser({
             onEvent: ({ data }) => {
               if (data && result === undefined) result = discoveryResult(data);

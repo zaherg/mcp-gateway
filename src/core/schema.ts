@@ -1,8 +1,8 @@
-import { isRecord } from "@mcp-gateway/shared/config-document";
-import * as z from "zod/v4";
+import { isRecord } from '@mcp-gateway/shared/config-document';
+import * as z from 'zod/v4';
 
 /** `NaN` and `Infinity` must reach the later port check, as with the previous schema. */
-export const anyNumber = z.custom<number>((value) => typeof value === "number");
+export const anyNumber = z.custom<number>((value) => typeof value === 'number');
 
 /**
  * Validates and rebuilds a string-keyed record one own entry at a time.

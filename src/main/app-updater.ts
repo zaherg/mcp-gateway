@@ -1,19 +1,20 @@
-import { randomBytes } from "node:crypto";
-import { lstat, open, readFile, rename, unlink } from "node:fs/promises";
-import { join } from "node:path";
-import { ensureParent } from "@mcp-gateway/core/config";
-import { RequestError } from "@mcp-gateway/core/errors";
-import type { QuitCoordinator } from "@mcp-gateway/main/lifecycle";
-import type { QuitStatus, UpdateStatus } from "@mcp-gateway/shared/rpc";
-import { Updater, type UpdateStatusEntry } from "electrobun/main";
+import { randomBytes } from 'node:crypto';
+import { lstat, open, readFile, rename, unlink } from 'node:fs/promises';
+import { join } from 'node:path';
 
-const PREFERENCE_FILE = "updates.json";
+import { ensureParent } from '@mcp-gateway/core/config';
+import { RequestError } from '@mcp-gateway/core/errors';
+import type { QuitCoordinator } from '@mcp-gateway/main/lifecycle';
+import type { QuitStatus, UpdateStatus } from '@mcp-gateway/shared/rpc';
+import { Updater, type UpdateStatusEntry } from 'electrobun/main';
+
+const PREFERENCE_FILE = 'updates.json';
 const STABLE_VERSION = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
 const STARTUP_DELAY_MS = 10_000;
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1_000;
 const POLL_INTERVAL_MS = 60 * 60 * 1_000;
 const PREFERENCE_ERROR =
-  "Update preferences are invalid or unsafe. Background updates are disabled.";
+  'Update preferences are invalid or unsafe. Background updates are disabled.';
 
 export interface UpdateRuntime {
   status(): UpdateStatus;
@@ -32,7 +33,7 @@ export const unsupportedUpdateStatus = (): UpdateStatus => {
     automaticUpdates: false,
     installedVersion: null,
     availableVersion: null,
-    phase: "idle",
+    phase: 'idle',
     error: null,
     checkedAt: null,
   };
@@ -45,7 +46,7 @@ export const resolveUpdateSupport = async (): Promise<{
   const info = await Updater.getLocalInfo();
   const installedVersion = STABLE_VERSION.test(info.version) ? info.version : null;
   return {
-    supported: info.channel === "stable" && installedVersion !== null && info.baseUrl.length > 0,
+    supported: info.channel === 'stable' && installedVersion !== null && info.baseUrl.length > 0,
     installedVersion,
   };
 };
@@ -73,22 +74,22 @@ const readPreference = async (dataDirectory: string): Promise<Preference> => {
     const stat = await lstat(path);
     if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0)
       return invalidPreference();
-    const document = JSON.parse(await readFile(path, "utf8")) as unknown;
-    if (typeof document !== "object" || document === null || Array.isArray(document))
+    const document = JSON.parse(await readFile(path, 'utf8')) as unknown;
+    if (typeof document !== 'object' || document === null || Array.isArray(document))
       return invalidPreference();
     const record = document as Record<string, unknown>;
     const keys = Object.keys(record).sort();
     if (
       keys.length !== 2 ||
-      keys[0] !== "automaticUpdates" ||
-      keys[1] !== "schema_version" ||
+      keys[0] !== 'automaticUpdates' ||
+      keys[1] !== 'schema_version' ||
       record.schema_version !== 1 ||
-      typeof record.automaticUpdates !== "boolean"
+      typeof record.automaticUpdates !== 'boolean'
     )
       return invalidPreference();
     return { automaticUpdates: record.automaticUpdates, error: null };
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT")
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT')
       return { automaticUpdates: true, error: null };
     return invalidPreference();
   }
@@ -97,8 +98,8 @@ const readPreference = async (dataDirectory: string): Promise<Preference> => {
 const writePreference = async (dataDirectory: string, automaticUpdates: boolean): Promise<void> => {
   const path = join(dataDirectory, PREFERENCE_FILE);
   await ensureParent(path);
-  const temporary = `${path}.${randomBytes(8).toString("hex")}.tmp`;
-  const handle = await open(temporary, "wx", 0o600);
+  const temporary = `${path}.${randomBytes(8).toString('hex')}.tmp`;
+  const handle = await open(temporary, 'wx', 0o600);
   try {
     await handle.writeFile(JSON.stringify({ schema_version: 1, automaticUpdates }));
     await handle.sync();
@@ -114,7 +115,7 @@ const writePreference = async (dataDirectory: string, automaticUpdates: boolean)
 };
 
 const errorMessage = (error: unknown): string =>
-  error instanceof Error && error.message ? error.message : "The update operation failed.";
+  error instanceof Error && error.message ? error.message : 'The update operation failed.';
 
 export class AppUpdater implements UpdateRuntime {
   private value: UpdateStatus;
@@ -139,7 +140,7 @@ export class AppUpdater implements UpdateRuntime {
       automaticUpdates: false,
       installedVersion: options.installedVersion,
       availableVersion: null,
-      phase: "idle",
+      phase: 'idle',
       error: null,
       checkedAt: null,
     };
@@ -163,7 +164,7 @@ export class AppUpdater implements UpdateRuntime {
     if (preference.error)
       this.set({
         error: preference.error,
-        phase: this.value.phase === "idle" ? "error" : this.value.phase,
+        phase: this.value.phase === 'idle' ? 'error' : this.value.phase,
       });
     Updater.onStatusChange((entry) => this.handleSdkStatus(entry));
     this.scheduleChecks();
@@ -180,28 +181,28 @@ export class AppUpdater implements UpdateRuntime {
 
   async check(): Promise<UpdateStatus> {
     this.assertAvailable();
-    if (this.value.phase === "restarting")
-      throw new RequestError("An update restart is already in progress.");
-    if (this.value.phase === "downloading" || this.value.phase === "ready") return this.status();
+    if (this.value.phase === 'restarting')
+      throw new RequestError('An update restart is already in progress.');
+    if (this.value.phase === 'downloading' || this.value.phase === 'ready') return this.status();
     return this.performCheck();
   }
 
   async download(): Promise<UpdateStatus> {
     this.assertAvailable();
-    if (this.value.phase === "restarting")
-      throw new RequestError("An update restart is already in progress.");
-    if (this.value.phase === "checking")
-      throw new RequestError("An update check is already in progress.");
-    if (this.value.phase === "downloading") return this.status();
-    if (this.value.phase === "ready") return this.status();
+    if (this.value.phase === 'restarting')
+      throw new RequestError('An update restart is already in progress.');
+    if (this.value.phase === 'checking')
+      throw new RequestError('An update check is already in progress.');
+    if (this.value.phase === 'downloading') return this.status();
+    if (this.value.phase === 'ready') return this.status();
     if (
       !this.value.availableVersion ||
       !isHigherStableVersion(this.value.availableVersion, this.options.installedVersion)
     )
-      throw new RequestError("No eligible update is available to download.");
+      throw new RequestError('No eligible update is available to download.');
     // The download can outlive the window's request limit; its phase is polled.
     void this.performDownload().catch((error: unknown) =>
-      this.update({ phase: "error", error: errorMessage(error) }),
+      this.update({ phase: 'error', error: errorMessage(error) }),
     );
     return this.status();
   }
@@ -213,12 +214,12 @@ export class AppUpdater implements UpdateRuntime {
       await writePreference(this.options.dataDirectory, enabled);
       this.set({ automaticUpdates: enabled });
       if (this.value.error === PREFERENCE_ERROR)
-        this.set({ error: null, phase: this.value.phase === "error" ? "idle" : this.value.phase });
+        this.set({ error: null, phase: this.value.phase === 'error' ? 'idle' : this.value.phase });
     } catch {
       this.set({
         automaticUpdates: previous,
-        phase: this.value.phase === "idle" ? "error" : this.value.phase,
-        error: "The update preference could not be saved. The previous setting remains active.",
+        phase: this.value.phase === 'idle' ? 'error' : this.value.phase,
+        error: 'The update preference could not be saved. The previous setting remains active.',
       });
     }
     if (this.value.automaticUpdates) this.scheduleChecks();
@@ -235,17 +236,17 @@ export class AppUpdater implements UpdateRuntime {
       !info.version ||
       !isHigherStableVersion(info.version, this.options.installedVersion)
     )
-      throw new RequestError("No verified update is ready to install.");
+      throw new RequestError('No verified update is ready to install.');
     let cleaned: boolean;
     try {
       cleaned = await this.options.quit.beginUpdateRestart();
     } catch {
       throw new RequestError(
-        "Update cleanup failed. The app has not exited. Use Quit, then reopen the app to retry the update.",
+        'Update cleanup failed. The app has not exited. Use Quit, then reopen the app to retry the update.',
       );
     }
-    if (!cleaned) throw new RequestError("Quit cleanup has started. Retry Quit to close the app.");
-    this.update({ phase: "restarting", error: null });
+    if (!cleaned) throw new RequestError('Quit cleanup has started. Retry Quit to close the app.');
+    this.update({ phase: 'restarting', error: null });
     const mark = Updater.getStatusHistory().length;
     this.restartApproved = true;
     this.options.quit.approveUpdateRestart();
@@ -259,16 +260,16 @@ export class AppUpdater implements UpdateRuntime {
       this.options.quit.clearUpdateRestart();
     }
     const entries = Updater.getStatusHistory().slice(mark);
-    if (entries.some((entry) => entry.status === "launching-new-version"))
+    if (entries.some((entry) => entry.status === 'launching-new-version'))
       return this.options.quit.status();
     const failure = [...entries]
       .reverse()
       .find(
         (entry) =>
-          entry.status === "error" || entry.status === "idle" || entry.status === "no-update",
+          entry.status === 'error' || entry.status === 'idle' || entry.status === 'no-update',
       );
-    const message = applyError ?? failure?.message ?? "The update restart reported no outcome.";
-    this.update({ phase: "error", error: message });
+    const message = applyError ?? failure?.message ?? 'The update restart reported no outcome.';
+    this.update({ phase: 'error', error: message });
     this.options.quit.updateRestartFailed(
       `Update handoff failed. The gateway is stopped. Quit and reopen the app to retry the update. ${message}`,
     );
@@ -276,7 +277,7 @@ export class AppUpdater implements UpdateRuntime {
   }
 
   private async performCheck(): Promise<UpdateStatus> {
-    this.update({ phase: "checking", error: null });
+    this.update({ phase: 'checking', error: null });
     this.lastCheckAt = Date.now();
     try {
       const info = await Updater.checkForUpdate();
@@ -285,11 +286,11 @@ export class AppUpdater implements UpdateRuntime {
         info.updateAvailable && isHigherStableVersion(info.version, this.options.installedVersion);
       this.update({
         availableVersion: eligible ? info.version : null,
-        phase: eligible ? "available" : info.updateAvailable || info.error ? "error" : "idle",
+        phase: eligible ? 'available' : info.updateAvailable || info.error ? 'error' : 'idle',
         error: info.error
           ? info.error
           : info.updateAvailable && !eligible
-            ? "The offered update version is not eligible."
+            ? 'The offered update version is not eligible.'
             : null,
         checkedAt: new Date().toISOString(),
       });
@@ -297,13 +298,13 @@ export class AppUpdater implements UpdateRuntime {
       return this.status();
     } catch (error) {
       if (this.stopped) return this.status();
-      this.update({ phase: "error", error: errorMessage(error) });
+      this.update({ phase: 'error', error: errorMessage(error) });
       return this.status();
     }
   }
 
   private async performDownload(): Promise<UpdateStatus> {
-    this.update({ phase: "downloading", error: null });
+    this.update({ phase: 'downloading', error: null });
     try {
       await Updater.downloadUpdate();
       if (this.stopped) return this.status();
@@ -312,16 +313,16 @@ export class AppUpdater implements UpdateRuntime {
         info.updateReady &&
           info.version &&
           isHigherStableVersion(info.version, this.options.installedVersion)
-          ? { availableVersion: info.version, phase: "ready", error: null }
+          ? { availableVersion: info.version, phase: 'ready', error: null }
           : {
-              phase: "error",
-              error: info.error || "The update download did not complete.",
+              phase: 'error',
+              error: info.error || 'The update download did not complete.',
             },
       );
       return this.status();
     } catch (error) {
       if (this.stopped) return this.status();
-      this.update({ phase: "error", error: errorMessage(error) });
+      this.update({ phase: 'error', error: errorMessage(error) });
       return this.status();
     }
   }
@@ -329,45 +330,45 @@ export class AppUpdater implements UpdateRuntime {
   private handleSdkStatus(entry: UpdateStatusEntry): void {
     const info = Updater.updateInfo();
     switch (entry.status) {
-      case "checking":
-        this.update({ phase: "checking", error: null });
+      case 'checking':
+        this.update({ phase: 'checking', error: null });
         return;
-      case "update-available":
+      case 'update-available':
         this.update(
           isHigherStableVersion(info.version, this.options.installedVersion)
-            ? { phase: "available", availableVersion: info.version, error: null }
+            ? { phase: 'available', availableVersion: info.version, error: null }
             : {
-                phase: "error",
+                phase: 'error',
                 availableVersion: null,
-                error: "The offered update version is not eligible.",
+                error: 'The offered update version is not eligible.',
               },
         );
         return;
-      case "no-update":
-        this.update({ phase: "idle", error: null });
+      case 'no-update':
+        this.update({ phase: 'idle', error: null });
         return;
-      case "download-starting":
-      case "downloading":
-        this.update({ phase: "downloading", error: null });
+      case 'download-starting':
+      case 'downloading':
+        this.update({ phase: 'downloading', error: null });
         return;
-      case "download-complete":
+      case 'download-complete':
         this.update(
           info.version && isHigherStableVersion(info.version, this.options.installedVersion)
-            ? { phase: "ready", availableVersion: info.version, error: null }
-            : { phase: "error", error: "The offered update version is not eligible." },
+            ? { phase: 'ready', availableVersion: info.version, error: null }
+            : { phase: 'error', error: 'The offered update version is not eligible.' },
         );
         return;
-      case "applying":
-        this.update({ phase: "restarting", error: null });
+      case 'applying':
+        this.update({ phase: 'restarting', error: null });
         return;
-      case "launching-new-version":
-        if (this.restartApproved) this.update({ phase: "restarting", error: null });
+      case 'launching-new-version':
+        if (this.restartApproved) this.update({ phase: 'restarting', error: null });
         return;
-      case "error":
-        this.update({ phase: "error", error: entry.message });
+      case 'error':
+        this.update({ phase: 'error', error: entry.message });
         return;
-      case "idle":
-        this.update({ phase: "idle", error: null });
+      case 'idle':
+        this.update({ phase: 'idle', error: null });
         return;
       default:
         return;
@@ -379,23 +380,23 @@ export class AppUpdater implements UpdateRuntime {
       .reverse()
       .find(
         (entry) =>
-          entry.status === "error" ||
-          entry.status === "no-update" ||
-          entry.status === "download-complete" ||
-          entry.status === "update-available" ||
-          entry.status === "idle",
+          entry.status === 'error' ||
+          entry.status === 'no-update' ||
+          entry.status === 'download-complete' ||
+          entry.status === 'update-available' ||
+          entry.status === 'idle',
       );
-    if (terminal?.status === "error") this.set({ phase: "error", error: terminal.message });
-    else if (terminal?.status === "no-update" || terminal?.status === "idle")
-      this.set({ phase: "idle", error: null });
-    else if (terminal?.status === "download-complete") {
+    if (terminal?.status === 'error') this.set({ phase: 'error', error: terminal.message });
+    else if (terminal?.status === 'no-update' || terminal?.status === 'idle')
+      this.set({ phase: 'idle', error: null });
+    else if (terminal?.status === 'download-complete') {
       const info = Updater.updateInfo();
       if (info.version && isHigherStableVersion(info.version, this.options.installedVersion))
-        this.set({ phase: "ready", availableVersion: info.version });
-    } else if (terminal?.status === "update-available") {
+        this.set({ phase: 'ready', availableVersion: info.version });
+    } else if (terminal?.status === 'update-available') {
       const info = Updater.updateInfo();
       if (info.version && isHigherStableVersion(info.version, this.options.installedVersion))
-        this.set({ phase: "available", availableVersion: info.version });
+        this.set({ phase: 'available', availableVersion: info.version });
     }
     const info = Updater.updateInfo();
     if (
@@ -403,14 +404,14 @@ export class AppUpdater implements UpdateRuntime {
       info.version &&
       isHigherStableVersion(info.version, this.options.installedVersion)
     )
-      this.set({ phase: "ready", availableVersion: info.version });
+      this.set({ phase: 'ready', availableVersion: info.version });
     else if (
       info.updateAvailable &&
       info.version &&
       isHigherStableVersion(info.version, this.options.installedVersion)
     )
-      this.set({ phase: "available", availableVersion: info.version });
-    if (info.error) this.set({ phase: "error", error: info.error });
+      this.set({ phase: 'available', availableVersion: info.version });
+    if (info.error) this.set({ phase: 'error', error: info.error });
   }
 
   private scheduleChecks(): void {
@@ -425,7 +426,7 @@ export class AppUpdater implements UpdateRuntime {
       const elapsed = Date.now() - this.lastCheckAt;
       if (
         elapsed >= CHECK_INTERVAL_MS ||
-        (this.value.phase === "error" && elapsed >= POLL_INTERVAL_MS)
+        (this.value.phase === 'error' && elapsed >= POLL_INTERVAL_MS)
       )
         this.scheduledCheck();
     }, POLL_INTERVAL_MS);
@@ -436,8 +437,8 @@ export class AppUpdater implements UpdateRuntime {
       !this.started ||
       this.stopped ||
       !this.value.automaticUpdates ||
-      this.value.phase === "ready" ||
-      this.value.phase === "restarting"
+      this.value.phase === 'ready' ||
+      this.value.phase === 'restarting'
     )
       return;
     void this.check().catch(() => undefined);
@@ -451,9 +452,9 @@ export class AppUpdater implements UpdateRuntime {
   }
 
   private assertAvailable(): void {
-    if (!this.options.supported) throw new RequestError("Updates are unavailable in this build.");
+    if (!this.options.supported) throw new RequestError('Updates are unavailable in this build.');
     if (this.stopped)
-      throw new RequestError("Update work is unavailable after shutdown has started.");
+      throw new RequestError('Update work is unavailable after shutdown has started.');
   }
 
   private set(patch: Partial<UpdateStatus>): void {

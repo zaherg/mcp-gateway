@@ -1,6 +1,6 @@
-import { type Editor, emptyEditor } from "@mcp-gateway/mainview/dialogs/ServerEditor";
-import type { AppClient, AppResult, AppSnapshot } from "@mcp-gateway/shared/rpc";
-import type { GatewayConfig, GatewaySnapshot } from "@mcp-gateway/shared/types";
+import { type Editor, emptyEditor } from '@mcp-gateway/mainview/dialogs/ServerEditor';
+import type { AppClient, AppResult, AppSnapshot } from '@mcp-gateway/shared/rpc';
+import type { GatewayConfig, GatewaySnapshot } from '@mcp-gateway/shared/types';
 import {
   ArrowUpRight,
   CircleHelp,
@@ -13,7 +13,7 @@ import {
   ShieldCheck,
   Terminal,
   Trash2,
-} from "lucide-react";
+} from 'lucide-react';
 
 type Run = (
   operation: () => Promise<AppResult<AppSnapshot | null>>,
@@ -52,8 +52,8 @@ export const Overview = ({
         <div className="section-heading">
           <div>
             <h2 id="servers-heading">
-              Your servers{" "}
-              <span className="count">{config ? Object.keys(config.mcpServers).length : "?"}</span>
+              Your servers{' '}
+              <span className="count">{config ? Object.keys(config.mcpServers).length : '?'}</span>
             </h2>
             <p>A separate endpoint for each configured MCP server.</p>
           </div>
@@ -70,28 +70,28 @@ export const Overview = ({
           {config &&
             Object.entries(config.mcpServers).map(([name, server]) => {
               const live = gateway?.servers.find((item) => item.name === name);
-              const status = live?.status ?? (server.disabled ? "disabled" : "stopped");
-              const http = "url" in server;
+              const status = live?.status ?? (server.disabled ? 'disabled' : 'stopped');
+              const http = 'url' in server;
               return (
                 <article className="server-card panel" key={name}>
                   <div className="card-top">
-                    <span className={`server-icon ${http ? "blue" : ""}`}>
+                    <span className={`server-icon ${http ? 'blue' : ''}`}>
                       {http ? <Globe size={21} /> : <Terminal size={21} />}
                     </span>
                     <span
-                      className={`badge ${status === "mounted" ? "teal" : status === "error" ? "red" : ""}`}
+                      className={`badge ${status === 'mounted' ? 'teal' : status === 'error' ? 'red' : ''}`}
                     >
-                      {status === "mounted"
-                        ? "Mounted"
-                        : status === "disabled"
-                          ? "Disabled"
-                          : status === "error"
-                            ? "Error"
-                            : "Stopped"}
+                      {status === 'mounted'
+                        ? 'Mounted'
+                        : status === 'disabled'
+                          ? 'Disabled'
+                          : status === 'error'
+                            ? 'Error'
+                            : 'Stopped'}
                     </span>
                   </div>
                   <h3>{name}</h3>
-                  <p className="transport">{http ? "STREAMABLE HTTP" : "LOCAL STDIO"}</p>
+                  <p className="transport">{http ? 'STREAMABLE HTTP' : 'LOCAL STDIO'}</p>
                   <p className="server-detail mono" title={http ? server.url : server.command}>
                     {http ? server.url : server.command}
                   </p>
@@ -105,7 +105,7 @@ export const Overview = ({
                       onClick={() =>
                         void run(
                           () => client.copyEndpoint({ name }),
-                          "Endpoint copied to clipboard.",
+                          'Endpoint copied to clipboard.',
                         )
                       }
                     >
@@ -128,7 +128,7 @@ export const Overview = ({
                       disabled={configurationLocked || dirty || !!gateway?.configError}
                       onClick={() => void toggleEndpoint(name, !server.disabled)}
                     >
-                      {server.disabled ? "Start" : "Stop"}
+                      {server.disabled ? 'Start' : 'Stop'}
                     </button>
                     <button
                       type="button"
@@ -166,7 +166,7 @@ export const Overview = ({
                     onClick={() =>
                       void run(
                         () => client.copyClientConfig({ name }),
-                        "Client configuration copied. It contains your bearer token; keep it private.",
+                        'Client configuration copied. It contains your bearer token; keep it private.',
                       )
                     }
                   >
@@ -194,8 +194,8 @@ export const Overview = ({
               onClick={() => {
                 if (configurationLocked) return;
                 const preset = emptyEditor();
-                preset.name = "bear";
-                preset.command = "/Applications/Bear.app/Contents/MacOS/bearcli";
+                preset.name = 'bear';
+                preset.command = '/Applications/Bear.app/Contents/MacOS/bearcli';
                 preset.args = '["mcp-server"]';
                 setEditorError(null);
                 setEditor(preset);

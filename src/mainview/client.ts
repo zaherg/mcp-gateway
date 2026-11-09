@@ -1,5 +1,5 @@
-import type { AppClient, AppRPC } from "@mcp-gateway/shared/rpc";
-import { Electroview } from "electrobun/view";
+import type { AppClient, AppRPC } from '@mcp-gateway/shared/rpc';
+import { Electroview } from 'electrobun/view';
 
 // One native bridge for the lifetime of the renderer. No HTTP administration API.
 const rpc = Electroview.defineRPC<AppRPC>({
@@ -7,7 +7,7 @@ const rpc = Electroview.defineRPC<AppRPC>({
   handlers: {
     requests: {
       interactiveQuit: () =>
-        !window.dispatchEvent(new Event("mcp-gateway:request-quit", { cancelable: true })),
+        !window.dispatchEvent(new Event('mcp-gateway:request-quit', { cancelable: true })),
     },
     messages: {},
   },

@@ -1,7 +1,7 @@
-import { Modal } from "@mcp-gateway/mainview/components/ui";
-import type { UpdateStatus } from "@mcp-gateway/shared/rpc";
-import type { GatewayConfig } from "@mcp-gateway/shared/types";
-import type { RefObject } from "react";
+import { Modal } from '@mcp-gateway/mainview/components/ui';
+import type { UpdateStatus } from '@mcp-gateway/shared/rpc';
+import type { GatewayConfig } from '@mcp-gateway/shared/types';
+import type { RefObject } from 'react';
 
 export const ConfirmDialogs = ({
   confirmQuit,
@@ -77,8 +77,8 @@ export const ConfirmDialogs = ({
           </p>
           <p>
             {dirty
-              ? "Your unsaved configuration changes will be discarded."
-              : "Your saved configuration remains unchanged."}
+              ? 'Your unsaved configuration changes will be discarded.'
+              : 'Your saved configuration remains unchanged.'}
           </p>
           <div className="dialog-actions">
             <button type="button" className="button" onClick={() => setConfirmUpdate(false)}>
@@ -90,7 +90,7 @@ export const ConfirmDialogs = ({
               disabled={quitting || updateRestarting}
               onClick={() => void requestUpdateRestart()}
             >
-              {dirty ? "Discard draft and restart" : "Restart to update"}
+              {dirty ? 'Discard draft and restart' : 'Restart to update'}
             </button>
           </div>
         </Modal>

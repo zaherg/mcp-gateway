@@ -1,13 +1,14 @@
-import { join } from "node:path";
-import { parseConfig } from "@mcp-gateway/core/config";
-import { McpGatewayController } from "@mcp-gateway/core/controller";
-import { GatewayError } from "@mcp-gateway/core/errors";
+import { join } from 'node:path';
+
+import { parseConfig } from '@mcp-gateway/core/config';
+import { McpGatewayController } from '@mcp-gateway/core/controller';
+import { GatewayError } from '@mcp-gateway/core/errors';
 import {
   AppUpdater,
   resolveUpdateSupport,
   unsupportedUpdateStatus,
-} from "@mcp-gateway/main/app-updater";
-import { InteractiveQuitGate, QuitCoordinator } from "@mcp-gateway/main/lifecycle";
+} from '@mcp-gateway/main/app-updater';
+import { InteractiveQuitGate, QuitCoordinator } from '@mcp-gateway/main/lifecycle';
 import {
   configurationDirectory,
   installedIdentifier,
@@ -15,9 +16,9 @@ import {
   openLoginManager,
   restoreWindow,
   startsInBackground,
-} from "@mcp-gateway/main/native";
-import { AppService } from "@mcp-gateway/main/service";
-import type { AppRPC, QuitStatus } from "@mcp-gateway/shared/rpc";
+} from '@mcp-gateway/main/native';
+import { AppService } from '@mcp-gateway/main/service';
+import type { AppRPC, QuitStatus } from '@mcp-gateway/shared/rpc';
 import Electrobun, {
   ApplicationMenu,
   BrowserView,
@@ -25,74 +26,74 @@ import Electrobun, {
   PATHS,
   Tray,
   Utils,
-} from "electrobun/main";
+} from 'electrobun/main';
 
 const dataDirectory = configurationDirectory(
   Utils.paths.config,
   installedIdentifier(PATHS.RESOURCES_FOLDER),
 );
 const nativeQuitSignal = observeNativeQuitSignals(
-  join(PATHS.RESOURCES_FOLDER, "app/native/login.dylib"),
+  join(PATHS.RESOURCES_FOLDER, 'app/native/login.dylib'),
 );
-const login = openLoginManager(join(PATHS.RESOURCES_FOLDER, "app/native/login.dylib"));
-const controller = await McpGatewayController.open(join(dataDirectory, "mcp.json"));
-const idleQuitStatus: QuitStatus = { attempt: 0, phase: "idle", error: null };
+const login = openLoginManager(join(PATHS.RESOURCES_FOLDER, 'app/native/login.dylib'));
+const controller = await McpGatewayController.open(join(dataDirectory, 'mcp.json'));
+const idleQuitStatus: QuitStatus = { attempt: 0, phase: 'idle', error: null };
 let quit: QuitCoordinator | undefined;
 const quitStatus = (): QuitStatus => quit?.status() ?? idleQuitStatus;
 const support = await resolveUpdateSupport();
 let updates: AppUpdater | undefined;
-const tray = new Tray({ image: "views://assets/tray.png", template: true, width: 18, height: 18 });
+const tray = new Tray({ image: 'views://assets/tray.png', template: true, width: 18, height: 18 });
 let window: BrowserWindow | undefined;
 let pendingShowUpdates = false;
 let windowReady = false;
-let menuState = "";
+let menuState = '';
 let trayRemoved = false;
 let loginClosed = false;
 let requestInteractiveRendererQuit: (() => Promise<boolean>) | undefined;
 
 const menuAction = (event: unknown): string | undefined => {
-  if (typeof event !== "object" || event === null || !("data" in event)) return;
+  if (typeof event !== 'object' || event === null || !('data' in event)) return;
   const data = event.data;
-  if (typeof data !== "object" || data === null || !("action" in data)) return;
-  return typeof data.action === "string" ? data.action : undefined;
+  if (typeof data !== 'object' || data === null || !('action' in data)) return;
+  return typeof data.action === 'string' ? data.action : undefined;
 };
 
 const updateMenu = (): void => {
   if (trayRemoved) return;
-  const quitFailed = quitStatus().phase === "failed";
+  const quitFailed = quitStatus().phase === 'failed';
   const snapshot = controller.snapshot();
   const update = updates?.status() ?? unsupportedUpdateStatus();
-  const state = `${snapshot.running}:${Boolean(snapshot.configError)}:${quitFailed}:${update.supported}:${update.phase}:${update.availableVersion ?? ""}`;
+  const state = `${snapshot.running}:${Boolean(snapshot.configError)}:${quitFailed}:${update.supported}:${update.phase}:${update.availableVersion ?? ''}`;
   if (state === menuState) return;
   menuState = state;
   const updateLabel =
-    update.phase === "ready"
-      ? `Update ready: ${update.availableVersion ?? "review"}`
-      : update.phase === "available"
-        ? `Update available: ${update.availableVersion ?? "review"}`
-        : "Check for Updates…";
+    update.phase === 'ready'
+      ? `Update ready: ${update.availableVersion ?? 'review'}`
+      : update.phase === 'available'
+        ? `Update available: ${update.availableVersion ?? 'review'}`
+        : 'Check for Updates…';
   tray.setMenu([
     {
-      type: "normal",
+      type: 'normal',
       label: quitFailed
-        ? "Cleanup failed: see settings"
+        ? 'Cleanup failed: see settings'
         : snapshot.running
-          ? "Gateway running"
-          : "Gateway stopped",
+          ? 'Gateway running'
+          : 'Gateway stopped',
       enabled: false,
     },
-    { type: "normal", label: "Open settings…", action: "open" },
+    { type: 'normal', label: 'Open settings…', action: 'open' },
     ...(update.supported
-      ? [{ type: "normal" as const, label: updateLabel, action: "updates" }]
+      ? [{ type: 'normal' as const, label: updateLabel, action: 'updates' }]
       : []),
     {
-      type: "normal",
-      label: snapshot.running ? "Stop gateway" : "Start gateway",
-      action: "toggle",
+      type: 'normal',
+      label: snapshot.running ? 'Stop gateway' : 'Start gateway',
+      action: 'toggle',
       enabled: !snapshot.configError,
     },
-    { type: "divider" },
-    { type: "normal", label: "Quit MCP Gateway", action: "quit" },
+    { type: 'divider' },
+    { type: 'normal', label: 'Quit MCP Gateway', action: 'quit' },
   ]);
 };
 
@@ -141,17 +142,17 @@ const openWindow = (): void => {
   requestInteractiveRendererQuit = () =>
     rpc.request.interactiveQuit(undefined, { maxRequestTime: 5_000 });
   const created = new BrowserWindow({
-    title: "MCP Gateway",
-    url: "views://mainview/index.html",
+    title: 'MCP Gateway',
+    url: 'views://mainview/index.html',
     rpc,
     frame: { width: 1120, height: 820 },
-    renderer: "native",
+    renderer: 'native',
     allowedProtocols: { views: true, appData: false },
     // Pinned native matcher uses last-match-wins; unmatched URLs otherwise default allow.
-    navigationRules: JSON.stringify(["^*", "views://mainview/index.html"]),
+    navigationRules: JSON.stringify(['^*', 'views://mainview/index.html']),
   });
   window = created;
-  created.on("close", () => {
+  created.on('close', () => {
     if (window === created) {
       window = undefined;
       windowReady = false;
@@ -182,9 +183,9 @@ quit = new QuitCoordinator(
   (error, kind) => {
     controller.recordLocalError(error);
     console.error(
-      kind === "update"
-        ? "Update handoff failed; the gateway is stopped."
-        : "Gateway cleanup failed; the app has not quit.",
+      kind === 'update'
+        ? 'Update handoff failed; the gateway is stopped.'
+        : 'Gateway cleanup failed; the app has not quit.',
     );
     updateMenu();
     // Cleanup may already have removed the tray; retain a visible retry path.
@@ -227,23 +228,23 @@ const interactiveQuit = new InteractiveQuitGate(
     controller.recordLocalError(error);
     openWindow();
     void Utils.showMessageBox({
-      type: "error",
-      title: "Quit acknowledgement unavailable",
-      message: "The application could not confirm whether the window received Quit.",
+      type: 'error',
+      title: 'Quit acknowledgement unavailable',
+      message: 'The application could not confirm whether the window received Quit.',
       detail:
         "Check the window's status before retrying. A missing acknowledgement does not authorize discarding drafts.",
-      buttons: ["OK"],
+      buttons: ['OK'],
     }).catch((failure) => controller.recordLocalError(failure));
   },
   nativeQuitSignal,
 );
-Electrobun.events.on("before-quit", (event) =>
+Electrobun.events.on('before-quit', (event) =>
   interactiveQuit.handle(() => {
     event.response = { allow: false };
   }),
 );
-Electrobun.events.on("reopen", openWindow);
-for (const signal of ["SIGINT", "SIGTERM"] as const)
+Electrobun.events.on('reopen', openWindow);
+for (const signal of ['SIGINT', 'SIGTERM'] as const)
   process.on(signal, () => {
     quit?.armQuit();
     Utils.quit();
@@ -251,13 +252,13 @@ for (const signal of ["SIGINT", "SIGTERM"] as const)
 
 const dispatch = async (event: unknown): Promise<void> => {
   switch (menuAction(event)) {
-    case "open":
+    case 'open':
       openWindow();
       break;
-    case "updates":
+    case 'updates':
       showUpdatesSection();
       break;
-    case "toggle": {
+    case 'toggle': {
       const result = await (controller.snapshot().running
         ? service.handlers.stop()
         : service.handlers.start());
@@ -265,46 +266,46 @@ const dispatch = async (event: unknown): Promise<void> => {
       updateMenu();
       break;
     }
-    case "close-window":
+    case 'close-window':
       window?.close();
       break;
-    case "quit":
+    case 'quit':
       Utils.quit();
       break;
   }
 };
-tray.on("tray-clicked", (event) => {
-  void dispatch(event).catch(() => console.error("Tray action failed."));
+tray.on('tray-clicked', (event) => {
+  void dispatch(event).catch(() => console.error('Tray action failed.'));
 });
 ApplicationMenu.setApplicationMenu([
   {
-    label: "MCP Gateway",
+    label: 'MCP Gateway',
     submenu: [
-      { label: "Settings…", action: "open", accelerator: "Cmd+," },
-      ...(support.supported ? [{ label: "Check for Updates…", action: "updates" }] : []),
-      { type: "divider" },
-      { label: "Quit MCP Gateway", action: "quit", accelerator: "Cmd+Q" },
+      { label: 'Settings…', action: 'open', accelerator: 'Cmd+,' },
+      ...(support.supported ? [{ label: 'Check for Updates…', action: 'updates' }] : []),
+      { type: 'divider' },
+      { label: 'Quit MCP Gateway', action: 'quit', accelerator: 'Cmd+Q' },
     ],
   },
   {
-    label: "File",
-    submenu: [{ label: "Close Window", action: "close-window", accelerator: "Cmd+W" }],
+    label: 'File',
+    submenu: [{ label: 'Close Window', action: 'close-window', accelerator: 'Cmd+W' }],
   },
   {
-    label: "Edit",
+    label: 'Edit',
     submenu: [
-      { role: "undo" },
-      { role: "redo" },
-      { type: "divider" },
-      { role: "cut" },
-      { role: "copy" },
-      { role: "paste" },
-      { role: "selectAll" },
+      { role: 'undo' },
+      { role: 'redo' },
+      { type: 'divider' },
+      { role: 'cut' },
+      { role: 'copy' },
+      { role: 'paste' },
+      { role: 'selectAll' },
     ],
   },
 ]);
-ApplicationMenu.on("application-menu-clicked", (event) => {
-  void dispatch(event).catch(() => console.error("Menu action failed."));
+ApplicationMenu.on('application-menu-clicked', (event) => {
+  void dispatch(event).catch(() => console.error('Menu action failed.'));
 });
 Utils.setDockIconVisible(false);
 updateMenu();
@@ -324,7 +325,7 @@ try {
   if (!(error instanceof GatewayError)) throw error;
 }
 const background = startsInBackground(
-  process.argv.includes("--background"),
+  process.argv.includes('--background'),
   login.manager.status(),
   savedLoginPreference,
 );

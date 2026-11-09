@@ -1,4 +1,4 @@
-import { LOG_LIMITS, type LogEntry, type LogPage, type LogQuery } from "@mcp-gateway/shared/types";
+import { LOG_LIMITS, type LogEntry, type LogPage, type LogQuery } from '@mcp-gateway/shared/types';
 
 /** Reads data descriptors only: diagnostic capture must never invoke custom inspection or getters. */
 const diagnosticText = (values: readonly unknown[]): string => {
@@ -10,21 +10,21 @@ const diagnosticText = (values: readonly unknown[]): string => {
     return part;
   };
   const format = (value: unknown, depth: number): string => {
-    if (remaining <= 0) return "";
-    if (typeof value === "string") return take(value);
+    if (remaining <= 0) return '';
+    if (typeof value === 'string') return take(value);
     if (
       value === null ||
-      typeof value === "number" ||
-      typeof value === "boolean" ||
-      typeof value === "bigint" ||
-      typeof value === "undefined"
+      typeof value === 'number' ||
+      typeof value === 'boolean' ||
+      typeof value === 'bigint' ||
+      typeof value === 'undefined'
     )
       return take(String(value));
-    if (typeof value !== "object") return take(`[${typeof value}]`);
-    if (seen.has(value)) return take("[circular]");
-    if (depth >= 8) return take("[depth limit]");
+    if (typeof value !== 'object') return take(`[${typeof value}]`);
+    if (seen.has(value)) return take('[circular]');
+    if (depth >= 8) return take('[depth limit]');
     seen.add(value);
-    let output = take("{");
+    let output = take('{');
     try {
       // Reflecting a proxy can throw. Never call user-provided toJSON/toString/inspect.
       const keys = Reflect.ownKeys(value);
@@ -32,20 +32,20 @@ const diagnosticText = (values: readonly unknown[]): string => {
         if (remaining <= 0) break;
         const descriptor = Object.getOwnPropertyDescriptor(value, key);
         if (!descriptor) continue;
-        output += take(`${typeof key === "string" ? key : "[symbol]"}: `);
-        output += "value" in descriptor ? format(descriptor.value, depth + 1) : take("[accessor]");
-        output += take(", ");
+        output += take(`${typeof key === 'string' ? key : '[symbol]'}: `);
+        output += 'value' in descriptor ? format(descriptor.value, depth + 1) : take('[accessor]');
+        output += take(', ');
       }
-      if (keys.length > 100) output += take("[property limit]");
+      if (keys.length > 100) output += take('[property limit]');
     } catch {
-      output += take("[unreadable object]");
+      output += take('[unreadable object]');
     }
-    return output + take("}");
+    return output + take('}');
   };
-  let output = "";
+  let output = '';
   for (const value of values) {
     if (remaining <= 0) break;
-    if (output) output += take(" ");
+    if (output) output += take(' ');
     output += format(value, 0);
   }
   return output;
@@ -58,17 +58,17 @@ export class LogBuffer {
   private generation = 0;
 
   append(
-    metadata: Pick<LogEntry, "server" | "level" | "source">,
+    metadata: Pick<LogEntry, 'server' | 'level' | 'source'>,
     values: readonly unknown[],
   ): void {
     let text = diagnosticText(values);
     const truncated = Buffer.byteLength(text) >= LOG_LIMITS.entryBytes;
     if (truncated) {
-      const marker = "\n[entry truncated]";
+      const marker = '\n[entry truncated]';
       text =
         Buffer.from(text)
           .subarray(0, LOG_LIMITS.entryBytes - Buffer.byteLength(marker) - 3)
-          .toString("utf8") + marker;
+          .toString('utf8') + marker;
     }
     const entry = {
       ...metadata,
@@ -80,7 +80,7 @@ export class LogBuffer {
     // Include escaped text and metadata in retention and RPC byte accounting.
     // One proportional pass per check: removing 256 characters at a time would
     // re-serialize the whole entry dozens of times.
-    const marker = "\n[entry truncated]";
+    const marker = '\n[entry truncated]';
     let size = Buffer.byteLength(JSON.stringify(entry));
     while (size > LOG_LIMITS.entryBytes) {
       entry.truncated = true;

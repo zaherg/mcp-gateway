@@ -1,6 +1,7 @@
-import { spawn } from "node:child_process";
-import { setTimeout as delay } from "node:timers/promises";
-import { failure } from "@mcp-gateway/core/errors";
+import { spawn } from 'node:child_process';
+import { setTimeout as delay } from 'node:timers/promises';
+
+import { failure } from '@mcp-gateway/core/errors';
 import {
   BACKEND_CAPACITY_ERROR,
   type BackendCalls,
@@ -9,14 +10,14 @@ import {
   readBackendLines,
   releaseAfterCleanup,
   type WorkOwner,
-} from "@mcp-gateway/core/limits";
-import type { BackendProcesses } from "@mcp-gateway/core/process";
-import type { LogLevel } from "@mcp-gateway/shared/types";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import type { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { isInitializeRequest, isJSONRPCRequest } from "@modelcontextprotocol/sdk/types.js";
-import { StatefulSession } from "supergateway/dist/gateways/statefulSession.js";
-import { StatefulSessions } from "supergateway/dist/gateways/statefulSessions.js";
+} from '@mcp-gateway/core/limits';
+import type { BackendProcesses } from '@mcp-gateway/core/process';
+import type { LogLevel } from '@mcp-gateway/shared/types';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import type { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { isInitializeRequest, isJSONRPCRequest } from '@modelcontextprotocol/sdk/types.js';
+import { StatefulSession } from 'supergateway/dist/gateways/statefulSession.js';
+import { StatefulSessions } from 'supergateway/dist/gateways/statefulSessions.js';
 import type {
   ChildrenOwner,
   GatewayLogger,
@@ -24,9 +25,9 @@ import type {
   GatewayResponse,
   PeerFactory,
   Source,
-} from "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js";
-import { spawnCommand } from "supergateway/dist/lib/childCommand.js";
-import { readWhile } from "supergateway/dist/lib/outputBackpressure.js";
+} from 'supergateway/dist/gateways/stdioToStatefulStreamableHttp.js';
+import { spawnCommand } from 'supergateway/dist/lib/childCommand.js';
+import { readWhile } from 'supergateway/dist/lib/outputBackpressure.js';
 
 // Session-based MCP (2025-11-25 and earlier) for endpoints that opt in.
 // Supergateway 4.2.1's StatefulSessions owns the protocol: initialize,
@@ -40,7 +41,7 @@ const SESSION_IDLE_MS = 60_000;
 
 const DUPLICATE_REQUEST_ERROR = {
   code: -32600,
-  message: "A request with this id is already in flight in this session.",
+  message: 'A request with this id is already in flight in this session.',
 } as const;
 
 type SessionLog = (level: LogLevel, args: unknown[], diagnose: boolean) => void;
@@ -61,17 +62,17 @@ const BACKEND_FAILURE = /^Child (exited|process failure|non-JSON)/;
 
 const sessionLogger = (log: SessionLog, ended: () => boolean): GatewayLogger => {
   return {
-    info: (...args) => log("info", args, false),
-    debug: (...args) => log("debug", args, false),
-    warn: (...args) => log("warn", args, false),
+    info: (...args) => log('info', args, false),
+    debug: (...args) => log('debug', args, false),
+    warn: (...args) => log('warn', args, false),
     error: (...args) =>
-      log("error", args, !ended() && typeof args[0] === "string" && BACKEND_FAILURE.test(args[0])),
+      log('error', args, !ended() && typeof args[0] === 'string' && BACKEND_FAILURE.test(args[0])),
   };
 };
 
 export const createSessions = (options: SessionOptions): StatefulSessions => {
   const { source, children, calls, reserve, log } = options;
-  const localFailure = (error: unknown) => log("error", [error], false);
+  const localFailure = (error: unknown) => log('error', [error], false);
 
   class LeasedSessions extends StatefulSessions {
     private readonly work = new WeakMap<StreamableHTTPServerTransport, WorkOwner>();
@@ -80,28 +81,28 @@ export const createSessions = (options: SessionOptions): StatefulSessions => {
     // disconnect) is cancelled the way a client cancel is, so it stops holding
     // the shared call budget while the session's event stream keeps it alive.
     override async post(req: GatewayRequest, res: GatewayResponse): Promise<void> {
-      const sessionId = req.headers["mcp-session-id"];
-      const transport = typeof sessionId === "string" ? this.transports.get(sessionId) : undefined;
+      const sessionId = req.headers['mcp-session-id'];
+      const transport = typeof sessionId === 'string' ? this.transports.get(sessionId) : undefined;
       const work = transport && this.work.get(transport);
       const messages: unknown[] = Array.isArray(req.body) ? req.body : [req.body];
       const ids = messages.flatMap((message) => (isJSONRPCRequest(message) ? [message.id] : []));
       if (transport && work && ids.length)
-        res.once("close", () => {
+        res.once('close', () => {
           if (res.writableFinished || this.transports.get(sessionId as string) !== transport)
             return;
           for (const requestId of ids)
             if (calls.holds(work, requestId))
               transport.onmessage?.({
-                jsonrpc: "2.0",
-                method: "notifications/cancelled",
-                params: { requestId, reason: "The HTTP request ended before its reply." },
+                jsonrpc: '2.0',
+                method: 'notifications/cancelled',
+                params: { requestId, reason: 'The HTTP request ended before its reply.' },
               });
         });
       await super.post(req, res);
     }
 
     override async open(res: GatewayResponse): Promise<StreamableHTTPServerTransport> {
-      if (children.closing) throw failure("Closed", "The backend is closing.");
+      if (children.closing) throw failure('Closed', 'The backend is closing.');
       const leases = reserve();
       const work = calls.owner();
       const release = () => {
@@ -119,8 +120,8 @@ export const createSessions = (options: SessionOptions): StatefulSessions => {
         if (transport && (!res.writableFinished || res.statusCode >= 400 || !transport.sessionId))
           void transport.close().catch(localFailure);
       };
-      res.once("finish", end);
-      res.once("close", end);
+      res.once('finish', end);
+      res.once('close', end);
       const logger = sessionLogger(log, () => transportClosed || children.closing);
       try {
         const session = await StatefulSession.open(
@@ -130,7 +131,7 @@ export const createSessions = (options: SessionOptions): StatefulSessions => {
           SESSION_IDLE_MS,
           (opened, responses) => {
             transport = opened;
-            if (children.closing || ended) throw failure("Closed", "The request ended.");
+            if (children.closing || ended) throw failure('Closed', 'The request ended.');
             this.openResponses.set(opened, responses);
             const owner = leasedOwner(children, release, localFailure, (stop) => {
               cleanup = stop;
@@ -149,8 +150,8 @@ export const createSessions = (options: SessionOptions): StatefulSessions => {
         if (ended) end();
         return transport;
       } catch (error) {
-        res.off("finish", end);
-        res.off("close", end);
+        res.off('finish', end);
+        res.off('close', end);
         await transport?.close();
         if (cleanup) await cleanup();
         else release();
@@ -189,7 +190,7 @@ const leasedOwner = (
     spawnOptions: children.spawnOptions,
     own: (child) => {
       const stop = track(children.own(child));
-      child.once("exit", () => {
+      child.once('exit', () => {
         void stop().catch(report);
       });
       return stop;
@@ -205,22 +206,22 @@ const leasedOwner = (
 const charged = (factory: PeerFactory, work: WorkOwner, calls: BackendCalls): PeerFactory => {
   return (owner) => {
     const refuse = (id: string | number, error: { code: number; message: string }) => {
-      const response = { jsonrpc: "2.0" as const, id, error };
+      const response = { jsonrpc: '2.0' as const, id, error };
       owner.message(response, JSON.stringify(response));
     };
     const peer = factory({
       ...owner,
       message: (message, line) => {
-        if (!("method" in message) && "id" in message) {
+        if (!('method' in message) && 'id' in message) {
           const id = message.id;
-          if (typeof id === "string" || typeof id === "number") calls.settle(work, id);
+          if (typeof id === 'string' || typeof id === 'number') calls.settle(work, id);
         }
         owner.message(message, line);
       },
     });
     return {
       write: (message) => {
-        if ("method" in message && "id" in message) {
+        if ('method' in message && 'id' in message) {
           if (calls.holds(work, message.id)) {
             refuse(message.id, DUPLICATE_REQUEST_ERROR);
             return;
@@ -231,9 +232,9 @@ const charged = (factory: PeerFactory, work: WorkOwner, calls: BackendCalls): Pe
           }
         }
         peer.write(message);
-        if ("method" in message && message.method === "notifications/cancelled") {
+        if ('method' in message && message.method === 'notifications/cancelled') {
           const id = (message.params as { requestId?: unknown } | undefined)?.requestId;
-          if (typeof id === "string" || typeof id === "number") calls.settle(work, id);
+          if (typeof id === 'string' || typeof id === 'number') calls.settle(work, id);
         }
       },
       end: () => peer.end(),
@@ -253,13 +254,13 @@ const startBackend = (
   logger: GatewayLogger,
 ): PeerFactory => {
   if (source.stdioCmd) {
-    const child = spawnCommand(spawn, source.stdioCmd, { ...children.spawnOptions, stdio: "pipe" });
+    const child = spawnCommand(spawn, source.stdioCmd, { ...children.spawnOptions, stdio: 'pipe' });
     const stop = children.own(child);
     return (owner) => {
-      child.on("error", (error) => owner.failure("process", error));
-      child.stdin.on("error", (error) => owner.failure("stdin", error));
-      child.stdout.on("error", (error) => owner.failure("stdout", error));
-      child.on("exit", (code, signal) => owner.exit(code, signal));
+      child.on('error', (error) => owner.failure('process', error));
+      child.stdin.on('error', (error) => owner.failure('stdin', error));
+      child.stdout.on('error', (error) => owner.failure('stdout', error));
+      child.on('exit', (code, signal) => owner.exit(code, signal));
       readBackendLines(
         child.stdout,
         (line) => {
@@ -270,10 +271,10 @@ const startBackend = (
             owner.nonJson(line);
           }
         },
-        (error) => owner.failure("stdout", error),
+        (error) => owner.failure('stdout', error),
         () => owner.output(),
       );
-      child.stderr.on("data", (chunk) => owner.stderr(chunk.toString("utf8")));
+      child.stderr.on('data', (chunk) => owner.stderr(chunk.toString('utf8')));
       return {
         write: (message) => {
           child.stdin.write(`${JSON.stringify(message)}\n`);
@@ -293,7 +294,7 @@ const startBackend = (
     let gone = false;
     let initializeId: string | number | undefined;
     let answered: (() => void) | undefined;
-    const fail = (error: Error) => owner.failure("upstream", error);
+    const fail = (error: Error) => owner.failure('upstream', error);
     // The upstream sees only its configured headers, never the client's token.
     const transport = new StreamableHTTPClientTransport(remote.url, {
       requestInit: { headers: remote.headers },
@@ -305,17 +306,17 @@ const startBackend = (
       await Promise.race([
         transport
           .terminateSession()
-          .catch((error) => logger.error("Session: failed to end the upstream session:", error)),
+          .catch((error) => logger.error('Session: failed to end the upstream session:', error)),
         delay(2000, undefined, { ref: false }),
       ]);
       await transport.close();
     });
     transport.onmessage = (message) => {
-      if ("id" in message && message.id === initializeId) {
+      if ('id' in message && message.id === initializeId) {
         initializeId = undefined;
-        if ("result" in message) {
-          if (typeof message.result.protocolVersion !== "string") {
-            fail(new Error("Upstream initialization has no protocol version."));
+        if ('result' in message) {
+          if (typeof message.result.protocolVersion !== 'string') {
+            fail(new Error('Upstream initialization has no protocol version.'));
             return;
           }
           transport.setProtocolVersion(message.result.protocolVersion);
@@ -324,7 +325,7 @@ const startBackend = (
       }
       owner.message(message, JSON.stringify(message));
     };
-    transport.onerror = (error) => logger.error("Session: upstream error:", error);
+    transport.onerror = (error) => logger.error('Session: upstream error:', error);
     transport.onclose = () => {
       gone = true;
       owner.exit(null, null);
@@ -336,7 +337,7 @@ const startBackend = (
       write: (message) => {
         const sent = ready.then(() => transport.send(message));
         void sent.catch(fail);
-        if (!isInitializeRequest(message) || !("id" in message)) return;
+        if (!isInitializeRequest(message) || !('id' in message)) return;
         initializeId = message.id;
         ready = Promise.all([
           sent,

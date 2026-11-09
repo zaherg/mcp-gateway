@@ -1,4 +1,4 @@
-import type { ConfigFormat } from "@mcp-gateway/shared/config-document";
+import type { ConfigFormat } from '@mcp-gateway/shared/config-document';
 
 export const LOG_LIMITS = Object.freeze({
   entries: 500,
@@ -9,14 +9,14 @@ export const LOG_LIMITS = Object.freeze({
   requestTimeoutMs: 10_000,
   queryTextCharacters: 512,
 });
-export const LOG_LEVELS = ["debug", "info", "warn", "error"] as const;
+export const LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
 export type LogLevel = (typeof LOG_LEVELS)[number];
 export interface LogEntry {
   id: number;
   time: string;
   server: string | null;
   level: LogLevel;
-  source: "logger" | "stderr" | "controller";
+  source: 'logger' | 'stderr' | 'controller';
   text: string;
   truncated: boolean;
 }
@@ -68,18 +68,18 @@ export interface InterfaceChoice {
 }
 
 export type GatewayErrorCode =
-  | "InvalidConfig"
-  | "AmbiguousConfig"
-  | "UnsafeFile"
-  | "ConfigIO"
-  | "StaleRevision"
-  | "ConfigLocked"
-  | "NetworkPolicy"
-  | "BackendFailure"
-  | "ListenerFailure"
-  | "ShutdownFailure"
-  | "Cancelled"
-  | "Closed";
+  | 'InvalidConfig'
+  | 'AmbiguousConfig'
+  | 'UnsafeFile'
+  | 'ConfigIO'
+  | 'StaleRevision'
+  | 'ConfigLocked'
+  | 'NetworkPolicy'
+  | 'BackendFailure'
+  | 'ListenerFailure'
+  | 'ShutdownFailure'
+  | 'Cancelled'
+  | 'Closed';
 
 export interface VisibleError {
   occurrenceId: string;
@@ -89,11 +89,11 @@ export interface VisibleError {
 
 export interface ServerSnapshot {
   name: string;
-  type: "stdio" | "http";
+  type: 'stdio' | 'http';
   endpoint: string;
   enabled: boolean;
   /** Mounted means ingress is available; no backend handshake is implied. */
-  status: "stopped" | "mounted" | "error" | "disabled";
+  status: 'stopped' | 'mounted' | 'error' | 'disabled';
   error: VisibleError | null;
 }
 

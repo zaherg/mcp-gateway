@@ -1,38 +1,38 @@
-import { Toggle } from "@mcp-gateway/mainview/components/ui";
-import type { Editor } from "@mcp-gateway/mainview/dialogs/ServerEditor";
-import type { AppClient, AppResult, QuitStatus, UpdateStatus } from "@mcp-gateway/shared/rpc";
-import { ArrowDownToLine, ArrowUpRight, CircleHelp, RefreshCw } from "lucide-react";
-import type { RefObject } from "react";
+import { Toggle } from '@mcp-gateway/mainview/components/ui';
+import type { Editor } from '@mcp-gateway/mainview/dialogs/ServerEditor';
+import type { AppClient, AppResult, QuitStatus, UpdateStatus } from '@mcp-gateway/shared/rpc';
+import { ArrowDownToLine, ArrowUpRight, CircleHelp, RefreshCw } from 'lucide-react';
+import type { RefObject } from 'react';
 
 const updateCheckedLabel = (value: string | null): string => {
-  if (!value) return "Not checked yet.";
+  if (!value) return 'Not checked yet.';
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Last check time is unavailable.";
-  return `Last checked ${date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`;
+  if (Number.isNaN(date.getTime())) return 'Last check time is unavailable.';
+  return `Last checked ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`;
 };
 
 const updateStatusText = (update: UpdateStatus): string => {
   switch (update.phase) {
-    case "checking":
-      return "Checking the fixed GitHub stable feed…";
-    case "downloading":
+    case 'checking':
+      return 'Checking the fixed GitHub stable feed…';
+    case 'downloading':
       return update.availableVersion
         ? `Downloading and verifying version ${update.availableVersion}…`
-        : "Downloading and verifying the selected update…";
-    case "available":
+        : 'Downloading and verifying the selected update…';
+    case 'available':
       return update.availableVersion
         ? `Version ${update.availableVersion} is available.`
-        : "An update is available.";
-    case "ready":
+        : 'An update is available.';
+    case 'ready':
       return update.availableVersion
         ? `Version ${update.availableVersion} is verified and ready to install.`
-        : "The update is verified and ready to install.";
-    case "restarting":
-      return "Restarting to apply the verified update.";
-    case "error":
-      return update.error ?? "The update operation failed.";
-    case "idle":
-      return update.checkedAt ? "You are up to date." : "No update check has run yet.";
+        : 'The update is verified and ready to install.';
+    case 'restarting':
+      return 'Restarting to apply the verified update.';
+    case 'error':
+      return update.error ?? 'The update operation failed.';
+    case 'idle':
+      return update.checkedAt ? 'You are up to date.' : 'No update check has run yet.';
   }
 };
 
@@ -66,7 +66,7 @@ export const Updates = ({
   setConfirmUpdate: (confirm: boolean) => void;
   updatesHeading: RefObject<HTMLHeadingElement | null>;
 }) => {
-  const updateReady = updateState.phase === "ready";
+  const updateReady = updateState.phase === 'ready';
   return (
     <section className="panel updates-panel" aria-labelledby="updates-heading">
       <div className="section-heading">
@@ -91,7 +91,7 @@ export const Updates = ({
           <div className="update-summary">
             <div>
               <span className="update-label">Installed</span>
-              <strong>{updateState.installedVersion ?? "Unknown"}</strong>
+              <strong>{updateState.installedVersion ?? 'Unknown'}</strong>
             </div>
             <div>
               <span className="update-label">Status</span>
@@ -104,7 +104,7 @@ export const Updates = ({
               </div>
             )}
           </div>
-          {(updateState.phase === "checking" || updateState.phase === "downloading") && (
+          {(updateState.phase === 'checking' || updateState.phase === 'downloading') && (
             <div
               className="update-progress"
               role="progressbar"
@@ -119,12 +119,12 @@ export const Updates = ({
           <Toggle
             label="Automatically check and download updates"
             description="Check after launch, then daily. A higher stable version downloads automatically; installation always requires explicit confirmation."
-            disabled={updateBusy || configurationLocked || updateState.phase === "restarting"}
+            disabled={updateBusy || configurationLocked || updateState.phase === 'restarting'}
             checked={updateState.automaticUpdates}
             onChange={(value) =>
               void runUpdate(
                 () => client.updatesSetAutomatic({ automatic: value }),
-                value ? "Automatic update checks enabled." : "Automatic update checks disabled.",
+                value ? 'Automatic update checks enabled.' : 'Automatic update checks disabled.',
               )
             }
           />
@@ -135,14 +135,14 @@ export const Updates = ({
               disabled={
                 updateBusy ||
                 configurationLocked ||
-                updateState.phase === "checking" ||
-                updateState.phase === "downloading" ||
-                updateState.phase === "restarting"
+                updateState.phase === 'checking' ||
+                updateState.phase === 'downloading' ||
+                updateState.phase === 'restarting'
               }
-              onClick={() => void runUpdate(() => client.updatesCheck(), "Update check completed.")}
+              onClick={() => void runUpdate(() => client.updatesCheck(), 'Update check completed.')}
             >
               <RefreshCw size={15} />
-              {updateState.phase === "checking" ? "Checking…" : "Check for Updates"}
+              {updateState.phase === 'checking' ? 'Checking…' : 'Check for Updates'}
             </button>
             {updateState.availableVersion && !updateReady && (
               <button
@@ -151,16 +151,16 @@ export const Updates = ({
                 disabled={
                   updateBusy ||
                   configurationLocked ||
-                  updateState.phase === "checking" ||
-                  updateState.phase === "downloading" ||
-                  updateState.phase === "restarting"
+                  updateState.phase === 'checking' ||
+                  updateState.phase === 'downloading' ||
+                  updateState.phase === 'restarting'
                 }
                 onClick={() =>
-                  void runUpdate(() => client.updatesDownload(), "The update download has started.")
+                  void runUpdate(() => client.updatesDownload(), 'The update download has started.')
                 }
               >
                 <ArrowDownToLine size={15} />
-                {updateState.phase === "downloading" ? "Downloading…" : "Download Update"}
+                {updateState.phase === 'downloading' ? 'Downloading…' : 'Download Update'}
               </button>
             )}
             {updateReady && (
@@ -170,11 +170,11 @@ export const Updates = ({
                 disabled={
                   busy ||
                   !quitStatusKnown ||
-                  updateState.phase === "restarting" ||
+                  updateState.phase === 'restarting' ||
                   !!editor ||
                   !!deleting ||
-                  quitStatus.phase === "pending" ||
-                  quitStatus.phase === "ready"
+                  quitStatus.phase === 'pending' ||
+                  quitStatus.phase === 'ready'
                 }
                 onClick={() => setConfirmUpdate(true)}
               >

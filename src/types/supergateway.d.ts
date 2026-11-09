@@ -1,9 +1,10 @@
 // Audited against Supergateway 4.2.1 and its locked SDKs. These declarations
 // describe only the lifecycle seams used by adapter.ts, not a stable public API.
-declare module "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js" {
-  import type { ChildProcess, SpawnOptions } from "node:child_process";
-  import type { IncomingMessage, ServerResponse } from "node:http";
-  import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
+declare module 'supergateway/dist/gateways/stdioToStatefulStreamableHttp.js' {
+  import type { ChildProcess, SpawnOptions } from 'node:child_process';
+  import type { IncomingMessage, ServerResponse } from 'node:http';
+
+  import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
   export interface GatewayRequest extends IncomingMessage {
     body?: unknown;
   }
@@ -52,7 +53,7 @@ declare module "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js" {
     cwd?: string;
   }
   export interface Upstream {
-    type: "streamableHttp";
+    type: 'streamableHttp';
     url: URL;
     headers?: Record<string, string>;
   }
@@ -82,18 +83,18 @@ declare module "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js" {
   }
   export type PeerFactory = (owner: PeerOwner) => Peer;
 }
-declare module "supergateway/dist/lib/outputBackpressure.js" {
+declare module 'supergateway/dist/lib/outputBackpressure.js' {
   export function readWhile(response: Response, wait: () => Promise<void> | undefined): Response;
 }
-declare module "supergateway/dist/gateways/statefulSessions.js" {
-  import type { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+declare module 'supergateway/dist/gateways/statefulSessions.js' {
+  import type { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
   import type {
     ChildrenOwner,
     GatewayLogger,
     GatewayRequest,
     GatewayResponse,
     Source,
-  } from "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js";
+  } from 'supergateway/dist/gateways/stdioToStatefulStreamableHttp.js';
   export class StatefulSessions {
     constructor(
       source: Source,
@@ -109,14 +110,14 @@ declare module "supergateway/dist/gateways/statefulSessions.js" {
     request(req: GatewayRequest, res: GatewayResponse): Promise<void>;
   }
 }
-declare module "supergateway/dist/gateways/statefulSession.js" {
-  import type { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-  import type { StatefulSessions } from "supergateway/dist/gateways/statefulSessions.js";
+declare module 'supergateway/dist/gateways/statefulSession.js' {
+  import type { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+  import type { StatefulSessions } from 'supergateway/dist/gateways/statefulSessions.js';
   import type {
     GatewayLogger,
     GatewayResponse,
     PeerFactory,
-  } from "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js";
+  } from 'supergateway/dist/gateways/stdioToStatefulStreamableHttp.js';
   export class StatefulSession {
     readonly transport: StreamableHTTPServerTransport;
     static open(
@@ -131,20 +132,20 @@ declare module "supergateway/dist/gateways/statefulSession.js" {
     ): Promise<StatefulSession>;
   }
 }
-declare module "express" {
+declare module 'express' {
   // Passed unchanged to streamableHttpApp; all Express use stays inside Supergateway.
   const express: object;
   export default express;
 }
-declare module "cors" {
+declare module 'cors' {
   const cors: object;
   export default cors;
 }
-declare module "supergateway/dist/lib/streamableHttpApp.js" {
+declare module 'supergateway/dist/lib/streamableHttpApp.js' {
   import type {
     GatewayApp,
     GatewayLogger,
-  } from "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js";
+  } from 'supergateway/dist/gateways/stdioToStatefulStreamableHttp.js';
   export function streamableHttpApp(
     express: object,
     cors: object,
@@ -157,21 +158,22 @@ declare module "supergateway/dist/lib/streamableHttpApp.js" {
     },
   ): GatewayApp;
 }
-declare module "supergateway/dist/lib/childCommand.js" {
-  import type { ChildProcessWithoutNullStreams, SpawnOptions, spawn } from "node:child_process";
-  import type { Command } from "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js";
+declare module 'supergateway/dist/lib/childCommand.js' {
+  import type { ChildProcessWithoutNullStreams, SpawnOptions, spawn } from 'node:child_process';
+
+  import type { Command } from 'supergateway/dist/gateways/stdioToStatefulStreamableHttp.js';
   export function spawnCommand(
     spawnProcess: typeof spawn,
     command: Command,
-    options: SpawnOptions & { stdio: "pipe" },
+    options: SpawnOptions & { stdio: 'pipe' },
   ): ChildProcessWithoutNullStreams;
 }
-declare module "supergateway/dist/lib/modernAdmission.js" {
-  import type { InboundModernRoute } from "@modelcontextprotocol/server";
+declare module 'supergateway/dist/lib/modernAdmission.js' {
+  import type { InboundModernRoute } from '@modelcontextprotocol/server';
   import type {
     GatewayRequest,
     GatewayResponse,
-  } from "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js";
+  } from 'supergateway/dist/gateways/stdioToStatefulStreamableHttp.js';
   export type HeaderValue = (name: string) => string | undefined;
   export function headerValue(req: GatewayRequest): HeaderValue;
   export function paramHeaders(req: GatewayRequest): Record<string, string>;
@@ -188,12 +190,12 @@ declare module "supergateway/dist/lib/modernAdmission.js" {
     error: { code: number; message: string },
   ): void;
 }
-declare module "supergateway/dist/lib/modernSdk.js" {
-  export { PerRequestHTTPServerTransport } from "@modelcontextprotocol/server";
+declare module 'supergateway/dist/lib/modernSdk.js' {
+  export { PerRequestHTTPServerTransport } from '@modelcontextprotocol/server';
 }
-declare module "supergateway/dist/lib/retainedChildren.js" {
-  import type { JSONRPCMessage } from "@modelcontextprotocol/server";
-  import type { GatewayLogger } from "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js";
+declare module 'supergateway/dist/lib/retainedChildren.js' {
+  import type { JSONRPCMessage } from '@modelcontextprotocol/server';
+  import type { GatewayLogger } from 'supergateway/dist/gateways/stdioToStatefulStreamableHttp.js';
   export interface ModernChild {
     onmessage?: (message: JSONRPCMessage) => void;
     onerror?: (error: Error) => void;
@@ -217,14 +219,15 @@ declare module "supergateway/dist/lib/retainedChildren.js" {
     close(): Promise<void>;
   }
 }
-declare module "supergateway/dist/lib/ownedStdioTransport.js" {
-  import type { ChildProcessWithoutNullStreams } from "node:child_process";
+declare module 'supergateway/dist/lib/ownedStdioTransport.js' {
+  import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+
   import type {
     ChildrenOwner,
     Command,
     GatewayLogger,
-  } from "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js";
-  import type { ModernChild } from "supergateway/dist/lib/retainedChildren.js";
+  } from 'supergateway/dist/gateways/stdioToStatefulStreamableHttp.js';
+  import type { ModernChild } from 'supergateway/dist/lib/retainedChildren.js';
   export const OwnedStdioTransport: new (
     command: Command,
     owner: ChildrenOwner,
@@ -236,12 +239,12 @@ declare module "supergateway/dist/lib/ownedStdioTransport.js" {
     deliver(line: string): void;
   };
 }
-declare module "supergateway/dist/lib/upstreamModernChild.js" {
+declare module 'supergateway/dist/lib/upstreamModernChild.js' {
   import type {
     GatewayLogger,
     Upstream,
-  } from "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js";
-  import type { ModernChild } from "supergateway/dist/lib/retainedChildren.js";
+  } from 'supergateway/dist/gateways/stdioToStatefulStreamableHttp.js';
+  import type { ModernChild } from 'supergateway/dist/lib/retainedChildren.js';
   export const UpstreamModernChild: new (
     upstream: Upstream,
     declared: { version: string | undefined; params: Record<string, string> },
@@ -255,32 +258,32 @@ declare module "supergateway/dist/lib/upstreamModernChild.js" {
   export const MODERN_VERSION: string;
   export const SPEAKS_FOR_MS: number;
 }
-declare module "supergateway/dist/lib/getVersion.js" {
+declare module 'supergateway/dist/lib/getVersion.js' {
   export function getVersion(): string;
 }
-declare module "supergateway/dist/lib/headerMismatch.js" {
+declare module 'supergateway/dist/lib/headerMismatch.js' {
   export class HeaderMismatch extends Error {
     readonly header: string;
     readonly code: number;
   }
 }
-declare module "supergateway/dist/lib/modernRequest.js" {
+declare module 'supergateway/dist/lib/modernRequest.js' {
   import type {
     InboundModernRoute,
     PerRequestHTTPServerTransport,
-  } from "@modelcontextprotocol/server";
+  } from '@modelcontextprotocol/server';
   import type {
     ChildrenOwner,
     GatewayLogger,
     GatewayRequest,
     GatewayResponse,
-  } from "supergateway/dist/gateways/stdioToStatefulStreamableHttp.js";
-  import type { HeaderValue } from "supergateway/dist/lib/modernAdmission.js";
+  } from 'supergateway/dist/gateways/stdioToStatefulStreamableHttp.js';
+  import type { HeaderValue } from 'supergateway/dist/lib/modernAdmission.js';
   import type {
     ModernChild,
     RetainedChildren,
     ReusedChild,
-  } from "supergateway/dist/lib/retainedChildren.js";
+  } from 'supergateway/dist/lib/retainedChildren.js';
   export class ModernRequest {
     constructor(at: {
       req: GatewayRequest;

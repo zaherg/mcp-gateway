@@ -1,6 +1,6 @@
-import { Alert } from "@mcp-gateway/mainview/components/ui";
-import type { AppSnapshot, QuitStatus, UpdateStatus } from "@mcp-gateway/shared/rpc";
-import type { GatewayConfig, GatewaySnapshot } from "@mcp-gateway/shared/types";
+import { Alert } from '@mcp-gateway/mainview/components/ui';
+import type { AppSnapshot, QuitStatus, UpdateStatus } from '@mcp-gateway/shared/rpc';
+import type { GatewayConfig, GatewaySnapshot } from '@mcp-gateway/shared/types';
 
 export const Banners = ({
   error,
@@ -29,7 +29,7 @@ export const Banners = ({
   error: string | null;
   dismissLocalError: () => void;
   updateState: UpdateStatus | undefined;
-  tab: "overview" | "settings" | "logs";
+  tab: 'overview' | 'settings' | 'logs';
   dismissed: Set<string>;
   dismiss: (id: string) => void;
   quitting: boolean;
@@ -53,10 +53,10 @@ export const Banners = ({
     <div className="announcements" aria-live="polite">
       {error && <Alert onDismiss={dismissLocalError}>{error}</Alert>}
       {updateState &&
-        (updateState.phase === "available" || updateState.phase === "ready") &&
-        tab !== "settings" &&
+        (updateState.phase === 'available' || updateState.phase === 'ready') &&
+        tab !== 'settings' &&
         !dismissed.has(
-          `update-${updateState.phase}-${updateState.availableVersion ?? ""}-${updateState.error ?? ""}`,
+          `update-${updateState.phase}-${updateState.availableVersion ?? ''}-${updateState.error ?? ''}`,
         ) && (
           <Alert
             kind="warning"
@@ -64,39 +64,39 @@ export const Banners = ({
             label="Dismiss update notice"
             onDismiss={() =>
               dismiss(
-                `update-${updateState.phase}-${updateState.availableVersion ?? ""}-${updateState.error ?? ""}`,
+                `update-${updateState.phase}-${updateState.availableVersion ?? ''}-${updateState.error ?? ''}`,
               )
             }
           >
-            {updateState.phase === "ready"
+            {updateState.phase === 'ready'
               ? `Version ${updateState.availableVersion} is ready to install.`
-              : `Version ${updateState.availableVersion} is available.`}{" "}
+              : `Version ${updateState.availableVersion} is available.`}{' '}
             Open Settings → Updates to review and confirm.
           </Alert>
         )}
-      {updateState?.phase === "error" &&
+      {updateState?.phase === 'error' &&
         !dismissed.has(
-          `update-${updateState.phase}-${updateState.availableVersion ?? ""}-${updateState.error ?? ""}`,
+          `update-${updateState.phase}-${updateState.availableVersion ?? ''}-${updateState.error ?? ''}`,
         ) && (
           <Alert
             onDismiss={() =>
               dismiss(
-                `update-${updateState.phase}-${updateState.availableVersion ?? ""}-${updateState.error ?? ""}`,
+                `update-${updateState.phase}-${updateState.availableVersion ?? ''}-${updateState.error ?? ''}`,
               )
             }
           >
-            Update: {updateState.error ?? "The update operation failed."}
+            Update: {updateState.error ?? 'The update operation failed.'}
           </Alert>
         )}
       {!quitting &&
-        quitStatus.phase === "failed" &&
+        quitStatus.phase === 'failed' &&
         !dismissed.has(`quit-${quitStatus.attempt}`) && (
           <Alert onDismiss={() => dismiss(`quit-${quitStatus.attempt}`)}>{quitStatus.error}</Alert>
         )}
       {shutdownStarted && (
         <p role="status">
-          Configuration is read-only because{" "}
-          {updateRestarting ? "an update restart has started" : "Quit cleanup has started"}. Drafts
+          Configuration is read-only because{' '}
+          {updateRestarting ? 'an update restart has started' : 'Quit cleanup has started'}. Drafts
           can still be selected and copied, and Logs remain available.
         </p>
       )}
@@ -107,7 +107,7 @@ export const Banners = ({
         <p role="status">Could not read Quit status. Cleanup completion is unknown.</p>
       )}
       {notice && (
-        <Alert kind="success" label="Dismiss notification" onDismiss={() => setNotice("")}>
+        <Alert kind="success" label="Dismiss notification" onDismiss={() => setNotice('')}>
           {notice}
         </Alert>
       )}
@@ -116,10 +116,10 @@ export const Banners = ({
         !dismissed.has(`config-${gateway.configError.occurrenceId}`) && (
           <Alert onDismiss={() => dismiss(`config-${gateway.configError?.occurrenceId}`)}>
             Configuration unavailable: {gateway.configError.message} Open the configuration editor
-            to repair the authoritative file.{" "}
+            to repair the authoritative file.{' '}
             {config && !configurationLocked
-              ? "The retained draft remains editable. Review external changes before saving."
-              : "Structured editing is paused."}
+              ? 'The retained draft remains editable. Review external changes before saving.'
+              : 'Structured editing is paused.'}
           </Alert>
         )}
       {gateway?.operationalError &&

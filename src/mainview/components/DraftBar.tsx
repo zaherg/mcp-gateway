@@ -1,5 +1,5 @@
-import type { Document } from "@mcp-gateway/mainview/dialogs/ServerEditor";
-import type { AppSnapshot } from "@mcp-gateway/shared/rpc";
+import type { Document } from '@mcp-gateway/mainview/dialogs/ServerEditor';
+import type { AppSnapshot } from '@mcp-gateway/shared/rpc';
 
 export const DraftBar = ({
   dirty,
@@ -22,11 +22,11 @@ export const DraftBar = ({
   return (
     <div className="draft-bar">
       <span>
-        <strong>{dirty ? "Unsaved changes" : "Login registration unresolved"}</strong>
+        <strong>{dirty ? 'Unsaved changes' : 'Login registration unresolved'}</strong>
         <small>
           {dirty
-            ? "Live endpoints still use the saved configuration."
-            : "Save again to retry the requested login setting."}
+            ? 'Live endpoints still use the saved configuration.'
+            : 'Save again to retry the requested login setting.'}
         </small>
       </span>
       <div>
@@ -38,7 +38,7 @@ export const DraftBar = ({
             onClick={() => {
               if (
                 !configurationLocked &&
-                window.confirm("Discard all unsaved changes and load the latest configuration?")
+                window.confirm('Discard all unsaved changes and load the latest configuration?')
               ) {
                 setDoc({
                   text: snapshot.gateway.configText,
@@ -58,7 +58,7 @@ export const DraftBar = ({
           disabled={configurationLocked}
           onClick={() => void save()}
         >
-          {dirty ? "Save changes" : "Retry login registration"}
+          {dirty ? 'Save changes' : 'Retry login registration'}
         </button>
       </div>
     </div>

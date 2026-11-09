@@ -1,7 +1,7 @@
-import { Alert } from "@mcp-gateway/mainview/components/ui";
-import type { AppClient } from "@mcp-gateway/shared/rpc";
-import { LOG_LEVELS, LOG_LIMITS, type LogEntry, type LogLevel } from "@mcp-gateway/shared/types";
-import { useEffect, useRef, useState } from "react";
+import { Alert } from '@mcp-gateway/mainview/components/ui';
+import type { AppClient } from '@mcp-gateway/shared/rpc';
+import { LOG_LEVELS, LOG_LIMITS, type LogEntry, type LogLevel } from '@mcp-gateway/shared/types';
+import { useEffect, useRef, useState } from 'react';
 
 const logRequest = async <T,>(pending: Promise<T>, signal: AbortSignal): Promise<T> => {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -10,26 +10,26 @@ const logRequest = async <T,>(pending: Promise<T>, signal: AbortSignal): Promise
     return await Promise.race([
       pending,
       new Promise<never>((_resolve, reject) => {
-        cancel = () => reject(new Error("Local log request canceled."));
-        signal.addEventListener("abort", cancel, { once: true });
+        cancel = () => reject(new Error('Local log request canceled.'));
+        signal.addEventListener('abort', cancel, { once: true });
         if (signal.aborted) cancel();
         timer = setTimeout(
-          () => reject(new Error("Local log request timed out.")),
+          () => reject(new Error('Local log request timed out.')),
           LOG_LIMITS.requestTimeoutMs,
         );
       }),
     ]);
   } finally {
     if (timer) clearTimeout(timer);
-    if (cancel) signal.removeEventListener("abort", cancel);
+    if (cancel) signal.removeEventListener('abort', cancel);
   }
 };
 
 export const Logs = ({ client, servers }: { client: AppClient; servers: string[] }) => {
   const [entries, setEntries] = useState<LogEntry[]>([]);
-  const [level, setLevel] = useState<LogLevel | "">("");
-  const [server, setServer] = useState("");
-  const [text, setText] = useState("");
+  const [level, setLevel] = useState<LogLevel | ''>('');
+  const [server, setServer] = useState('');
+  const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [clearError, setClearError] = useState<string | null>(null);
   const [gap, setGap] = useState(false);
@@ -89,7 +89,7 @@ export const Logs = ({ client, servers }: { client: AppClient; servers: string[]
         timer = setTimeout(poll, page.hasMore ? 0 : 2000);
       } catch {
         if (!cancelled && generation === requestGeneration.current)
-          setError("Could not read local logs. Reopen Logs to retry.");
+          setError('Could not read local logs. Reopen Logs to retry.');
       }
     };
     if (!clearing) void poll();
@@ -115,7 +115,7 @@ export const Logs = ({ client, servers }: { client: AppClient; servers: string[]
       setEpoch((value) => value + 1);
     } catch {
       if (!lifetime.current.signal.aborted)
-        setClearError("Could not clear local logs. Reopen Logs to retry.");
+        setClearError('Could not clear local logs. Reopen Logs to retry.');
     } finally {
       if (!lifetime.current.signal.aborted) setClearing(false);
     }
@@ -154,7 +154,7 @@ export const Logs = ({ client, servers }: { client: AppClient; servers: string[]
             aria-label="Level"
             value={level}
             onChange={(event) =>
-              setLevel(LOG_LEVELS.find((level) => level === event.target.value) ?? "")
+              setLevel(LOG_LEVELS.find((level) => level === event.target.value) ?? '')
             }
           >
             <option value="">All levels</option>
@@ -204,9 +204,9 @@ export const Logs = ({ client, servers }: { client: AppClient; servers: string[]
           filtered.map((entry) => (
             <article key={entry.id} className="log-entry">
               <div className="log-meta">
-                <time>{entry.time}</time> · #{entry.id} · {entry.server ?? "App"} · {entry.level} ·{" "}
+                <time>{entry.time}</time> · #{entry.id} · {entry.server ?? 'App'} · {entry.level} ·{' '}
                 {entry.source}
-                {entry.truncated ? " · truncated" : ""}
+                {entry.truncated ? ' · truncated' : ''}
               </div>
               <pre>{entry.text}</pre>
             </article>
@@ -214,8 +214,8 @@ export const Logs = ({ client, servers }: { client: AppClient; servers: string[]
         ) : (
           <p className="empty-state">
             {entries.length
-              ? "No entries match these filters."
-              : "No log entries yet. Backend activity appears here after client requests."}
+              ? 'No entries match these filters.'
+              : 'No log entries yet. Backend activity appears here after client requests.'}
           </p>
         )}
       </section>

@@ -1,10 +1,10 @@
-import type { QuitStatus } from "@mcp-gateway/shared/rpc";
+import type { QuitStatus } from '@mcp-gateway/shared/rpc';
 
-type Intent = "quit" | "update" | undefined;
+type Intent = 'quit' | 'update' | undefined;
 
 /** Serializes terminal cleanup and keeps an update restart distinct from an ordinary quit. */
 export class QuitCoordinator {
-  private state: QuitStatus = { attempt: 0, phase: "idle", error: null };
+  private state: QuitStatus = { attempt: 0, phase: 'idle', error: null };
   private intent: Intent;
   private approved = false;
   private cleanupDone = false;
@@ -14,7 +14,7 @@ export class QuitCoordinator {
   constructor(
     private readonly cleanup: () => Promise<void>,
     private readonly quitAgain: () => void,
-    private readonly onFailure: (error: unknown, kind: "quit" | "update") => void,
+    private readonly onFailure: (error: unknown, kind: 'quit' | 'update') => void,
   ) {}
 
   status(): QuitStatus {
@@ -22,51 +22,51 @@ export class QuitCoordinator {
   }
 
   updateRestartActive(): boolean {
-    return this.intent === "update";
+    return this.intent === 'update';
   }
 
   /** Runs cleanup for an update restart; false means an ordinary quit won. */
   async beginUpdateRestart(): Promise<boolean> {
-    if (this.approved || this.state.phase === "ready") return false;
-    if (this.intent === "quit") return false;
+    if (this.approved || this.state.phase === 'ready') return false;
+    if (this.intent === 'quit') return false;
     if (this.cleanupDone) {
-      if (this.intent !== "update") {
-        this.intent = "update";
-        this.state = { attempt: ++this.sequence, phase: "pending", error: null };
+      if (this.intent !== 'update') {
+        this.intent = 'update';
+        this.state = { attempt: ++this.sequence, phase: 'pending', error: null };
       }
       return true;
     }
-    if (this.intent !== "update") {
-      this.intent = "update";
-      this.state = { attempt: ++this.sequence, phase: "pending", error: null };
+    if (this.intent !== 'update') {
+      this.intent = 'update';
+      this.state = { attempt: ++this.sequence, phase: 'pending', error: null };
       this.cleanupDone = false;
     }
     await this.ensureCleanup();
-    return this.intent === "update" && this.cleanupDone;
+    return this.intent === 'update' && this.cleanupDone;
   }
 
   approveUpdateRestart(): void {
-    if (this.intent === "update" && this.cleanupDone) this.approved = true;
+    if (this.intent === 'update' && this.cleanupDone) this.approved = true;
   }
 
   clearUpdateRestart(): void {
     this.approved = false;
-    if (this.intent === "update") this.intent = undefined;
+    if (this.intent === 'update') this.intent = undefined;
   }
 
   updateRestartFailed(message: string): void {
     this.approved = false;
     this.intent = undefined;
-    this.state = { attempt: this.state.attempt, phase: "failed", error: message };
-    this.onFailure(new Error(message), "update");
+    this.state = { attempt: this.state.attempt, phase: 'failed', error: message };
+    this.onFailure(new Error(message), 'update');
   }
 
   /** A normal user quit must never inherit a previously selected update. */
   armQuit(): boolean {
-    if (this.approved || this.state.phase === "ready") return false;
-    if (this.intent === "quit" && this.state.phase === "pending") return true;
-    this.intent = "quit";
-    this.state = { attempt: ++this.sequence, phase: "pending", error: null };
+    if (this.approved || this.state.phase === 'ready') return false;
+    if (this.intent === 'quit' && this.state.phase === 'pending') return true;
+    this.intent = 'quit';
+    this.state = { attempt: ++this.sequence, phase: 'pending', error: null };
     return true;
   }
 
@@ -75,9 +75,9 @@ export class QuitCoordinator {
     if (this.approved && !signal) return;
     if (signal) {
       this.approved = false;
-      if (this.intent === "update") this.intent = undefined;
+      if (this.intent === 'update') this.intent = undefined;
     }
-    if (this.state.phase === "ready") return;
+    if (this.state.phase === 'ready') return;
     veto();
     this.ordinaryIntent();
   }
@@ -99,19 +99,19 @@ export class QuitCoordinator {
       .then(this.cleanup)
       .then(() => {
         this.cleanupDone = true;
-        if (this.intent === "quit") void this.finishAfterCleanup();
+        if (this.intent === 'quit') void this.finishAfterCleanup();
       })
       .catch((error) => {
-        const wasUpdate = this.intent === "update";
+        const wasUpdate = this.intent === 'update';
         this.intent = undefined;
         this.state = {
           attempt: this.state.attempt,
-          phase: "failed",
+          phase: 'failed',
           error: wasUpdate
-            ? "Update cleanup failed. The app has not exited. Use Quit, then reopen the app to retry the update."
-            : "Quit cleanup failed. The app has not exited. Retry Quit.",
+            ? 'Update cleanup failed. The app has not exited. Use Quit, then reopen the app to retry the update.'
+            : 'Quit cleanup failed. The app has not exited. Retry Quit.',
         };
-        this.onFailure(error, wasUpdate ? "update" : "quit");
+        this.onFailure(error, wasUpdate ? 'update' : 'quit');
         throw error;
       })
       .finally(() => {
@@ -122,18 +122,18 @@ export class QuitCoordinator {
   }
 
   private async finishAfterCleanup(): Promise<void> {
-    if (this.intent !== "quit") return;
-    this.state = { attempt: this.state.attempt, phase: "ready", error: null };
+    if (this.intent !== 'quit') return;
+    this.state = { attempt: this.state.attempt, phase: 'ready', error: null };
     try {
       this.quitAgain();
     } catch (error) {
       this.cleanupDone = false;
       this.state = {
         attempt: this.state.attempt,
-        phase: "failed",
-        error: "Quit cleanup failed. The app has not exited. Retry Quit.",
+        phase: 'failed',
+        error: 'Quit cleanup failed. The app has not exited. Retry Quit.',
       };
-      this.onFailure(error, "quit");
+      this.onFailure(error, 'quit');
     }
   }
 }
@@ -157,7 +157,7 @@ export class InteractiveQuitGate {
       this.lifecycle.handle(veto, true);
       return;
     }
-    if (this.lifecycle.status().phase !== "idle" || this.lifecycle.updateRestartActive()) {
+    if (this.lifecycle.status().phase !== 'idle' || this.lifecycle.updateRestartActive()) {
       this.lifecycle.handle(veto);
       return;
     }
@@ -171,12 +171,12 @@ export class InteractiveQuitGate {
           this.lifecycle.armQuit();
           this.quit();
         } else if ((await acknowledgement) !== true) {
-          throw new Error("The window did not acknowledge the interactive Quit request.");
+          throw new Error('The window did not acknowledge the interactive Quit request.');
         }
       })
       .catch((error) => {
         // A lost acknowledgement after an approved request must not interrupt cleanup.
-        if (this.lifecycle.status().phase === "idle") this.onUnavailable(error);
+        if (this.lifecycle.status().phase === 'idle') this.onUnavailable(error);
       })
       .finally(() => {
         this.pending = undefined;

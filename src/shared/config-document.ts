@@ -9,29 +9,29 @@ import {
   type ParseError,
   parseTree,
   SyntaxKind,
-} from "jsonc-parser";
+} from 'jsonc-parser';
 
-export type ConfigFormat = "json" | "jsonc";
+export type ConfigFormat = 'json' | 'jsonc';
 export const configFormat = (path: string): ConfigFormat =>
-  path.endsWith(".jsonc") ? "jsonc" : "json";
+  path.endsWith('.jsonc') ? 'jsonc' : 'json';
 
 // Fixed messages only: parser diagnostics must not echo configuration credentials.
 class ConfigSyntaxError extends Error {
   constructor() {
-    super("Configuration syntax is invalid or contains duplicate keys.");
+    super('Configuration syntax is invalid or contains duplicate keys.');
   }
 }
 
 const checkedTree = (text: string, format: ConfigFormat): Node => {
   const errors: ParseError[] = [];
   const root = parseTree(text, errors, {
-    disallowComments: format === "json",
-    allowTrailingComma: format === "jsonc",
+    disallowComments: format === 'json',
+    allowTrailingComma: format === 'jsonc',
     allowEmptyContent: false,
   });
   if (!root || errors.length) throw new ConfigSyntaxError();
   const check = (node: Node): void => {
-    if (node.type === "object") {
+    if (node.type === 'object') {
       const keys = new Set<string>();
       for (const property of node.children ?? []) {
         const key: string = property.children?.[0]?.value;
@@ -45,19 +45,19 @@ const checkedTree = (text: string, format: ConfigFormat): Node => {
   return root;
 };
 
-export const parseConfigDocument = (text: string, format: ConfigFormat = "json"): unknown => {
+export const parseConfigDocument = (text: string, format: ConfigFormat = 'json'): unknown => {
   return getNodeValue(checkedTree(text, format));
 };
 
 /** Plain-object check shared with the runtime schemas. */
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === "object" && !Array.isArray(value);
+  value !== null && typeof value === 'object' && !Array.isArray(value);
 
 /** Change only differing leaves. Retained blocks and source environment references stay intact. */
 export const editConfigDocument = (
   text: string,
   next: unknown,
-  format: ConfigFormat = "json",
+  format: ConfigFormat = 'json',
   rename?: { path: JSONPath; from: string; to: string },
 ): string => {
   let root = checkedTree(text, format);
@@ -98,7 +98,7 @@ export const editConfigDocument = (
     const tree = checkedTree(text, format);
     const valueNode = findNodeAtLocation(tree, path);
     if (!valueNode) return;
-    const node = valueNode.parent?.type === "property" ? valueNode.parent : valueNode;
+    const node = valueNode.parent?.type === 'property' ? valueNode.parent : valueNode;
     const parent = node.parent;
     if (!parent?.children) throw new ConfigSyntaxError();
     const index = parent.children.indexOf(node);
@@ -114,8 +114,8 @@ export const editConfigDocument = (
       if (scanner.scan() === SyntaxKind.CommaToken) comma = scanner.getTokenOffset();
     }
     text = applyEdits(text, [
-      { offset: node.offset, length: node.length, content: "" },
-      ...(comma === undefined ? [] : [{ offset: comma, length: 1, content: "" }]),
+      { offset: node.offset, length: node.length, content: '' },
+      ...(comma === undefined ? [] : [{ offset: comma, length: 1, content: '' }]),
     ]);
   };
   change([], original, next);
