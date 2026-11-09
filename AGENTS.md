@@ -11,3 +11,8 @@
    - Nothing else may remain.
    - After each release, keep only the latest version in `artifacts/`.
    - Delete the folders of all older versions, including their timestamped variants.
+5. Choose the simplest solution that meets the requirements.
+   - Prefer the least new code: reuse existing code and skip speculative abstraction.
+   - Keep it readable.
+   - Never skip correctness, security, input validation, or rules 1 to 4.
+   - A plan under rule 3 takes precedence.
