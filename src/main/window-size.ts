@@ -12,6 +12,11 @@ export interface WindowSize {
 // The layout is designed for this size; it is also the smallest size allowed.
 export const MIN_WINDOW_SIZE: WindowSize = { width: 1120, height: 820 };
 
+export const clampWindowSize = (size: WindowSize): WindowSize => ({
+  width: Math.max(size.width, MIN_WINDOW_SIZE.width),
+  height: Math.max(size.height, MIN_WINDOW_SIZE.height),
+});
+
 const SIZE_FILE = 'window.json';
 const SAVE_DELAY_MS = 500;
 // Guards against a corrupted file requesting an absurd window.
@@ -74,7 +79,7 @@ export class WindowSizeStore {
   /** Records the latest size; the file is written once resizing settles. */
   schedule(size: WindowSize): void {
     if (!isDimension(size.width, 1) || !isDimension(size.height, 1)) return;
-    this.pending = { width: Math.round(size.width), height: Math.round(size.height) };
+    this.pending = clampWindowSize(size);
     this.latest = this.pending;
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => void this.flush(), SAVE_DELAY_MS);
@@ -91,16 +96,12 @@ export class WindowSizeStore {
   }
 
   private async write(size: WindowSize): Promise<void> {
-    const clamped = {
-      width: Math.max(size.width, MIN_WINDOW_SIZE.width),
-      height: Math.max(size.height, MIN_WINDOW_SIZE.height),
-    };
     const temporary = `${this.path}.${randomBytes(8).toString('hex')}.tmp`;
     try {
       await ensureParent(this.path);
       const handle = await open(temporary, 'wx', 0o600);
       try {
-        await handle.writeFile(JSON.stringify({ schema_version: 1, ...clamped }));
+        await handle.writeFile(JSON.stringify({ schema_version: 1, ...size }));
         await handle.sync();
       } finally {
         await handle.close();

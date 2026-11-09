@@ -31,7 +31,7 @@ import {
   startsInBackground,
 } from '@mcp-gateway/main/native';
 import { AppService } from '@mcp-gateway/main/service';
-import { MIN_WINDOW_SIZE, WindowSizeStore } from '@mcp-gateway/main/window-size';
+import { clampWindowSize, MIN_WINDOW_SIZE, WindowSizeStore } from '@mcp-gateway/main/window-size';
 import type { AppRPC, QuitStatus } from '@mcp-gateway/shared/rpc';
 
 const buildConfig = BuildConfig.getSync();
@@ -212,10 +212,25 @@ const openWindow = (): void => {
   } catch (error) {
     controller.recordLocalError(error);
   }
-  created.on('resize', (event) => {
-    const data = (event as { data?: { width?: unknown; height?: unknown } }).data;
-    if (typeof data?.width === 'number' && typeof data.height === 'number')
-      windowSize.schedule({ width: data.width, height: data.height });
+  created.on('resize', () => {
+    if (window !== created) return;
+    try {
+      // Events can arrive after a newer resize; always constrain the live size.
+      const current = created.getSize();
+      if (
+        !Number.isFinite(current.width) ||
+        !Number.isFinite(current.height) ||
+        current.width <= 0 ||
+        current.height <= 0
+      )
+        return;
+      const size = clampWindowSize(current);
+      if (size.width !== current.width || size.height !== current.height)
+        created.setSize(size.width, size.height);
+      windowSize.schedule(size);
+    } catch (error) {
+      controller.recordLocalError(error);
+    }
   });
   created.on('close', () => {
     void windowSize.flush();
