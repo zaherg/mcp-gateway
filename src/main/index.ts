@@ -14,11 +14,7 @@ import Electrobun, {
 import { parseConfig } from '@mcp-gateway/core/config';
 import { McpGatewayController } from '@mcp-gateway/core/controller';
 import { GatewayError } from '@mcp-gateway/core/errors';
-import {
-  AppUpdater,
-  resolveUpdateSupport,
-  unsupportedUpdateStatus,
-} from '@mcp-gateway/main/app-updater';
+import { AppUpdater, resolveUpdateSupport } from '@mcp-gateway/main/app-updater';
 import { InteractiveQuitGate, QuitCoordinator } from '@mcp-gateway/main/lifecycle';
 import {
   configurationDirectory,
@@ -28,11 +24,10 @@ import {
   openMinimumWindowSize,
   openTrayIndicator,
   restoreWindow,
-  startsInBackground,
 } from '@mcp-gateway/main/native';
 import { AppService } from '@mcp-gateway/main/service';
 import { clampWindowSize, MIN_WINDOW_SIZE, WindowSizeStore } from '@mcp-gateway/main/window-size';
-import type { AppRPC, QuitStatus } from '@mcp-gateway/shared/rpc';
+import type { AppRPC } from '@mcp-gateway/shared/rpc';
 
 const buildConfig = BuildConfig.getSync();
 const isDevelopment = buildConfig.channel === 'dev';
@@ -46,20 +41,13 @@ const dataDirectory = configurationDirectory(
   Utils.paths.config,
   installedIdentifier(PATHS.RESOURCES_FOLDER),
 );
-const nativeQuitSignal = observeNativeQuitSignals(
-  join(PATHS.RESOURCES_FOLDER, 'app/native/login.dylib'),
-);
-const login = openLoginManager(join(PATHS.RESOURCES_FOLDER, 'app/native/login.dylib'));
-const setMinimumWindowSize = openMinimumWindowSize(
-  join(PATHS.RESOURCES_FOLDER, 'app/native/login.dylib'),
-);
+const nativeLibrary = join(PATHS.RESOURCES_FOLDER, 'app/native/login.dylib');
+const nativeQuitSignal = observeNativeQuitSignals(nativeLibrary);
+const login = openLoginManager(nativeLibrary);
+const setMinimumWindowSize = openMinimumWindowSize(nativeLibrary);
 const windowSize = await WindowSizeStore.open(dataDirectory);
 const controller = await McpGatewayController.open(join(dataDirectory, 'mcp.json'));
-const idleQuitStatus: QuitStatus = { attempt: 0, phase: 'idle', error: null };
-let quit: QuitCoordinator | undefined;
-const quitStatus = (): QuitStatus => quit?.status() ?? idleQuitStatus;
 const support = await resolveUpdateSupport();
-let updates: AppUpdater | undefined;
 const TRAY_SIZE = 18;
 const tray = new Tray({
   image: 'views://assets/tray.png',
@@ -70,7 +58,7 @@ const tray = new Tray({
 const setTrayRunning = openTrayIndicator(
   join(PATHS.VIEWS_FOLDER, 'assets/tray.png'),
   TRAY_SIZE,
-  join(PATHS.RESOURCES_FOLDER, 'app/native/login.dylib'),
+  nativeLibrary,
 );
 let window: BrowserWindow | undefined;
 let pendingShowUpdates = false;
@@ -79,7 +67,6 @@ let menuState = '';
 let trayRunning = false;
 let trayIndicatorFailed = false;
 let trayRemoved = false;
-let loginClosed = false;
 let requestInteractiveRendererQuit: (() => Promise<boolean>) | undefined;
 
 const menuAction = (event: unknown): string | undefined => {
@@ -91,7 +78,7 @@ const menuAction = (event: unknown): string | undefined => {
 
 const updateMenu = (): void => {
   if (trayRemoved) return;
-  const quitFailed = quitStatus().phase === 'failed';
+  const quitFailed = quit.status().phase === 'failed';
   const snapshot = controller.snapshot();
   if (snapshot.running !== trayRunning) {
     try {
@@ -104,7 +91,7 @@ const updateMenu = (): void => {
       trayIndicatorFailed = true;
     }
   }
-  const update = updates?.status() ?? unsupportedUpdateStatus();
+  const update = updater.status();
   const state = `${snapshot.running}:${Boolean(snapshot.configError)}:${quitFailed}:${update.supported}:${update.phase}:${update.availableVersion ?? ''}`;
   if (state === menuState) return;
   menuState = state;
@@ -244,9 +231,10 @@ const openWindow = (): void => {
 };
 
 const refresh = setInterval(updateMenu, 1_000);
-quit = new QuitCoordinator(
+// Constructed before any timer, menu or window callback above can run.
+const quit = new QuitCoordinator(
   async () => {
-    updates?.stop();
+    updater.stop();
     clearInterval(refresh);
     await windowSize.flush();
     await controller.close();
@@ -254,10 +242,7 @@ quit = new QuitCoordinator(
       tray.remove();
       trayRemoved = true;
     }
-    if (!loginClosed) {
-      login.close();
-      loginClosed = true;
-    }
+    login.close();
   },
   () => {
     Utils.quit();
@@ -280,19 +265,18 @@ const updater = new AppUpdater({
   installedVersion: support.installedVersion,
   quit,
 });
-updates = updater;
-updates.subscribe(updateMenu);
+updater.subscribe(updateMenu);
 const service = new AppService(
   controller,
   login.manager,
   Utils.clipboardWriteText,
   {
     requestQuit: () => {
-      quit?.armQuit();
+      quit.armQuit();
       Utils.quit();
-      return quitStatus();
+      return quit.status();
     },
-    quitStatus,
+    quitStatus: () => quit.status(),
     openExternal: Utils.openExternal,
   },
   updater,
@@ -329,7 +313,7 @@ Electrobun.events.on('before-quit', (event) =>
 Electrobun.events.on('reopen', openWindow);
 for (const signal of ['SIGINT', 'SIGTERM'] as const)
   process.on(signal, () => {
-    quit?.armQuit();
+    quit.armQuit();
     Utils.quit();
   });
 
@@ -428,9 +412,6 @@ try {
   // Expected invalid config is already visible in the controller snapshot.
   if (!(error instanceof GatewayError)) throw error;
 }
-const background = startsInBackground(
-  process.argv.includes('--background'),
-  login.manager.status(),
-  savedLoginPreference,
-);
+const background =
+  process.argv.includes('--background') || login.manager.status().enabled || savedLoginPreference;
 if (!background) openWindow();

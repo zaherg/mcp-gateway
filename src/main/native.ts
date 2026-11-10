@@ -61,10 +61,6 @@ class MacLoginManager implements LoginManager {
   }
 }
 
-const closedError: () => never = () => {
-  throw new Error('closed');
-};
-
 export const openLoginManager = (path: string) => {
   const library = dlopen(path, {
     mcp_login_status: { args: [], returns: FFIType.i32 },
@@ -80,7 +76,7 @@ export const openLoginManager = (path: string) => {
       return status;
     },
     set: (enabled) => {
-      if (closed) closedError();
+      if (closed) throw new Error('closed');
       return library.symbols.mcp_login_set(enabled ? 1 : 0);
     },
   };
@@ -148,12 +144,6 @@ export const openTrayIndicator = (
   };
 };
 
-const absolutePath = (path: string, name: string): string => {
-  if (!isAbsolute(path) || path.includes('\0'))
-    throw new Error(`${name} must be an absolute path.`);
-  return path;
-};
-
 type AppIdentifier = typeof PRODUCTION_IDENTIFIER | typeof TEST_IDENTIFIER;
 
 export const installedIdentifier = (resourcesFolder: string): AppIdentifier => {
@@ -171,30 +161,16 @@ export const installedIdentifier = (resourcesFolder: string): AppIdentifier => {
 // Utils.paths.config does not include the bundle identifier, so test builds need
 // their own folder to stay off the production configuration.
 export const configurationDirectory = (configBase: string, identifier: AppIdentifier): string => {
-  return join(
-    absolutePath(configBase, 'Configuration base'),
-    identifier === TEST_IDENTIFIER ? 'MCP Gateway Test' : 'MCP Gateway',
-  );
+  if (!isAbsolute(configBase) || configBase.includes('\0'))
+    throw new Error('Configuration base must be an absolute path.');
+  return join(configBase, identifier === TEST_IDENTIFIER ? 'MCP Gateway Test' : 'MCP Gateway');
 };
-
-interface LoginAvailability {
-  supported: boolean;
-  enabled: boolean;
-}
 
 interface RestorableWindow {
   unminimize(): void;
   show(): void;
   activate(): void;
 }
-
-export const startsInBackground = (
-  requested: boolean,
-  login: LoginAvailability,
-  savedLoginPreference: boolean,
-): boolean => {
-  return requested || login.enabled || savedLoginPreference;
-};
 
 export const restoreWindow = (window: RestorableWindow): void => {
   window.unminimize();

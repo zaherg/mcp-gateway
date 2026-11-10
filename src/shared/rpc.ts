@@ -71,7 +71,6 @@ export type AppRPC = {
       copyEndpoint: { params: { name: string }; response: AppResult<null> };
       copyClientConfig: { params: { name: string }; response: AppResult<null> };
       openSocialLink: { params: { target: SocialLinkTarget }; response: AppResult<null> };
-      updatesStatus: { params: undefined; response: AppResult<UpdateStatus> };
       updatesCheck: { params: undefined; response: AppResult<UpdateStatus> };
       updatesDownload: { params: undefined; response: AppResult<UpdateStatus> };
       updatesSetAutomatic: {

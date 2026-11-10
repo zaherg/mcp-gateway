@@ -28,18 +28,6 @@ export interface UpdateRuntime {
   subscribe(listener: (status: UpdateStatus) => void): () => void;
 }
 
-export const unsupportedUpdateStatus = (): UpdateStatus => {
-  return {
-    supported: false,
-    automaticUpdates: false,
-    installedVersion: null,
-    availableVersion: null,
-    phase: 'idle',
-    error: null,
-    checkedAt: null,
-  };
-};
-
 export const resolveUpdateSupport = async (): Promise<{
   supported: boolean;
   installedVersion: string | null;
@@ -50,16 +38,6 @@ export const resolveUpdateSupport = async (): Promise<{
     supported: info.channel === 'stable' && installedVersion !== null && info.baseUrl.length > 0,
     installedVersion,
   };
-};
-
-const isHigherStableVersion = (candidate: string, installed: string | null): boolean => {
-  if (!installed || !STABLE_VERSION.test(candidate) || !STABLE_VERSION.test(installed))
-    return false;
-  try {
-    return Bun.semver.order(candidate, installed) === 1;
-  } catch {
-    return false;
-  }
 };
 
 interface Preference {
@@ -196,10 +174,7 @@ export class AppUpdater implements UpdateRuntime {
       throw new RequestError('An update check is already in progress.');
     if (this.value.phase === 'downloading') return this.status();
     if (this.value.phase === 'ready') return this.status();
-    if (
-      !this.value.availableVersion ||
-      !isHigherStableVersion(this.value.availableVersion, this.options.installedVersion)
-    )
+    if (!this.value.availableVersion || !this.eligible(this.value.availableVersion))
       throw new RequestError('No eligible update is available to download.');
     // The download can outlive the window's request limit; its phase is polled.
     void this.performDownload().catch((error: unknown) =>
@@ -232,11 +207,7 @@ export class AppUpdater implements UpdateRuntime {
   async restart(): Promise<QuitStatus> {
     this.assertAvailable();
     const info = Updater.updateInfo();
-    if (
-      !info.updateReady ||
-      !info.version ||
-      !isHigherStableVersion(info.version, this.options.installedVersion)
-    )
+    if (!info.updateReady || !info.version || !this.eligible(info.version))
       throw new RequestError('No verified update is ready to install.');
     let cleaned: boolean;
     try {
@@ -283,8 +254,7 @@ export class AppUpdater implements UpdateRuntime {
     try {
       const info = await Updater.checkForUpdate();
       if (this.stopped) return this.status();
-      const eligible =
-        info.updateAvailable && isHigherStableVersion(info.version, this.options.installedVersion);
+      const eligible = info.updateAvailable && this.eligible(info.version);
       this.update({
         availableVersion: eligible ? info.version : null,
         phase: eligible ? 'available' : info.updateAvailable || info.error ? 'error' : 'idle',
@@ -311,9 +281,7 @@ export class AppUpdater implements UpdateRuntime {
       if (this.stopped) return this.status();
       const info = Updater.updateInfo();
       this.update(
-        info.updateReady &&
-          info.version &&
-          isHigherStableVersion(info.version, this.options.installedVersion)
+        info.updateReady && info.version && this.eligible(info.version)
           ? { availableVersion: info.version, phase: 'ready', error: null }
           : {
               phase: 'error',
@@ -336,7 +304,7 @@ export class AppUpdater implements UpdateRuntime {
         return;
       case 'update-available':
         this.update(
-          isHigherStableVersion(info.version, this.options.installedVersion)
+          this.eligible(info.version)
             ? { phase: 'available', availableVersion: info.version, error: null }
             : {
                 phase: 'error',
@@ -354,7 +322,7 @@ export class AppUpdater implements UpdateRuntime {
         return;
       case 'download-complete':
         this.update(
-          info.version && isHigherStableVersion(info.version, this.options.installedVersion)
+          info.version && this.eligible(info.version)
             ? { phase: 'ready', availableVersion: info.version, error: null }
             : { phase: 'error', error: 'The offered update version is not eligible.' },
         );
@@ -392,25 +360,17 @@ export class AppUpdater implements UpdateRuntime {
       this.set({ phase: 'idle', error: null });
     else if (terminal?.status === 'download-complete') {
       const info = Updater.updateInfo();
-      if (info.version && isHigherStableVersion(info.version, this.options.installedVersion))
+      if (info.version && this.eligible(info.version))
         this.set({ phase: 'ready', availableVersion: info.version });
     } else if (terminal?.status === 'update-available') {
       const info = Updater.updateInfo();
-      if (info.version && isHigherStableVersion(info.version, this.options.installedVersion))
+      if (info.version && this.eligible(info.version))
         this.set({ phase: 'available', availableVersion: info.version });
     }
     const info = Updater.updateInfo();
-    if (
-      info.updateReady &&
-      info.version &&
-      isHigherStableVersion(info.version, this.options.installedVersion)
-    )
+    if (info.updateReady && info.version && this.eligible(info.version))
       this.set({ phase: 'ready', availableVersion: info.version });
-    else if (
-      info.updateAvailable &&
-      info.version &&
-      isHigherStableVersion(info.version, this.options.installedVersion)
-    )
+    else if (info.updateAvailable && info.version && this.eligible(info.version))
       this.set({ phase: 'available', availableVersion: info.version });
     if (info.error) this.set({ phase: 'error', error: info.error });
   }
@@ -450,6 +410,18 @@ export class AppUpdater implements UpdateRuntime {
     if (this.intervalTimer) clearInterval(this.intervalTimer);
     this.startupTimer = undefined;
     this.intervalTimer = undefined;
+  }
+
+  /** Whether `candidate` is a stable version higher than the installed one. */
+  private eligible(candidate: string): boolean {
+    const installed = this.options.installedVersion;
+    if (!installed || !STABLE_VERSION.test(candidate) || !STABLE_VERSION.test(installed))
+      return false;
+    try {
+      return Bun.semver.order(candidate, installed) === 1;
+    } catch {
+      return false;
+    }
   }
 
   private assertAvailable(): void {

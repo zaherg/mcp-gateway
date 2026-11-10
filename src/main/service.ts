@@ -9,7 +9,7 @@ import {
 import { GatewayError, RequestError } from '@mcp-gateway/core/errors';
 import { anyNumber } from '@mcp-gateway/core/schema';
 import { createSerialQueue } from '@mcp-gateway/core/serial-queue';
-import { type UpdateRuntime, unsupportedUpdateStatus } from '@mcp-gateway/main/app-updater';
+import type { UpdateRuntime } from '@mcp-gateway/main/app-updater';
 import {
   type AppResult,
   type AppSnapshot,
@@ -81,7 +81,7 @@ export class AppService {
     private readonly login: LoginManager,
     private readonly copyText: (text: string) => void,
     private readonly desktop: DesktopActions,
-    private readonly updates?: UpdateRuntime,
+    private readonly updates: UpdateRuntime,
   ) {
     this.loginStatus = login.status();
   }
@@ -92,7 +92,7 @@ export class AppService {
     return {
       gateway: this.controller.snapshot(),
       login: this.loginStatus,
-      update: this.updates?.status() ?? unsupportedUpdateStatus(),
+      update: this.updates.status(),
     };
   }
 
@@ -194,7 +194,7 @@ export class AppService {
       return this.run(async () => {
         if (
           this.desktop.quitStatus().phase !== 'idle' ||
-          this.updates?.status().phase === 'restarting'
+          this.updates.status().phase === 'restarting'
         )
           throw new RequestError('Quit cleanup has started. Retry Quit to close the app.');
         const { text, expectedRevision } = decode(SaveRequest, input);
@@ -267,43 +267,33 @@ export class AppService {
         const { target } = decode(SocialLinkRequest, input);
         if (
           this.desktop.quitStatus().phase !== 'idle' ||
-          this.updates?.status().phase === 'restarting'
+          this.updates.status().phase === 'restarting'
         )
           throw new RequestError('Quit cleanup has started. The link was not opened.');
         if (!this.desktop.openExternal(SOCIAL_LINKS[target]))
           throw new RequestError('The link could not be opened in your default browser.');
         return null;
       }),
-    updatesStatus: (input?: unknown) =>
-      this.lifecycle(() => {
-        empty(input);
-        return this.requireUpdates().status();
-      }),
     updatesCheck: (input?: unknown) =>
       this.lifecycle(async () => {
         empty(input);
-        return this.requireUpdates().check();
+        return this.updates.check();
       }),
     updatesDownload: (input?: unknown) =>
       this.lifecycle(async () => {
         empty(input);
-        return this.requireUpdates().download();
+        return this.updates.download();
       }),
     updatesSetAutomatic: (input: unknown) =>
       this.run(async () => {
         const { automatic } = decode(AutomaticRequest, input);
-        return this.requireUpdates().setAutomatic(automatic);
+        return this.updates.setAutomatic(automatic);
       }),
     updatesRestart: (input?: unknown) =>
       this.run(async () => {
         empty(input);
-        const status = await this.requireUpdates().restart();
+        const status = await this.updates.restart();
         return { requested: true as const, status };
       }),
   };
-
-  private requireUpdates(): UpdateRuntime {
-    if (!this.updates) throw new RequestError('Updates are unavailable in this build.');
-    return this.updates;
-  }
 }
