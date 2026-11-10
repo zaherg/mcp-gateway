@@ -1,4 +1,4 @@
-import { ChevronRight, Network, Server, Settings2, ShieldCheck, Terminal } from 'lucide-react';
+import { Network, ShieldCheck } from 'lucide-react';
 import { type ReactNode, useLayoutEffect, useRef } from 'react';
 
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
@@ -59,21 +59,21 @@ export const Shell = ({
             className={tab === 'overview' ? 'nav-item active' : 'nav-item'}
             onClick={() => setTab('overview')}
           >
-            <Server size={17} /> Overview <ChevronRight size={14} />
+            Overview
           </button>
           <button
             type="button"
             className={tab === 'settings' ? 'nav-item active' : 'nav-item'}
             onClick={() => setTab('settings')}
           >
-            <Settings2 size={17} /> Settings <ChevronRight size={14} />
+            Settings
           </button>
           <button
             type="button"
             className={tab === 'logs' ? 'nav-item active' : 'nav-item'}
             onClick={() => setTab('logs')}
           >
-            <Terminal size={17} /> Logs <ChevronRight size={14} />
+            Logs
           </button>
         </nav>
         <div className="sidebar-footer">

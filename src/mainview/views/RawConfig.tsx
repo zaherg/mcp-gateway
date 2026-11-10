@@ -1,4 +1,3 @@
-import { ArrowDownToLine, ChevronRight, Code2 } from 'lucide-react';
 import type { RefObject } from 'react';
 
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
@@ -48,12 +47,10 @@ export const RawConfig = ({
         aria-expanded={rawOpen}
         onClick={() => setRawOpen(!rawOpen)}
       >
-        <Code2 size={18} />
         <span>
           <strong>Authoritative configuration</strong>
           <small>{filename} · advanced editing</small>
         </span>
-        <ChevronRight className={rawOpen ? 'expanded' : ''} size={18} />
       </button>
       {rawOpen && (
         <div className="raw-body">
@@ -84,7 +81,7 @@ export const RawConfig = ({
             disabled={configurationLocked || (!dirty && !retryLogin)}
             onClick={() => void save()}
           >
-            <ArrowDownToLine /> Save {filename}
+            Save {filename}
           </Button>
         </div>
       )}

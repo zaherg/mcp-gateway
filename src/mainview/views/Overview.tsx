@@ -1,14 +1,4 @@
-import {
-  ArrowUpRight,
-  CircleHelp,
-  Code2,
-  Copy,
-  Plus,
-  RefreshCw,
-  Server,
-  ShieldCheck,
-  Trash2,
-} from 'lucide-react';
+import { CircleHelp, Code2, Copy, RefreshCw, Server, ShieldCheck, Trash2 } from 'lucide-react';
 
 import { Badge } from '@mcp-gateway/mainview/components/mac/badge';
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
@@ -74,7 +64,7 @@ export const Overview = ({
             disabled={configurationLocked || !config}
             onClick={() => openEditor()}
           >
-            <Plus /> Add server
+            Add server
           </Button>
         </div>
         <div className="server-grid">
@@ -169,7 +159,7 @@ export const Overview = ({
                       )
                     }
                   >
-                    <Code2 size={14} /> Copy client configuration <ArrowUpRight size={13} />
+                    Copy client configuration
                   </button>
                 </article>
               );
@@ -194,7 +184,7 @@ export const Overview = ({
                 setEditor({ ...emptyEditor(), ...bearPreset() });
               }}
             >
-              Use macOS Bear preset <ArrowUpRight />
+              Use macOS Bear preset
             </Button>
             <small>Optional, macOS only. Bear can expose all accessible notes and tools.</small>
           </div>

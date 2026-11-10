@@ -1,4 +1,4 @@
-import { ArrowDownToLine, ArrowUpRight, CircleHelp, RefreshCw } from 'lucide-react';
+import { ArrowDownToLine, CircleHelp } from 'lucide-react';
 import type { RefObject } from 'react';
 
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
@@ -140,7 +140,6 @@ export const Updates = ({
               disabled={actionsDisabled}
               onClick={() => void runUpdate(() => client.updatesCheck(), 'Update check completed.')}
             >
-              <RefreshCw />
               {updateState.phase === 'checking' ? 'Checking…' : 'Check for Updates'}
             </Button>
             {updateState.availableVersion && !updateReady && (
@@ -150,7 +149,6 @@ export const Updates = ({
                   void runUpdate(() => client.updatesDownload(), 'The update download has started.')
                 }
               >
-                <ArrowDownToLine />
                 {updateState.phase === 'downloading' ? 'Downloading…' : 'Download Update'}
               </Button>
             )}
@@ -168,7 +166,6 @@ export const Updates = ({
                 }
                 onClick={() => setConfirmUpdate(true)}
               >
-                <ArrowUpRight />
                 Restart to Update
               </Button>
             )}

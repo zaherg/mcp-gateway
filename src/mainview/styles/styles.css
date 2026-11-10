@@ -59,11 +59,6 @@ summary:focus-visible {
   outline: none;
   box-shadow: var(--mac-focus-ring);
 }
-.nav-item svg,
-.raw-heading svg,
-.client-copy svg {
-  flex-shrink: 0;
-}
 h1,
 h2,
 h3,
@@ -148,10 +143,6 @@ nav {
   border: 1px solid transparent;
   border-radius: var(--mac-radius-item);
   background: transparent;
-}
-.nav-item svg:last-child {
-  margin-left: auto;
-  opacity: 0.55;
 }
 .nav-item:hover {
   background: var(--mac-fill-tertiary);
@@ -436,9 +427,6 @@ main {
   display: block;
   font-size: 10px;
   margin-top: 5px;
-}
-.expanded {
-  transform: rotate(90deg);
 }
 .raw-body {
   padding: 0 22px 22px;
