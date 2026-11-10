@@ -278,6 +278,18 @@ const service = new AppService(
     },
     quitStatus: () => quit.status(),
     openExternal: Utils.openExternal,
+    confirmDiscard: async () => {
+      const { response } = await Utils.showMessageBox({
+        type: 'question',
+        title: 'Discard unsaved changes?',
+        message: 'Discard all unsaved changes and load the latest configuration?',
+        detail: 'The saved configuration is not changed.',
+        buttons: ['Cancel', 'Discard'],
+        defaultId: 0,
+        cancelId: 0,
+      });
+      return response === 1;
+    },
   },
   updater,
 );

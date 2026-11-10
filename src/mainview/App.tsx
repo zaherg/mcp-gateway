@@ -222,6 +222,17 @@ export const App = ({ client }: App) => {
       true,
     );
   };
+  const confirmDiscard = async (): Promise<boolean> => {
+    try {
+      const result = await client.confirmDiscard();
+      if (result.ok) return result.value;
+      setErrorOccurrence(result.error.occurrenceId ?? null);
+      setError(`${result.error.code}: ${result.error.message}`);
+    } catch {
+      setError('The confirmation dialog could not be opened. The draft is preserved.');
+    }
+    return false;
+  };
   const openSocialLink = (target: SocialLinkTarget) => {
     if (busy || configurationLocked) return;
     void run(() => client.openSocialLink({ target }), '');
@@ -426,6 +437,7 @@ export const App = ({ client }: App) => {
               setDoc={setDoc}
               setError={setError}
               save={save}
+              confirmDiscard={confirmDiscard}
             />
             {tab === 'logs' ? (
               <Logs client={client} servers={gateway?.servers.map((server) => server.name) ?? []} />

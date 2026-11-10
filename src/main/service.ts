@@ -70,6 +70,7 @@ interface DesktopActions {
   requestQuit: () => QuitStatus;
   quitStatus: () => QuitStatus;
   openExternal: (url: string) => boolean;
+  confirmDiscard: () => Promise<boolean>;
 }
 
 /** Runtime-validated local RPC boundary. No exception may echo a raw request. */
@@ -223,6 +224,12 @@ export class AppService {
         return this.snapshot();
       });
     },
+    confirmDiscard: (input?: unknown) =>
+      // The dialog can stay open; it must not hold the configuration queue.
+      this.lifecycle(async () => {
+        empty(input);
+        return this.desktop.confirmDiscard();
+      }),
     copyEndpoint: (input: unknown) =>
       this.run(() => {
         const name = serverName(input);

@@ -10,6 +10,7 @@ interface DraftBar {
   setDoc: (doc: Document) => void;
   setError: (error: string | null) => void;
   save: () => Promise<boolean>;
+  confirmDiscard: () => Promise<boolean>;
 }
 
 export const DraftBar = ({
@@ -20,8 +21,18 @@ export const DraftBar = ({
   setDoc,
   setError,
   save,
+  confirmDiscard,
 }: DraftBar) => {
   if (!dirty && !retryLogin) return null;
+  const discard = async () => {
+    if (configurationLocked || !(await confirmDiscard())) return;
+    setDoc({
+      text: snapshot.gateway.configText,
+      revision: snapshot.gateway.revision,
+      dirty: false,
+    });
+    setError(null);
+  };
   return (
     <div className="draft-bar">
       <span>
@@ -34,22 +45,7 @@ export const DraftBar = ({
       </span>
       <div>
         {dirty && (
-          <Button
-            disabled={configurationLocked}
-            onClick={() => {
-              if (
-                !configurationLocked &&
-                window.confirm('Discard all unsaved changes and load the latest configuration?')
-              ) {
-                setDoc({
-                  text: snapshot.gateway.configText,
-                  revision: snapshot.gateway.revision,
-                  dirty: false,
-                });
-                setError(null);
-              }
-            }}
-          >
+          <Button disabled={configurationLocked} onClick={() => void discard()}>
             Discard
           </Button>
         )}

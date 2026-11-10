@@ -68,6 +68,7 @@ export type AppRPC = {
         params: { text: string; expectedRevision: string };
         response: AppResult<AppSnapshot>;
       };
+      confirmDiscard: { params: undefined; response: AppResult<boolean> };
       copyEndpoint: { params: { name: string }; response: AppResult<null> };
       copyClientConfig: { params: { name: string }; response: AppResult<null> };
       openSocialLink: { params: { target: SocialLinkTarget }; response: AppResult<null> };
