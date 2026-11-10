@@ -299,26 +299,18 @@ export const App = ({ client }: App) => {
       setEditorError(failure instanceof Error ? failure.message : 'The server fields are invalid.');
       return;
     }
+    // Spread last: these keys follow the transport fields in the saved file.
+    const shared = {
+      disabled: editor.disabled,
+      // Omitted when off, so older versions can still read the file.
+      legacyProtocol: editor.legacyProtocol || undefined,
+      // Undefined removes the property, which restores global inheritance.
+      token: editor.token,
+    };
     const server =
       editor.type === 'stdio'
-        ? {
-            command: editor.command,
-            args,
-            env,
-            cwd: editor.cwd || undefined,
-            disabled: editor.disabled,
-            // Omitted when off, so older versions can still read the file.
-            legacyProtocol: editor.legacyProtocol || undefined,
-            // Undefined removes the property, which restores global inheritance.
-            token: editor.token,
-          }
-        : {
-            url: editor.url,
-            headers,
-            disabled: editor.disabled,
-            legacyProtocol: editor.legacyProtocol || undefined,
-            token: editor.token,
-          };
+        ? { command: editor.command, args, env, cwd: editor.cwd || undefined, ...shared }
+        : { url: editor.url, headers, ...shared };
     const servers = { ...config.mcpServers };
     if (editor.original) delete servers[editor.original];
     servers[editor.name] = server;

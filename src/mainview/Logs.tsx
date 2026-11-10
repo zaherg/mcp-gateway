@@ -11,16 +11,13 @@ import { Alert } from '@mcp-gateway/mainview/components/ui';
 import type { AppClient } from '@mcp-gateway/shared/rpc';
 import { LOG_LEVELS, LOG_LIMITS, type LogEntry, type LogLevel } from '@mcp-gateway/shared/types';
 
-const logRequest = async <T,>(pending: Promise<T>, signal: AbortSignal): Promise<T> => {
+// Bounds the wait only. Callers discard a late answer with their own cancelled and generation checks.
+const logRequest = async <T,>(pending: Promise<T>): Promise<T> => {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let cancel: (() => void) | undefined;
   try {
     return await Promise.race([
       pending,
       new Promise<never>((_resolve, reject) => {
-        cancel = () => reject(new Error('Local log request canceled.'));
-        signal.addEventListener('abort', cancel, { once: true });
-        if (signal.aborted) cancel();
         timer = setTimeout(
           () => reject(new Error('Local log request timed out.')),
           LOG_LIMITS.requestTimeoutMs,
@@ -28,8 +25,7 @@ const logRequest = async <T,>(pending: Promise<T>, signal: AbortSignal): Promise
       }),
     ]);
   } finally {
-    if (timer) clearTimeout(timer);
-    if (cancel) signal.removeEventListener('abort', cancel);
+    clearTimeout(timer);
   }
 };
 
@@ -62,19 +58,12 @@ export const Logs = ({ client, servers }: Logs) => {
   const [gap, setGap] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [epoch, setEpoch] = useState(0);
-  const lifetime = useRef(new AbortController());
-  useEffect(() => {
-    const controller = new AbortController();
-    lifetime.current = controller;
-    return () => controller.abort();
-  }, []);
   const requestGeneration = useRef(0);
   const cursor = useRef(0);
   const bufferGeneration = useRef<number | undefined>(undefined);
   // biome-ignore lint/correctness/useExhaustiveDependencies: A successful clear must invalidate pending reads even when clearing state is batched.
   useEffect(() => {
     let cancelled = false;
-    const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     const generation = ++requestGeneration.current;
     cursor.current = 0;
@@ -83,10 +72,7 @@ export const Logs = ({ client, servers }: Logs) => {
     setError(null);
     const poll = async () => {
       try {
-        const result = await logRequest(
-          client.readLogs({ after: cursor.current }),
-          controller.signal,
-        );
+        const result = await logRequest(client.readLogs({ after: cursor.current }));
         if (cancelled || generation !== requestGeneration.current) return;
         if (!result.ok) {
           setError(`${result.error.code}: ${result.error.message}`);
@@ -121,7 +107,6 @@ export const Logs = ({ client, servers }: Logs) => {
     if (!clearing) void poll();
     return () => {
       cancelled = true;
-      controller.abort();
       clearTimeout(timer);
     };
   }, [client, epoch, clearing]);
@@ -131,7 +116,7 @@ export const Logs = ({ client, servers }: Logs) => {
     setClearing(true);
     setClearError(null);
     try {
-      const result = await logRequest(client.clearLogs(), lifetime.current.signal);
+      const result = await logRequest(client.clearLogs());
       if (!result.ok) {
         setClearError(`${result.error.code}: ${result.error.message}`);
         return;
@@ -140,10 +125,9 @@ export const Logs = ({ client, servers }: Logs) => {
       setGap(false);
       setEpoch((value) => value + 1);
     } catch {
-      if (!lifetime.current.signal.aborted)
-        setClearError('Could not clear local logs. Reopen Logs to retry.');
+      setClearError('Could not clear local logs. Reopen Logs to retry.');
     } finally {
-      if (!lifetime.current.signal.aborted) setClearing(false);
+      setClearing(false);
     }
   };
   const filtered = entries.filter(
