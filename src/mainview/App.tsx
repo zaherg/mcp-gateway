@@ -22,7 +22,7 @@ import { RawConfig } from '@mcp-gateway/mainview/views/RawConfig';
 import { Settings } from '@mcp-gateway/mainview/views/Settings';
 import { Updates } from '@mcp-gateway/mainview/views/Updates';
 import { editConfigDocument } from '@mcp-gateway/shared/config-document';
-import type { AppClient, AppSnapshot } from '@mcp-gateway/shared/rpc';
+import type { AppClient, AppSnapshot, SocialLinkTarget } from '@mcp-gateway/shared/rpc';
 import { needsLoginRetry } from '@mcp-gateway/shared/rpc';
 import type { GatewayConfig } from '@mcp-gateway/shared/types';
 
@@ -222,6 +222,10 @@ export const App = ({ client }: App) => {
       true,
     );
   };
+  const openSocialLink = (target: SocialLinkTarget) => {
+    if (busy || configurationLocked) return;
+    void run(() => client.openSocialLink({ target }), '');
+  };
   const changeEditor = (patch: Partial<Editor>) => {
     if (configurationLocked) return;
     setEditor((previous) => (previous ? { ...previous, ...patch } : null));
@@ -340,6 +344,8 @@ export const App = ({ client }: App) => {
       deleting={deleting}
       quitStatus={quitStatus}
       interactiveQuit={interactiveQuit}
+      onOpenSocialLink={openSocialLink}
+      socialLinksDisabled={busy || configurationLocked}
       dialogs={
         <>
           <ConfirmDialogs

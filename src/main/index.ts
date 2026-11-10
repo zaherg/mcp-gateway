@@ -293,6 +293,7 @@ const service = new AppService(
       return quitStatus();
     },
     quitStatus,
+    openExternal: Utils.openExternal,
   },
   updater,
 );

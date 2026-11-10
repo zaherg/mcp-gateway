@@ -168,6 +168,23 @@ nav {
   color: var(--mac-label-secondary);
   font-size: 9px;
 }
+.sidebar-social-links {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 0 7px;
+}
+.sidebar-social-link {
+  color: var(--mac-label-secondary);
+}
+.sidebar-social-link:hover {
+  color: var(--mac-label);
+}
+.sidebar-social-link:disabled,
+.sidebar-social-link[data-disabled] {
+  color: var(--mac-label-tertiary);
+}
 main {
   flex: 1 1 auto;
   min-width: 0;

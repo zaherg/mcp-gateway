@@ -16,6 +16,8 @@ import {
   type LoginStatus,
   needsLoginRetry,
   type QuitStatus,
+  SOCIAL_LINK_TARGETS,
+  type SocialLinkTarget,
 } from '@mcp-gateway/shared/rpc';
 import type { GatewayController } from '@mcp-gateway/shared/types';
 
@@ -39,6 +41,7 @@ const LogRequest = z.strictObject({ after: anyNumber });
 const NameRequest = z.strictObject({ name: z.string() });
 const SaveRequest = z.strictObject({ text: z.string(), expectedRevision: z.string() });
 const AutomaticRequest = z.strictObject({ automatic: z.boolean() });
+const SocialLinkRequest = z.strictObject({ target: z.enum(SOCIAL_LINK_TARGETS) });
 
 const decode = <A>(schema: z.ZodType<A>, input: unknown): A => {
   const result = schema.safeParse(input);
@@ -57,9 +60,16 @@ const serverName = (input: unknown): string => {
   return name;
 };
 
-interface DesktopQuit {
+// The two fixed destinations are native-owned so the renderer cannot pass a URL.
+const SOCIAL_LINKS: Record<SocialLinkTarget, string> = {
+  github: 'https://github.com/zaherg/mcp-gateway',
+  x: 'https://x.com/zaherg',
+};
+
+interface DesktopActions {
   requestQuit: () => QuitStatus;
   quitStatus: () => QuitStatus;
+  openExternal: (url: string) => boolean;
 }
 
 /** Runtime-validated local RPC boundary. No exception may echo a raw request. */
@@ -70,7 +80,7 @@ export class AppService {
     readonly controller: GatewayController,
     private readonly login: LoginManager,
     private readonly copyText: (text: string) => void,
-    private readonly desktop: DesktopQuit,
+    private readonly desktop: DesktopActions,
     private readonly updates?: UpdateRuntime,
   ) {
     this.loginStatus = login.status();
@@ -250,6 +260,18 @@ export class AppService {
             2,
           ),
         );
+        return null;
+      }),
+    openSocialLink: (input: unknown) =>
+      this.run(() => {
+        const { target } = decode(SocialLinkRequest, input);
+        if (
+          this.desktop.quitStatus().phase !== 'idle' ||
+          this.updates?.status().phase === 'restarting'
+        )
+          throw new RequestError('Quit cleanup has started. The link was not opened.');
+        if (!this.desktop.openExternal(SOCIAL_LINKS[target]))
+          throw new RequestError('The link could not be opened in your default browser.');
         return null;
       }),
     updatesStatus: (input?: unknown) =>

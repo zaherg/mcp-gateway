@@ -45,6 +45,10 @@ export interface AppSnapshot {
   update: UpdateStatus;
 }
 
+export const SOCIAL_LINK_TARGETS = ['github', 'x'] as const;
+
+export type SocialLinkTarget = (typeof SOCIAL_LINK_TARGETS)[number];
+
 export type AppResult<T> =
   | { ok: true; value: T }
   | { ok: false; error: { code: string; message: string; occurrenceId?: string } };
@@ -66,6 +70,7 @@ export type AppRPC = {
       };
       copyEndpoint: { params: { name: string }; response: AppResult<null> };
       copyClientConfig: { params: { name: string }; response: AppResult<null> };
+      openSocialLink: { params: { target: SocialLinkTarget }; response: AppResult<null> };
       updatesStatus: { params: undefined; response: AppResult<UpdateStatus> };
       updatesCheck: { params: undefined; response: AppResult<UpdateStatus> };
       updatesDownload: { params: undefined; response: AppResult<UpdateStatus> };
