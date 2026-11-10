@@ -1,6 +1,17 @@
 import { Alert } from '@mcp-gateway/mainview/components/ui';
 import type { VisibleError } from '@mcp-gateway/shared/types';
 
+interface GatewayErrorBanners {
+  configError: VisibleError | null;
+  operationalError: VisibleError | null;
+  hasLocalError: boolean;
+  errorOccurrence: string | null;
+  hasRetainedConfig: boolean;
+  configurationLocked: boolean;
+  dismissed: ReadonlySet<string>;
+  dismiss: (id: string) => void;
+}
+
 export const GatewayErrorBanners = ({
   configError,
   operationalError,
@@ -10,16 +21,7 @@ export const GatewayErrorBanners = ({
   configurationLocked,
   dismissed,
   dismiss,
-}: {
-  configError: VisibleError | null;
-  operationalError: VisibleError | null;
-  hasLocalError: boolean;
-  errorOccurrence: string | null;
-  hasRetainedConfig: boolean;
-  configurationLocked: boolean;
-  dismissed: ReadonlySet<string>;
-  dismiss: (id: string) => void;
-}) => {
+}: GatewayErrorBanners) => {
   // A local error with the same occurrence already reports this failure.
   const reportedLocally = (occurrenceId: string) =>
     hasLocalError && errorOccurrence === occurrenceId;

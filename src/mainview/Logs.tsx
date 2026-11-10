@@ -47,7 +47,12 @@ const entrySize = (entry: LogEntry): number => {
 
 const FILTER = 'grid min-w-35 flex-1 gap-1.5';
 
-export const Logs = ({ client, servers }: { client: AppClient; servers: string[] }) => {
+interface Logs {
+  client: AppClient;
+  servers: string[];
+}
+
+export const Logs = ({ client, servers }: Logs) => {
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [level, setLevel] = useState<LogLevel | ''>('');
   const [server, setServer] = useState('');

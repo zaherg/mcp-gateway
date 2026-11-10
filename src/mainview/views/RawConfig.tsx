@@ -8,6 +8,22 @@ import type { Document } from '@mcp-gateway/mainview/dialogs/ServerEditor';
 import type { ConfigFormat } from '@mcp-gateway/shared/config-document';
 import type { GatewaySnapshot } from '@mcp-gateway/shared/types';
 
+interface RawConfig {
+  doc: Document;
+  setDoc: (doc: Document) => void;
+  configurationLocked: boolean;
+  format: ConfigFormat;
+  filename: string;
+  gateway: GatewaySnapshot | undefined;
+  dirty: boolean;
+  retryLogin: boolean;
+  save: () => Promise<boolean>;
+  rawOpen: boolean;
+  setRawOpen: (open: boolean) => void;
+  fallbackFocus: RefObject<HTMLButtonElement | null>;
+  setNotice: (notice: string) => void;
+}
+
 export const RawConfig = ({
   doc,
   setDoc,
@@ -22,21 +38,7 @@ export const RawConfig = ({
   setRawOpen,
   fallbackFocus,
   setNotice,
-}: {
-  doc: Document;
-  setDoc: (doc: Document) => void;
-  configurationLocked: boolean;
-  format: ConfigFormat;
-  filename: string;
-  gateway: GatewaySnapshot | undefined;
-  dirty: boolean;
-  retryLogin: boolean;
-  save: () => Promise<boolean>;
-  rawOpen: boolean;
-  setRawOpen: (open: boolean) => void;
-  fallbackFocus: RefObject<HTMLButtonElement | null>;
-  setNotice: (notice: string) => void;
-}) => {
+}: RawConfig) => {
   return (
     <section className="panel raw-panel">
       <button

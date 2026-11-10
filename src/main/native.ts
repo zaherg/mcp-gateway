@@ -107,11 +107,11 @@ export const observeNativeQuitSignals = (path: string): (() => boolean) => {
   return () => library.symbols.mcp_quit_signal_requested() !== 0;
 };
 
-export type MinimumWindowSize = (
-  window: { ptr: Pointer | null },
-  width: number,
-  height: number,
-) => void;
+interface NativeWindowHandle {
+  ptr: Pointer | null;
+}
+
+export type MinimumWindowSize = (window: NativeWindowHandle, width: number, height: number) => void;
 
 // Electrobun has no minimum-size option, so the NSWindow minimum is set natively.
 export const openMinimumWindowSize = (path: string): MinimumWindowSize => {
@@ -177,19 +177,26 @@ export const configurationDirectory = (configBase: string, identifier: AppIdenti
   );
 };
 
+interface LoginAvailability {
+  supported: boolean;
+  enabled: boolean;
+}
+
+interface RestorableWindow {
+  unminimize(): void;
+  show(): void;
+  activate(): void;
+}
+
 export const startsInBackground = (
   requested: boolean,
-  login: { supported: boolean; enabled: boolean },
+  login: LoginAvailability,
   savedLoginPreference: boolean,
 ): boolean => {
   return requested || login.enabled || savedLoginPreference;
 };
 
-export const restoreWindow = (window: {
-  unminimize(): void;
-  show(): void;
-  activate(): void;
-}): void => {
+export const restoreWindow = (window: RestorableWindow): void => {
   window.unminimize();
   window.show();
   window.activate();

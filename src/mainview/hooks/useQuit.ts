@@ -3,6 +3,22 @@ import { type RefObject, useCallback, useEffect, useRef, useState } from 'react'
 import type { Editor } from '@mcp-gateway/mainview/dialogs/ServerEditor';
 import type { AppClient, AppSnapshot, QuitStatus } from '@mcp-gateway/shared/rpc';
 
+interface QuitOptions {
+  client: AppClient;
+  snapshot: AppSnapshot | null;
+  updateRestarting: boolean;
+  generation: RefObject<number>;
+  confirmQuit: boolean;
+  setConfirmQuit: (confirm: boolean) => void;
+  setConfirmUpdate: (confirm: boolean) => void;
+  setError: (error: string | null) => void;
+  setNotice: (notice: string) => void;
+  busy: boolean;
+  dirty: boolean;
+  editor: Editor | null;
+  deleting: string | null;
+}
+
 export const useQuit = ({
   client,
   snapshot,
@@ -17,21 +33,7 @@ export const useQuit = ({
   dirty,
   editor,
   deleting,
-}: {
-  client: AppClient;
-  snapshot: AppSnapshot | null;
-  updateRestarting: boolean;
-  generation: RefObject<number>;
-  confirmQuit: boolean;
-  setConfirmQuit: (confirm: boolean) => void;
-  setConfirmUpdate: (confirm: boolean) => void;
-  setError: (error: string | null) => void;
-  setNotice: (notice: string) => void;
-  busy: boolean;
-  dirty: boolean;
-  editor: Editor | null;
-  deleting: string | null;
-}) => {
+}: QuitOptions) => {
   const [quitStatus, setQuitStatus] = useState<QuitStatus>({
     attempt: 0,
     phase: 'idle',

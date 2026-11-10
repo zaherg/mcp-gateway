@@ -11,20 +11,22 @@ type Run = (
   saved?: boolean,
 ) => Promise<boolean>;
 
-/** Shown on every tab, above the draft bar. */
+interface GatewayStrip {
+  gateway: GatewaySnapshot | undefined;
+  dirty: boolean;
+  configurationLocked: boolean;
+  run: Run;
+  client: AppClient;
+}
+
+// Shown on every tab, above the draft bar.
 export const GatewayStrip = ({
   gateway,
   dirty,
   configurationLocked,
   run,
   client,
-}: {
-  gateway: GatewaySnapshot | undefined;
-  dirty: boolean;
-  configurationLocked: boolean;
-  run: Run;
-  client: AppClient;
-}) => {
+}: GatewayStrip) => {
   return (
     <section className="gateway-strip panel" aria-label="Gateway status">
       <div className={`status-orb ${gateway?.running ? 'online' : ''}`}>

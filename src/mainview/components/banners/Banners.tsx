@@ -9,6 +9,32 @@ import type { Tab } from '@mcp-gateway/mainview/components/Shell';
 import type { AppSnapshot, QuitStatus, UpdateStatus } from '@mcp-gateway/shared/rpc';
 import type { GatewayConfig, GatewaySnapshot } from '@mcp-gateway/shared/types';
 
+interface Banners {
+  error: string | null;
+  dismissLocalError: () => void;
+  updateState: UpdateStatus | undefined;
+  tab: Tab;
+  dismissed: Set<string>;
+  dismiss: (id: string) => void;
+  quitting: boolean;
+  quitStatus: QuitStatus;
+  shutdownStarted: boolean;
+  updateRestarting: boolean;
+  quitStatusKnown: boolean;
+  requestingQuit: boolean;
+  quitReadError: boolean;
+  notice: string;
+  setNotice: (notice: string) => void;
+  gateway: GatewaySnapshot | undefined;
+  errorOccurrence: string | null;
+  config: GatewayConfig | null;
+  configurationLocked: boolean;
+  snapshot: AppSnapshot | undefined;
+  loginWanted: boolean;
+  loginInDraftBar: boolean;
+  stale: boolean;
+}
+
 export const Banners = ({
   error,
   dismissLocalError,
@@ -33,31 +59,7 @@ export const Banners = ({
   loginWanted,
   loginInDraftBar,
   stale,
-}: {
-  error: string | null;
-  dismissLocalError: () => void;
-  updateState: UpdateStatus | undefined;
-  tab: Tab;
-  dismissed: Set<string>;
-  dismiss: (id: string) => void;
-  quitting: boolean;
-  quitStatus: QuitStatus;
-  shutdownStarted: boolean;
-  updateRestarting: boolean;
-  quitStatusKnown: boolean;
-  requestingQuit: boolean;
-  quitReadError: boolean;
-  notice: string;
-  setNotice: (notice: string) => void;
-  gateway: GatewaySnapshot | undefined;
-  errorOccurrence: string | null;
-  config: GatewayConfig | null;
-  configurationLocked: boolean;
-  snapshot: AppSnapshot | undefined;
-  loginWanted: boolean;
-  loginInDraftBar: boolean;
-  stale: boolean;
-}) => {
+}: Banners) => {
   // Logs is a read-only inspector. It keeps local errors, notices and Quit status, which its own
   // header can cause, and hides passive status that belongs to Overview and Settings.
   const showStatus = tab !== 'logs';

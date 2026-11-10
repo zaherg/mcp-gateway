@@ -7,6 +7,17 @@ import { Field, Toggle } from '@mcp-gateway/mainview/components/ui';
 import type { AppSnapshot } from '@mcp-gateway/shared/rpc';
 import type { GatewayConfig, GatewaySnapshot } from '@mcp-gateway/shared/types';
 
+interface Settings {
+  config: GatewayConfig | null;
+  gateway: GatewaySnapshot | undefined;
+  snapshot: AppSnapshot;
+  configurationLocked: boolean;
+  update: (config: GatewayConfig) => void;
+  showToken: boolean;
+  setShowToken: (show: boolean) => void;
+  filename: string;
+}
+
 export const Settings = ({
   config,
   gateway,
@@ -16,16 +27,7 @@ export const Settings = ({
   showToken,
   setShowToken,
   filename,
-}: {
-  config: GatewayConfig | null;
-  gateway: GatewaySnapshot | undefined;
-  snapshot: AppSnapshot;
-  configurationLocked: boolean;
-  update: (config: GatewayConfig) => void;
-  showToken: boolean;
-  setShowToken: (show: boolean) => void;
-  filename: string;
-}) => {
+}: Settings) => {
   const setGateway = (patch: Partial<GatewayConfig['gateway']>) => {
     if (config) update({ ...config, gateway: { ...config.gateway, ...patch } });
   };

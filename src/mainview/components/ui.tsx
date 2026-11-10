@@ -21,19 +21,27 @@ import { Textarea } from '@mcp-gateway/mainview/components/mac/textarea';
 
 const ALERT_VARIANT = { error: 'destructive', warning: 'warning', success: 'default' } as const;
 
+interface Alert {
+  children: ReactNode;
+  kind?: 'error' | 'success' | 'warning';
+  onDismiss: () => void;
+  label?: string;
+  role?: 'alert' | 'status';
+}
+
+interface Field {
+  label: string;
+  help?: string;
+  children: ReactNode;
+}
+
 export const Alert = ({
   children,
   kind = 'error',
   onDismiss,
   label = 'Dismiss error',
   role,
-}: {
-  children: ReactNode;
-  kind?: 'error' | 'success' | 'warning';
-  onDismiss: () => void;
-  label?: string;
-  role?: 'alert' | 'status';
-}) => {
+}: Alert) => {
   return (
     <MacAlert
       variant={ALERT_VARIANT[kind]}
@@ -51,15 +59,7 @@ export const Alert = ({
 // Controls a Field can label: the macOS components that render an input, a select or a textarea.
 const FIELD_CONTROLS: unknown[] = [Input, NativeSelect, Textarea];
 
-export const Field = ({
-  label,
-  help,
-  children,
-}: {
-  label: string;
-  help?: string;
-  children: ReactNode;
-}) => {
+export const Field = ({ label, help, children }: Field) => {
   const id = useId();
   const associate = (node: ReactNode): ReactNode => {
     if (!isValidElement<{ id?: string; 'aria-describedby'?: string; children?: ReactNode }>(node))
@@ -82,19 +82,15 @@ export const Field = ({
   );
 };
 
-export const Toggle = ({
-  label,
-  description,
-  checked,
-  onChange,
-  disabled = false,
-}: {
+interface Toggle {
   label: string;
   description: string;
   checked: boolean;
   disabled?: boolean;
   onChange: (checked: boolean) => void;
-}) => {
+}
+
+export const Toggle = ({ label, description, checked, onChange, disabled = false }: Toggle) => {
   const id = useId();
   return (
     <label className="toggle-row" htmlFor={id}>
@@ -113,17 +109,14 @@ export const Toggle = ({
   );
 };
 
-export const CheckboxRow = ({
-  label,
-  checked,
-  disabled,
-  onChange,
-}: {
+interface CheckboxRow {
   label: string;
   checked: boolean;
   disabled: boolean;
   onChange: (checked: boolean) => void;
-}) => {
+}
+
+export const CheckboxRow = ({ label, checked, disabled, onChange }: CheckboxRow) => {
   const id = useId();
   return (
     <div className="checkbox-row">
@@ -140,17 +133,14 @@ export const CheckboxRow = ({
   );
 };
 
-export const Modal = ({
-  title,
-  children,
-  onClose,
-  fallbackFocus,
-}: {
+interface Modal {
   title: string;
   children: ReactNode;
   onClose: () => void;
   fallbackFocus: RefObject<HTMLElement | null>;
-}) => {
+}
+
+export const Modal = ({ title, children, onClose, fallbackFocus }: Modal) => {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   useEffect(() => {

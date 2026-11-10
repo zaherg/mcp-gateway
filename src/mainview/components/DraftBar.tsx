@@ -2,6 +2,16 @@ import { Button } from '@mcp-gateway/mainview/components/mac/button';
 import type { Document } from '@mcp-gateway/mainview/dialogs/ServerEditor';
 import type { AppSnapshot } from '@mcp-gateway/shared/rpc';
 
+interface DraftBar {
+  dirty: boolean;
+  retryLogin: boolean;
+  configurationLocked: boolean;
+  snapshot: AppSnapshot;
+  setDoc: (doc: Document) => void;
+  setError: (error: string | null) => void;
+  save: () => Promise<boolean>;
+}
+
 export const DraftBar = ({
   dirty,
   retryLogin,
@@ -10,15 +20,7 @@ export const DraftBar = ({
   setDoc,
   setError,
   save,
-}: {
-  dirty: boolean;
-  retryLogin: boolean;
-  configurationLocked: boolean;
-  snapshot: AppSnapshot;
-  setDoc: (doc: Document) => void;
-  setError: (error: string | null) => void;
-  save: () => Promise<boolean>;
-}) => {
+}: DraftBar) => {
   if (!dirty && !retryLogin) return null;
   return (
     <div className="draft-bar">

@@ -5,6 +5,26 @@ import { Modal } from '@mcp-gateway/mainview/components/ui';
 import type { UpdateStatus } from '@mcp-gateway/shared/rpc';
 import type { GatewayConfig } from '@mcp-gateway/shared/types';
 
+interface ConfirmDialogs {
+  confirmQuit: boolean;
+  setConfirmQuit: (confirm: boolean) => void;
+  quitting: boolean;
+  requestQuit: () => Promise<void>;
+  confirmUpdate: boolean;
+  updateReady: boolean;
+  updateState: UpdateStatus | undefined;
+  dirty: boolean;
+  updateRestarting: boolean;
+  requestUpdateRestart: () => Promise<void>;
+  setConfirmUpdate: (confirm: boolean) => void;
+  deleting: string | null;
+  setDeleting: (name: string | null) => void;
+  configurationLocked: boolean;
+  parsed: GatewayConfig | null;
+  update: (config: GatewayConfig) => void;
+  fallbackFocus: RefObject<HTMLElement | null>;
+}
+
 export const ConfirmDialogs = ({
   confirmQuit,
   setConfirmQuit,
@@ -23,25 +43,7 @@ export const ConfirmDialogs = ({
   parsed,
   update,
   fallbackFocus,
-}: {
-  confirmQuit: boolean;
-  setConfirmQuit: (confirm: boolean) => void;
-  quitting: boolean;
-  requestQuit: () => Promise<void>;
-  confirmUpdate: boolean;
-  updateReady: boolean;
-  updateState: UpdateStatus | undefined;
-  dirty: boolean;
-  updateRestarting: boolean;
-  requestUpdateRestart: () => Promise<void>;
-  setConfirmUpdate: (confirm: boolean) => void;
-  deleting: string | null;
-  setDeleting: (name: string | null) => void;
-  configurationLocked: boolean;
-  parsed: GatewayConfig | null;
-  update: (config: GatewayConfig) => void;
-  fallbackFocus: RefObject<HTMLElement | null>;
-}) => {
+}: ConfirmDialogs) => {
   return (
     <>
       {confirmQuit && (

@@ -50,12 +50,18 @@ export const parseConfigDocument = (text: string, format: ConfigFormat = 'json')
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 
+interface Rename {
+  path: JSONPath;
+  from: string;
+  to: string;
+}
+
 /** Change only differing leaves. Retained blocks and source environment references stay intact. */
 export const editConfigDocument = (
   text: string,
   next: unknown,
   format: ConfigFormat = 'json',
-  rename?: { path: JSONPath; from: string; to: string },
+  rename?: Rename,
 ): string => {
   let root = checkedTree(text, format);
   if (rename && rename.from !== rename.to) {

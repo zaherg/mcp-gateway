@@ -1,6 +1,18 @@
 import { Alert } from '@mcp-gateway/mainview/components/ui';
 import type { QuitStatus } from '@mcp-gateway/shared/rpc';
 
+interface QuitBanners {
+  quitting: boolean;
+  quitStatus: QuitStatus;
+  shutdownStarted: boolean;
+  updateRestarting: boolean;
+  quitStatusKnown: boolean;
+  requestingQuit: boolean;
+  quitReadError: boolean;
+  dismissed: ReadonlySet<string>;
+  dismiss: (id: string) => void;
+}
+
 export const QuitBanners = ({
   quitting,
   quitStatus,
@@ -11,17 +23,7 @@ export const QuitBanners = ({
   quitReadError,
   dismissed,
   dismiss,
-}: {
-  quitting: boolean;
-  quitStatus: QuitStatus;
-  shutdownStarted: boolean;
-  updateRestarting: boolean;
-  quitStatusKnown: boolean;
-  requestingQuit: boolean;
-  quitReadError: boolean;
-  dismissed: ReadonlySet<string>;
-  dismiss: (id: string) => void;
-}) => {
+}: QuitBanners) => {
   // These conditions are independent: several messages can show at once.
   return (
     <>

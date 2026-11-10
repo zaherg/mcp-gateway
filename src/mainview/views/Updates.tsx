@@ -38,20 +38,7 @@ const updateStatusText = (update: UpdateStatus): string => {
   }
 };
 
-export const Updates = ({
-  updateState,
-  updateBusy,
-  configurationLocked,
-  busy,
-  quitStatusKnown,
-  quitStatus,
-  editor,
-  deleting,
-  runUpdate,
-  client,
-  setConfirmUpdate,
-  updatesHeading,
-}: {
+interface Updates {
   updateState: UpdateStatus;
   updateBusy: boolean;
   configurationLocked: boolean;
@@ -67,7 +54,22 @@ export const Updates = ({
   client: AppClient;
   setConfirmUpdate: (confirm: boolean) => void;
   updatesHeading: RefObject<HTMLHeadingElement | null>;
-}) => {
+}
+
+export const Updates = ({
+  updateState,
+  updateBusy,
+  configurationLocked,
+  busy,
+  quitStatusKnown,
+  quitStatus,
+  editor,
+  deleting,
+  runUpdate,
+  client,
+  setConfirmUpdate,
+  updatesHeading,
+}: Updates) => {
   const updateReady = updateState.phase === 'ready';
   const inProgress = updateState.phase === 'checking' || updateState.phase === 'downloading';
   const actionsDisabled =

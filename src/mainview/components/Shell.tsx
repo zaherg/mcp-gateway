@@ -7,6 +7,20 @@ import type { AppSnapshot, QuitStatus } from '@mcp-gateway/shared/rpc';
 
 export type Tab = 'overview' | 'settings' | 'logs';
 
+interface Shell {
+  tab: Tab;
+  setTab: (tab: Tab) => void;
+  snapshot: AppSnapshot | null;
+  busy: boolean;
+  quitting: boolean;
+  editor: Editor | null;
+  deleting: string | null;
+  quitStatus: QuitStatus;
+  interactiveQuit: { current: () => boolean };
+  children: ReactNode;
+  dialogs: ReactNode;
+}
+
 export const Shell = ({
   tab,
   setTab,
@@ -19,19 +33,7 @@ export const Shell = ({
   interactiveQuit,
   children,
   dialogs,
-}: {
-  tab: Tab;
-  setTab: (tab: Tab) => void;
-  snapshot: AppSnapshot | null;
-  busy: boolean;
-  quitting: boolean;
-  editor: Editor | null;
-  deleting: string | null;
-  quitStatus: QuitStatus;
-  interactiveQuit: { current: () => boolean };
-  children: ReactNode;
-  dialogs: ReactNode;
-}) => {
+}: Shell) => {
   const mainRef = useRef<HTMLElement>(null);
 
   // The shared scroller keeps its offset across tabs; reset it on navigation only.

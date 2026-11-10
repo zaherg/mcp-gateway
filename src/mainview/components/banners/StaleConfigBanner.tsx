@@ -1,16 +1,13 @@
 import { Alert } from '@mcp-gateway/mainview/components/ui';
 
-export const StaleConfigBanner = ({
-  stale,
-  revision,
-  dismissed,
-  dismiss,
-}: {
+interface StaleConfigBanner {
   stale: boolean;
   revision: string | undefined;
   dismissed: ReadonlySet<string>;
   dismiss: (id: string) => void;
-}) => {
+}
+
+export const StaleConfigBanner = ({ stale, revision, dismissed, dismiss }: StaleConfigBanner) => {
   // App retains acknowledgements under this same key; without a snapshot it is `stale-undefined`.
   if (!stale || dismissed.has(`stale-${revision}`)) return null;
   return (

@@ -29,6 +29,20 @@ const SERVER_STATUS = {
   stopped: { label: 'Stopped', variant: 'secondary' },
 } as const;
 
+interface Overview {
+  gateway: GatewaySnapshot | undefined;
+  config: GatewayConfig | null;
+  dirty: boolean;
+  configurationLocked: boolean;
+  run: Run;
+  client: AppClient;
+  openEditor: (name?: string) => void;
+  toggleEndpoint: (name: string, disabled: boolean) => Promise<void>;
+  setDeleting: (name: string | null) => void;
+  setEditor: (editor: Editor | null) => void;
+  setEditorError: (error: string | null) => void;
+}
+
 export const Overview = ({
   gateway,
   config,
@@ -41,19 +55,7 @@ export const Overview = ({
   setDeleting,
   setEditor,
   setEditorError,
-}: {
-  gateway: GatewaySnapshot | undefined;
-  config: GatewayConfig | null;
-  dirty: boolean;
-  configurationLocked: boolean;
-  run: Run;
-  client: AppClient;
-  openEditor: (name?: string) => void;
-  toggleEndpoint: (name: string, disabled: boolean) => Promise<void>;
-  setDeleting: (name: string | null) => void;
-  setEditor: (editor: Editor | null) => void;
-  setEditorError: (error: string | null) => void;
-}) => {
+}: Overview) => {
   return (
     <>
       <section aria-labelledby="servers-heading">

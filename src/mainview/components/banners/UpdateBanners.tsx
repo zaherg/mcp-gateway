@@ -1,19 +1,21 @@
 import { Alert } from '@mcp-gateway/mainview/components/ui';
 import type { UpdateStatus } from '@mcp-gateway/shared/rpc';
 
+interface UpdateBanners {
+  updateState: UpdateStatus | undefined;
+  showAvailableNotice: boolean;
+  showErrors: boolean;
+  dismissed: ReadonlySet<string>;
+  dismiss: (id: string) => void;
+}
+
 export const UpdateBanners = ({
   updateState,
   showAvailableNotice,
   showErrors,
   dismissed,
   dismiss,
-}: {
-  updateState: UpdateStatus | undefined;
-  showAvailableNotice: boolean;
-  showErrors: boolean;
-  dismissed: ReadonlySet<string>;
-  dismiss: (id: string) => void;
-}) => {
+}: UpdateBanners) => {
   if (!updateState) return null;
   const available =
     showAvailableNotice && (updateState.phase === 'available' || updateState.phase === 'ready');

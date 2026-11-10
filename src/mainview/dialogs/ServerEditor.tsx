@@ -98,6 +98,17 @@ export const bearPreset = (name = ''): Pick<Editor, 'name' | 'command' | 'args'>
   args: '["mcp-server"]',
 });
 
+interface ServerEditor {
+  editor: Editor;
+  editorError: string | null;
+  configurationLocked: boolean;
+  fallbackFocus: RefObject<HTMLElement | null>;
+  onChange: (patch: Partial<Editor>) => void;
+  onClose: () => void;
+  onSubmit: (event: FormEvent) => void;
+  onDismissError: () => void;
+}
+
 export const ServerEditor = ({
   editor,
   editorError,
@@ -107,16 +118,7 @@ export const ServerEditor = ({
   onClose,
   onSubmit,
   onDismissError,
-}: {
-  editor: Editor;
-  editorError: string | null;
-  configurationLocked: boolean;
-  fallbackFocus: RefObject<HTMLElement | null>;
-  onChange: (patch: Partial<Editor>) => void;
-  onClose: () => void;
-  onSubmit: (event: FormEvent) => void;
-  onDismissError: () => void;
-}) => {
+}: ServerEditor) => {
   return (
     <Modal
       title={editor.original ? 'Edit server' : 'Add a server'}

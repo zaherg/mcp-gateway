@@ -19,6 +19,16 @@ export interface LoginManager {
   setEnabled(enabled: boolean): LoginStatus;
 }
 
+interface ReplySuccess<T> {
+  ok: true;
+  value: T;
+}
+
+interface ReplyFailure {
+  ok: false;
+  error: unknown;
+}
+
 let requestSequence = 0;
 const LogRequest = z.strictObject({ after: anyNumber });
 const NameRequest = z.strictObject({ name: z.string() });
@@ -42,6 +52,11 @@ const serverName = (input: unknown): string => {
   return name;
 };
 
+interface DesktopQuit {
+  requestQuit: () => QuitStatus;
+  quitStatus: () => QuitStatus;
+}
+
 /** Runtime-validated local RPC boundary. No exception may echo a raw request. */
 export class AppService {
   private readonly queue = createSerialQueue();
@@ -50,10 +65,7 @@ export class AppService {
     readonly controller: GatewayController,
     private readonly login: LoginManager,
     private readonly copyText: (text: string) => void,
-    private readonly desktop: {
-      requestQuit: () => QuitStatus;
-      quitStatus: () => QuitStatus;
-    },
+    private readonly desktop: DesktopQuit,
     private readonly updates?: UpdateRuntime,
   ) {
     this.loginStatus = login.status();
@@ -70,7 +82,7 @@ export class AppService {
   }
 
   /** Map any failure to a sanitized local RPC result, never to a raw request. */
-  private reply<A>(result: { ok: true; value: A } | { ok: false; error: unknown }): AppResult<A> {
+  private reply<A>(result: ReplySuccess<A> | ReplyFailure): AppResult<A> {
     if (result.ok) return { ok: true, value: result.value };
     const error = result.error;
     if (!(error instanceof GatewayError) && !(error instanceof RequestError))

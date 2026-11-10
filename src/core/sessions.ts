@@ -45,6 +45,11 @@ const DUPLICATE_REQUEST_ERROR = {
   message: 'A request with this id is already in flight in this session.',
 } as const;
 
+interface JsonRpcError {
+  code: number;
+  message: string;
+}
+
 type SessionLog = (level: LogLevel, args: unknown[], diagnose: boolean) => void;
 
 interface SessionOptions {
@@ -206,7 +211,7 @@ const leasedOwner = (
 // path so its pending-request bookkeeping is cleared.
 const charged = (factory: PeerFactory, work: WorkOwner, calls: BackendCalls): PeerFactory => {
   return (owner) => {
-    const refuse = (id: string | number, error: { code: number; message: string }) => {
+    const refuse = (id: string | number, error: JsonRpcError) => {
       const response = { jsonrpc: '2.0' as const, id, error };
       owner.message(response, JSON.stringify(response));
     };

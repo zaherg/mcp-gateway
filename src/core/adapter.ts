@@ -61,6 +61,11 @@ import type { HttpServerConfig, LogLevel, StdioServerConfig } from '@mcp-gateway
 
 export type GatewayMount = StatefulMount;
 
+interface DeclaredSession {
+  version: string | undefined;
+  params: Record<string, string>;
+}
+
 const SHUTDOWN_MS = 8_000;
 
 /** Session-based (pre-2026-07-28) MCP is served only by endpoints that opt in. */
@@ -260,10 +265,7 @@ export const createMount = (
       // Do not flush incomplete events; read() requires a fully framed reply.
     }
 
-    constructor(
-      lease: ResourceLease,
-      declared: { version: string | undefined; params: Record<string, string> },
-    ) {
+    constructor(lease: ResourceLease, declared: DeclaredSession) {
       if (!source.upstream) throw new Error('Expected upstream source');
       super(source.upstream, declared, logger);
       this.close = children.track(() =>

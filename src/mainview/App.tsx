@@ -26,7 +26,16 @@ import type { AppClient, AppSnapshot } from '@mcp-gateway/shared/rpc';
 import { needsLoginRetry } from '@mcp-gateway/shared/rpc';
 import type { GatewayConfig } from '@mcp-gateway/shared/types';
 
-export const App = ({ client }: { client: AppClient }) => {
+interface App {
+  client: AppClient;
+}
+
+interface Rename {
+  from: string;
+  to: string;
+}
+
+export const App = ({ client }: App) => {
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null);
   const [doc, setDoc] = useState<Document | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -177,7 +186,7 @@ export const App = ({ client }: { client: AppClient }) => {
 
   const format = snapshot?.gateway.configFormat ?? 'json';
   const filename = snapshot?.gateway.configPath.split('/').at(-1) ?? 'mcp.json';
-  const update = (config: GatewayConfig, rename?: { from: string; to: string }) => {
+  const update = (config: GatewayConfig, rename?: Rename) => {
     if (configurationLocked) return;
     setDoc((previous) => {
       if (!previous) return previous;

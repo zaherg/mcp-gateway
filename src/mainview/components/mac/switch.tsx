@@ -5,13 +5,11 @@ import { cn } from '@mcp-gateway/mainview/lib/utils';
 // A macOS 27 switch: a capsule track with a pill-shaped knob. Sizes follow
 // the macOS control sizes; System Settings uses `mini` in its grouped forms.
 //   mini 36x16 (knob 21x13) · sm 44x20 (26x16) · default 54x24 (32x20) · lg 64x28 (38x24)
-function Switch({
-  className,
-  size = 'default',
-  ...props
-}: SwitchPrimitive.Root.Props & {
+interface SwitchProps extends SwitchPrimitive.Root.Props {
   size?: 'mini' | 'sm' | 'default' | 'lg';
-}) {
+}
+
+function Switch({ className, size = 'default', ...props }: SwitchProps) {
   return (
     <SwitchPrimitive.Root
       data-slot="switch"

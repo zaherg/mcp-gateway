@@ -118,6 +118,13 @@ const writePreference = async (dataDirectory: string, automaticUpdates: boolean)
 const errorMessage = (error: unknown): string =>
   error instanceof Error && error.message ? error.message : 'The update operation failed.';
 
+interface UpdaterOptions {
+  dataDirectory: string;
+  supported: boolean;
+  installedVersion: string | null;
+  quit: QuitCoordinator;
+}
+
 export class AppUpdater implements UpdateRuntime {
   private value: UpdateStatus;
   private readonly listeners = new Set<(status: UpdateStatus) => void>();
@@ -128,14 +135,7 @@ export class AppUpdater implements UpdateRuntime {
   private intervalTimer: ReturnType<typeof setInterval> | undefined;
   private lastCheckAt = 0;
 
-  constructor(
-    private readonly options: {
-      dataDirectory: string;
-      supported: boolean;
-      installedVersion: string | null;
-      quit: QuitCoordinator;
-    },
-  ) {
+  constructor(private readonly options: UpdaterOptions) {
     this.value = {
       supported: options.supported,
       automaticUpdates: false,

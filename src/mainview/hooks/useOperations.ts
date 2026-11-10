@@ -3,6 +3,19 @@ import type { Dispatch, RefObject, SetStateAction } from 'react';
 import type { Document } from '@mcp-gateway/mainview/dialogs/ServerEditor';
 import type { AppResult, AppSnapshot, UpdateStatus } from '@mcp-gateway/shared/rpc';
 
+interface OperationsOptions {
+  quitGeneration: RefObject<number>;
+  generation: RefObject<number>;
+  setBusy: (busy: boolean) => void;
+  updateBusy: boolean;
+  setUpdateBusy: (busy: boolean) => void;
+  setError: (error: string | null) => void;
+  setErrorOccurrence: (occurrence: string | null) => void;
+  setNotice: (notice: string) => void;
+  setSnapshot: Dispatch<SetStateAction<AppSnapshot | null>>;
+  setDoc: (doc: Document | null) => void;
+}
+
 export const useOperations = ({
   quitGeneration,
   generation,
@@ -14,18 +27,7 @@ export const useOperations = ({
   setNotice,
   setSnapshot,
   setDoc,
-}: {
-  quitGeneration: RefObject<number>;
-  generation: RefObject<number>;
-  setBusy: (busy: boolean) => void;
-  updateBusy: boolean;
-  setUpdateBusy: (busy: boolean) => void;
-  setError: (error: string | null) => void;
-  setErrorOccurrence: (occurrence: string | null) => void;
-  setNotice: (notice: string) => void;
-  setSnapshot: Dispatch<SetStateAction<AppSnapshot | null>>;
-  setDoc: (doc: Document | null) => void;
-}) => {
+}: OperationsOptions) => {
   const run = async (
     operation: () => Promise<AppResult<AppSnapshot | null>>,
     message: string,
