@@ -31,12 +31,14 @@ const StdioSchema = z.strictObject({
   cwd: z.string().exactOptional(),
   disabled: z.boolean().exactOptional(),
   legacyProtocol: z.boolean().exactOptional(),
+  token: z.string().exactOptional(),
 });
 const HttpSchema = z.strictObject({
   url: z.string(),
   headers: StringMap.exactOptional(),
   disabled: z.boolean().exactOptional(),
   legacyProtocol: z.boolean().exactOptional(),
+  token: z.string().exactOptional(),
 });
 const ConfigSchema = z.strictObject({
   gateway: z.strictObject({
@@ -53,6 +55,11 @@ const invalid: (message?: string) => never = (
   message = 'Configuration does not match the supported schema.',
 ) => {
   throw failure('InvalidConfig', message);
+};
+
+const TOKEN_RULE = '32 to 512 printable non-space ASCII characters.';
+const assertToken = (token: string, message: string): void => {
+  if (!/^[\x21-\x7e]{32,512}$/.test(token)) invalid(message);
 };
 
 const expand = (value: string, environment: NodeJS.ProcessEnv): string => {
@@ -89,11 +96,15 @@ export const parseConfig = (
   gateway.token = map(gateway.token);
   if (!Number.isInteger(gateway.port) || gateway.port < 1 || gateway.port > 65535)
     invalid('The listener port must be an integer from 1 to 65535.');
-  if (!/^[\x21-\x7e]{32,512}$/.test(gateway.token))
-    invalid('The bearer token must contain 32 to 512 printable non-space ASCII characters.');
+  assertToken(gateway.token, `The bearer token must contain ${TOKEN_RULE}`);
   if (Object.keys(config.mcpServers).length > 64) invalid('At most 64 servers are supported.');
   for (const [name, server] of Object.entries(config.mcpServers)) {
     if (!SAFE_NAME.test(name)) invalid('Server names must be safe URL path segments.');
+    // An explicit key is authoritative even on a disabled server; only omission inherits.
+    if (server.token !== undefined) {
+      server.token = map(server.token);
+      assertToken(server.token, `A server token must contain ${TOKEN_RULE}`);
+    }
     if (isHttpServer(server)) {
       server.url = map(server.url);
       let url: URL;
@@ -149,6 +160,12 @@ export const parseConfig = (
   return config;
 };
 
+/** One route's accepted credential. Callers only pass a found own server entry. */
+export const effectiveServerToken = (
+  gateway: GatewayConfig['gateway'],
+  server: StdioServerConfig | HttpServerConfig,
+): string => server.token ?? gateway.token;
+
 export const serverFingerprint = (server: StdioServerConfig | HttpServerConfig): string => {
   const sorted = (values: Record<string, string> = {}) =>
     Object.fromEntries(Object.entries(values).sort(([a], [b]) => a.localeCompare(b)));
@@ -165,6 +182,7 @@ export const serverFingerprint = (server: StdioServerConfig | HttpServerConfig):
             ),
           ),
           legacyProtocol: server.legacyProtocol === true,
+          token: server.token,
         }
       : {
           command: server.command,
@@ -172,6 +190,7 @@ export const serverFingerprint = (server: StdioServerConfig | HttpServerConfig):
           env: sorted(server.env),
           cwd: server.cwd,
           legacyProtocol: server.legacyProtocol === true,
+          token: server.token,
         },
   );
 };

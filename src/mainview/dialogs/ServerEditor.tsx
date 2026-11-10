@@ -1,4 +1,5 @@
-import type { FormEvent, RefObject } from 'react';
+import { Eye, EyeOff } from 'lucide-react';
+import { type FormEvent, type RefObject, useState } from 'react';
 
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
 import { Input } from '@mcp-gateway/mainview/components/mac/input';
@@ -8,6 +9,7 @@ import {
 } from '@mcp-gateway/mainview/components/mac/native-select';
 import { Textarea } from '@mcp-gateway/mainview/components/mac/textarea';
 import { Alert, CheckboxRow, Field, Modal } from '@mcp-gateway/mainview/components/ui';
+import { generateToken } from '@mcp-gateway/mainview/lib/token';
 import type { ConfigFormat } from '@mcp-gateway/shared/config-document';
 import { isRecord, parseConfigDocument } from '@mcp-gateway/shared/config-document';
 import type { GatewayConfig, HttpServerConfig, StdioServerConfig } from '@mcp-gateway/shared/types';
@@ -26,6 +28,8 @@ export type Editor = {
   headers: string;
   disabled: boolean;
   legacyProtocol: boolean;
+  /** `undefined` inherits the global key; any string is this server's own key. */
+  token: string | undefined;
 };
 
 const stringMap = (value: unknown): value is Record<string, string> => {
@@ -41,7 +45,8 @@ const isBackend = (value: unknown): value is Backend => {
   if (
     !isRecord(value) ||
     (value.disabled !== undefined && typeof value.disabled !== 'boolean') ||
-    (value.legacyProtocol !== undefined && typeof value.legacyProtocol !== 'boolean')
+    (value.legacyProtocol !== undefined && typeof value.legacyProtocol !== 'boolean') ||
+    (value.token !== undefined && typeof value.token !== 'string')
   )
     return false;
   if ('url' in value)
@@ -90,6 +95,7 @@ export const emptyEditor = (): Editor => ({
   headers: '{}',
   disabled: false,
   legacyProtocol: false,
+  token: undefined,
 });
 /** The macOS Bear preset fields; a name the user already typed is kept. */
 export const bearPreset = (name = ''): Pick<Editor, 'name' | 'command' | 'args'> => ({
@@ -119,6 +125,8 @@ export const ServerEditor = ({
   onSubmit,
   onDismissError,
 }: ServerEditor) => {
+  // Local reveal only; it resets whenever the dialog unmounts.
+  const [showKey, setShowKey] = useState(false);
   return (
     <Modal
       title={editor.original ? 'Edit server' : 'Add a server'}
@@ -227,6 +235,56 @@ export const ServerEditor = ({
               />
             </Field>
           </>
+        )}
+        <Field
+          label="Authentication"
+          help="Servers without their own key use the global key from Settings."
+        >
+          <NativeSelect
+            value={editor.token === undefined ? 'global' : 'custom'}
+            disabled={configurationLocked}
+            onChange={(event) =>
+              onChange({ token: event.target.value === 'custom' ? '' : undefined })
+            }
+          >
+            <NativeSelectOption value="global">Use global key</NativeSelectOption>
+            <NativeSelectOption value="custom">Use this server's key</NativeSelectOption>
+          </NativeSelect>
+        </Field>
+        {editor.token !== undefined && (
+          <Field
+            label="Server key"
+            help="Only this key can access this server. The global key will not work."
+          >
+            <div className="token-input">
+              <Input
+                autoComplete="off"
+                spellCheck={false}
+                readOnly={configurationLocked}
+                type={showKey ? 'text' : 'password'}
+                value={editor.token}
+                placeholder="${PRIVATE_MCP_TOKEN}"
+                onChange={(event) => onChange({ token: event.target.value })}
+              />
+              <Button
+                variant="ghost"
+                size="icon-lg"
+                aria-label={showKey ? 'Hide server key' : 'Show server key'}
+                onClick={() => setShowKey(!showKey)}
+              >
+                {showKey ? <EyeOff /> : <Eye />}
+              </Button>
+            </div>
+          </Field>
+        )}
+        {editor.token !== undefined && (
+          <Button
+            size="lg"
+            disabled={configurationLocked}
+            onClick={() => onChange({ token: generateToken() })}
+          >
+            Generate secure key
+          </Button>
         )}
         <CheckboxRow
           label="Allow session-based clients (MCP 2025-11-25 and earlier)"

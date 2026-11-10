@@ -15,8 +15,9 @@ Download the signed, notarized DMG from [GitHub Releases](https://github.com/zah
 Copy the app to a writable location, then open it.
 
 1. Add a server: a local executable or an HTTP(S) MCP server.
-2. In Settings, choose a private IPv4 address, a port and a bearer token.
-3. Start the gateway, then copy its configuration into your MCP client.
+2. In Settings, choose a private IPv4 address, a port and a global bearer token.
+3. Optionally, give a server its own key in the server dialog.
+4. Start the gateway, then copy its configuration into your MCP client.
 
 Each server gets its own endpoint, such as `http://192.168.1.120:8765/mcp/bear`.
 Use `127.0.0.1` to allow only this Mac.
@@ -78,10 +79,12 @@ Updating from one published GitHub release to the next has not been tested yet.
 ## Security
 
 - Use the gateway only on a trusted LAN, because HTTP traffic is not encrypted.
-- Every request needs the bearer token and must come from the selected subnet or from loopback.
+  Separate server keys separate access, not traffic.
+- Every request needs the key for its endpoint and must come from the selected subnet or from loopback.
+- A server with its own key accepts only that key; the global key does not open that endpoint.
 - The `Host` header must match the configured address and port.
 - If a request has an `Origin` header, it must match the gateway's origin.
-- Upstream credentials are configured separately, and client tokens are never passed on.
+- Upstream credentials in `headers` are configured separately from `token`, and client tokens are never passed on.
 - An upstream with configured headers must answer at its own address.
   The gateway does not follow its redirects, so those headers cannot reach another host.
 - `mcp.json` can start processes, so protect it.
@@ -116,6 +119,7 @@ Then delete the lock and try again.
   "gateway": { "host": "127.0.0.1", "port": 8765, "token": "${MCP_GATEWAY_TOKEN}" },
   "mcpServers": {
     "bear": { "command": "/Applications/Bear.app/Contents/MacOS/bearcli", "args": ["mcp-server"] },
+    "shared": { "command": "/path/to/mcp-server", "token": "${SHARED_MCP_TOKEN}" },
     "remote": {
       "url": "https://mcp.example.com/mcp",
       "headers": { "Authorization": "Bearer ${UPSTREAM_TOKEN}" },
@@ -130,8 +134,17 @@ The host must be a private IPv4 or loopback address that this Mac has right now.
 The port must be between 1 and 65535.
 `${NAME}` reads a variable from the app's environment, not from your shell startup files.
 A missing variable is an error.
-Stdio servers accept `command`, `args`, `env`, `cwd` and `disabled`.
-HTTP servers accept `url`, `headers` and `disabled`.
+Stdio servers accept `command`, `args`, `env`, `cwd`, `token` and `disabled`.
+HTTP servers accept `url`, `headers`, `token` and `disabled`.
+`token` is optional on a server.
+Without it, the server accepts the global `gateway.token`.
+With it, the server accepts only its own key, and the global key gets 401 on that endpoint.
+A server `token` accepts the same `${NAME}` references as the global key.
+An invalid explicit value is an error, never a silent fallback to the global key.
+Bearer strings carry no identity, so give each shared server its own generated key.
+Changing a server key refuses the old key at once and closes that endpoint's open requests and sessions before its replacement serves the new key, while other endpoints keep running.
+Changing `gateway.token` still restarts the listener, but servers with their own key keep accepting only their own key.
+Earlier releases reject a configuration that contains a server `token`, because their schemas are strict.
 Server names are 1 to 64 ASCII letters, digits, `_` or `-`, and start with a letter or digit.
 Tokens are 32 to 512 printable ASCII characters without spaces.
 The configuration can be at most 1 MiB and hold at most 64 servers.

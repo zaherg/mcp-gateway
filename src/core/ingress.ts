@@ -4,7 +4,12 @@ import type { Socket } from 'node:net';
 
 import type { GatewayMount } from '@mcp-gateway/core/adapter';
 import { backendSummary, closeMount, createMount } from '@mcp-gateway/core/adapter';
-import { isHttpServer, SAFE_NAME, serverFingerprint } from '@mcp-gateway/core/config';
+import {
+  effectiveServerToken,
+  isHttpServer,
+  SAFE_NAME,
+  serverFingerprint,
+} from '@mcp-gateway/core/config';
 import { failure, visible } from '@mcp-gateway/core/errors';
 import {
   BackendCalls,
@@ -185,11 +190,13 @@ export class GatewayIngress {
     for (const name of this.backendErrors.keys()) {
       if (!Object.hasOwn(config.mcpServers, name)) this.backendErrors.delete(name);
     }
-    for (const [name, endpoint] of [...this.endpoints]) {
+    // Detach every changed endpoint before awaiting any close, so a new key never
+    // reaches an old mount while another one is still shutting down.
+    const stale = [...this.endpoints].filter(([name, endpoint]) => {
       const next = Object.hasOwn(config.mcpServers, name) ? config.mcpServers[name] : undefined;
-      if (!next || next.disabled || endpoint.fingerprint !== serverFingerprint(next))
-        await this.remove(name);
-    }
+      return !next || next.disabled || endpoint.fingerprint !== serverFingerprint(next);
+    });
+    await Promise.all(stale.map(([name]) => this.remove(name)));
     if (this.closed) throw failure('Closed', 'The listener is closed.');
     for (const [name, server] of Object.entries(config.mcpServers)) {
       if (server.disabled || this.endpoints.has(name)) continue;
@@ -253,7 +260,17 @@ export class GatewayIngress {
       typeof authorization === 'string' && /^Bearer /i.test(authorization)
         ? authorization.slice(7)
         : '';
-    if (!timingSafeEqual(digest(presented), digest(this.config.gateway.token))) {
+    // Only an exact configured route selects a token; an unknown path keeps the
+    // global one so it still answers 401/404 without probing server names.
+    const name = req.url?.startsWith('/mcp/') ? req.url.slice(5) : '';
+    const target =
+      SAFE_NAME.test(name) && Object.hasOwn(this.config.mcpServers, name)
+        ? this.config.mcpServers[name]
+        : undefined;
+    const expected = target
+      ? effectiveServerToken(this.config.gateway, target)
+      : this.config.gateway.token;
+    if (!timingSafeEqual(digest(presented), digest(expected))) {
       reject(401);
       return;
     }
@@ -284,7 +301,6 @@ export class GatewayIngress {
       reject(403);
       return;
     }
-    const name = req.url?.startsWith('/mcp/') ? req.url.slice(5) : '';
     if (!SAFE_NAME.test(name)) {
       reject(404);
       return;

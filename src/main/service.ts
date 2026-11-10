@@ -1,6 +1,11 @@
 import * as z from 'zod/v4';
 
-import { MAX_CONFIG_BYTES, parseConfig, SAFE_NAME } from '@mcp-gateway/core/config';
+import {
+  effectiveServerToken,
+  MAX_CONFIG_BYTES,
+  parseConfig,
+  SAFE_NAME,
+} from '@mcp-gateway/core/config';
 import { GatewayError, RequestError } from '@mcp-gateway/core/errors';
 import { anyNumber } from '@mcp-gateway/core/schema';
 import { createSerialQueue } from '@mcp-gateway/core/serial-queue';
@@ -225,6 +230,11 @@ export class AppService {
         const server = snapshot.servers.find((entry) => entry.name === name);
         if (!server) throw new RequestError('Select a configured server.');
         const config = parseConfig(snapshot.configText, process.env, snapshot.configFormat);
+        const configured = Object.hasOwn(config.mcpServers, name)
+          ? config.mcpServers[name]
+          : undefined;
+        if (!configured) throw new RequestError('Select a configured server.');
+        const token = effectiveServerToken(config.gateway, configured);
         // A local, explicit copy action is the only place expanded credentials leave main.
         this.copyText(
           JSON.stringify(
@@ -232,7 +242,7 @@ export class AppService {
               mcpServers: {
                 [name]: {
                   url: server.endpoint,
-                  headers: { Authorization: `Bearer ${config.gateway.token}` },
+                  headers: { Authorization: `Bearer ${token}` },
                 },
               },
             },

@@ -236,6 +236,8 @@ export const App = ({ client }: App) => {
       next.name = name;
       next.disabled = server.disabled ?? false;
       next.legacyProtocol = server.legacyProtocol ?? false;
+      // Keep the raw reference text; only main expands it on save.
+      next.token = server.token;
       if ('url' in server) {
         next.type = 'http';
         next.url = server.url;
@@ -255,6 +257,11 @@ export const App = ({ client }: App) => {
     if (!editor || !config || configurationLocked) return;
     if (editor.name !== editor.original && Object.hasOwn(config.mcpServers, editor.name)) {
       setEditorError('A server with this name already exists.');
+      return;
+    }
+    // An empty custom field is a mistake, not a request to inherit the global key.
+    if (editor.token === '') {
+      setEditorError('Enter this server key, or select the global key.');
       return;
     }
     let args: string[] | undefined;
@@ -287,12 +294,15 @@ export const App = ({ client }: App) => {
             disabled: editor.disabled,
             // Omitted when off, so older versions can still read the file.
             legacyProtocol: editor.legacyProtocol || undefined,
+            // Undefined removes the property, which restores global inheritance.
+            token: editor.token,
           }
         : {
             url: editor.url,
             headers,
             disabled: editor.disabled,
             legacyProtocol: editor.legacyProtocol || undefined,
+            token: editor.token,
           };
     const servers = { ...config.mcpServers };
     if (editor.original) delete servers[editor.original];

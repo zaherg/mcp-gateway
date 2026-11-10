@@ -46,6 +46,8 @@ interface ServerBase {
   disabled?: boolean;
   /** Also serve session-based MCP (2025-11-25 and earlier) on this endpoint. */
   legacyProtocol?: boolean;
+  /** Optional inbound bearer token; omission inherits `gateway.token`. */
+  token?: string;
 }
 
 export interface StdioServerConfig extends ServerBase {

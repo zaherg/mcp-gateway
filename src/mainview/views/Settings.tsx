@@ -4,6 +4,7 @@ import { Badge } from '@mcp-gateway/mainview/components/mac/badge';
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
 import { Input } from '@mcp-gateway/mainview/components/mac/input';
 import { Field, Toggle } from '@mcp-gateway/mainview/components/ui';
+import { generateToken } from '@mcp-gateway/mainview/lib/token';
 import type { AppSnapshot } from '@mcp-gateway/shared/rpc';
 import type { GatewayConfig, GatewaySnapshot } from '@mcp-gateway/shared/types';
 
@@ -78,8 +79,8 @@ export const Settings = ({
             </Field>
           </div>
           <Field
-            label="Bearer token"
-            help="32–512 non-space ASCII characters. Client configurations include this secret."
+            label="Global bearer token"
+            help="Used only by servers without their own key. 32–512 non-space ASCII characters. Client configurations include this secret."
           >
             <div className="token-input">
               <Input
@@ -103,12 +104,7 @@ export const Settings = ({
           <Button
             size="lg"
             disabled={configurationLocked}
-            onClick={() => {
-              const bytes = crypto.getRandomValues(new Uint8Array(32));
-              setGateway({
-                token: Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join(''),
-              });
-            }}
+            onClick={() => setGateway({ token: generateToken() })}
           >
             Generate secure token
           </Button>
