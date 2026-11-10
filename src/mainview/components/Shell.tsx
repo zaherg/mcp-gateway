@@ -5,6 +5,8 @@ import { Button } from '@mcp-gateway/mainview/components/mac/button';
 import type { Editor } from '@mcp-gateway/mainview/dialogs/ServerEditor';
 import type { AppSnapshot, QuitStatus } from '@mcp-gateway/shared/rpc';
 
+export type Tab = 'overview' | 'settings' | 'logs';
+
 export const Shell = ({
   tab,
   setTab,
@@ -18,8 +20,8 @@ export const Shell = ({
   children,
   dialogs,
 }: {
-  tab: 'overview' | 'settings' | 'logs';
-  setTab: (tab: 'overview' | 'settings' | 'logs') => void;
+  tab: Tab;
+  setTab: (tab: Tab) => void;
   snapshot: AppSnapshot | null;
   busy: boolean;
   quitting: boolean;

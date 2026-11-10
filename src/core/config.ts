@@ -18,6 +18,8 @@ import type { GatewayConfig, HttpServerConfig, StdioServerConfig } from '@mcp-ga
 const missing = (error: unknown) => (error as NodeJS.ErrnoException)?.code === 'ENOENT';
 
 export const MAX_CONFIG_BYTES = 1024 * 1024;
+const CONFIG_TOO_LARGE = 'Configuration exceeds the size limit.';
+const AMBIGUOUS_CONFIG = 'Both configuration files exist; keep only one and reopen the app.';
 // A lock with no readable pid is only treated as abandoned after this long.
 const STALE_UNOWNED_LOCK_MS = 10_000;
 export const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
@@ -74,22 +76,10 @@ export const parseConfig = (
   environment: NodeJS.ProcessEnv = process.env,
   format: ConfigFormat = 'json',
 ): GatewayConfig => {
-  if (Buffer.byteLength(text) > MAX_CONFIG_BYTES) invalid('Configuration exceeds the size limit.');
+  if (Buffer.byteLength(text) > MAX_CONFIG_BYTES) invalid(CONFIG_TOO_LARGE);
   let config: GatewayConfig;
   try {
-    const raw = parseConfigDocument(text, format);
-    const decoded = ConfigSchema.parse(raw);
-    config = {
-      gateway: { ...decoded.gateway },
-      mcpServers: Object.fromEntries(
-        Object.entries(decoded.mcpServers).map(([name, server]) => [
-          name,
-          'command' in server
-            ? { ...server, args: server.args ? [...server.args] : undefined }
-            : { ...server },
-        ]),
-      ),
-    };
+    config = ConfigSchema.parse(parseConfigDocument(text, format));
   } catch {
     invalid();
   }
@@ -186,11 +176,11 @@ export const serverFingerprint = (server: StdioServerConfig | HttpServerConfig):
   );
 };
 
-const newConfigText = (host = '127.0.0.1'): string => {
+const newConfigText = (): string => {
   return `${JSON.stringify(
     {
       gateway: {
-        host,
+        host: '127.0.0.1',
         port: 8765,
         token: randomBytes(32).toString('hex'),
         autoStart: false,
@@ -202,14 +192,17 @@ const newConfigText = (host = '127.0.0.1'): string => {
     2,
   )}\n`;
 };
+const assertPlainDirectory = (stat: Stats): void => {
+  if (!stat.isDirectory() || stat.isSymbolicLink())
+    throw failure('UnsafeFile', 'Configuration paths must not contain symlinks.');
+};
+
 const safeParent = async (path: string): Promise<void> => {
   const parent = dirname(path);
   let current = parse(parent).root;
   for (const part of parent.slice(current.length).split('/').filter(Boolean)) {
     current = join(current, part);
-    const stat = await fs.lstat(current);
-    if (!stat.isDirectory() || stat.isSymbolicLink())
-      throw failure('UnsafeFile', 'Configuration paths must not contain symlinks.');
+    assertPlainDirectory(await fs.lstat(current));
   }
   const stat = await fs.lstat(parent);
   if ((stat.mode & 0o022) !== 0 || (process.getuid && stat.uid !== process.getuid()))
@@ -237,8 +230,7 @@ export const ensureParent = async (path: string): Promise<void> => {
       }
       stat = await fs.lstat(current);
     }
-    if (!stat.isDirectory() || stat.isSymbolicLink())
-      throw failure('UnsafeFile', 'Configuration paths must not contain symlinks.');
+    assertPlainDirectory(stat);
   }
   await safeParent(path);
 };
@@ -304,18 +296,10 @@ export class ConfigStore {
   }
 
   private async checkSelection(): Promise<void> {
-    if (this.selectionRefused)
-      throw failure(
-        'AmbiguousConfig',
-        'Both configuration files exist; keep only one and reopen the app.',
-      );
+    if (this.selectionRefused) throw failure('AmbiguousConfig', AMBIGUOUS_CONFIG);
     const alternate = this.path === this.jsonPath ? this.jsoncPath : this.jsonPath;
     if (await this.exists(alternate)) {
-      if (await this.exists(this.path))
-        throw failure(
-          'AmbiguousConfig',
-          'Both configuration files exist; keep only one and reopen the app.',
-        );
+      if (await this.exists(this.path)) throw failure('AmbiguousConfig', AMBIGUOUS_CONFIG);
       throw failure('ConfigIO', 'The configuration filename changed; reopen the app to select it.');
     }
   }
@@ -336,8 +320,7 @@ export class ConfigStore {
         safeFile(before);
         if (before.ino !== entry.ino || before.dev !== entry.dev)
           throw failure('UnsafeFile', 'The configuration file changed during access.');
-        if (before.size > MAX_CONFIG_BYTES)
-          throw failure('InvalidConfig', 'Configuration exceeds the size limit.');
+        if (before.size > MAX_CONFIG_BYTES) throw failure('InvalidConfig', CONFIG_TOO_LARGE);
         const buffer = Buffer.alloc(MAX_CONFIG_BYTES + 1);
         let length = 0;
         while (length < buffer.length) {
@@ -346,8 +329,7 @@ export class ConfigStore {
           length += bytesRead;
         }
         const after = await handle.stat();
-        if (length > MAX_CONFIG_BYTES)
-          throw failure('InvalidConfig', 'Configuration exceeds the size limit.');
+        if (length > MAX_CONFIG_BYTES) throw failure('InvalidConfig', CONFIG_TOO_LARGE);
         if (
           before.size !== after.size ||
           before.mtimeMs !== after.mtimeMs ||
@@ -501,10 +483,7 @@ export class ConfigStore {
         const jsonc = await this.exists(this.jsoncPath);
         if (json && jsonc) {
           this.selectionRefused = true;
-          throw failure(
-            'AmbiguousConfig',
-            'Both configuration files exist; keep only one and reopen the app.',
-          );
+          throw failure('AmbiguousConfig', AMBIGUOUS_CONFIG);
         }
         this.selectedPath = jsonc ? this.jsoncPath : this.jsonPath;
         if (!json && !jsonc) await this.replace(newConfigText(), true);

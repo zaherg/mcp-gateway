@@ -12,15 +12,6 @@ interface BundleInventoryEntry {
   link?: string;
 }
 
-class ReleaseInventoryError extends Error {
-  readonly differences: string[];
-  constructor(differences: string[]) {
-    super(`Bundle inventories differ: ${differences.slice(0, 8).join(', ')}`);
-    this.name = 'ReleaseInventoryError';
-    this.differences = differences;
-  }
-}
-
 export const inventoryBundle = async (
   rootPath: string,
   signal?: AbortSignal,
@@ -102,7 +93,8 @@ export const compareBundleInventories = (
     )
       differences.push(`${path} differs`);
   }
-  if (differences.length > 0) throw new ReleaseInventoryError(differences);
+  if (differences.length > 0)
+    throw new Error(`Bundle inventories differ: ${differences.slice(0, 8).join(', ')}`);
 };
 
 export const inventoryDigest = (entries: BundleInventoryEntry[]): string => {

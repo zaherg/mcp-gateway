@@ -47,12 +47,23 @@ const parseS3Path = (value: string | undefined): string => {
   return segments.join('/');
 };
 
-const contentType = (name: string) =>
-  name.endsWith('.json') ? 'application/json' : 'application/zstd';
 const cancellation = new AbortController();
-const interrupt = () => cancellation.abort(new Error('Test feed publication cancelled.'));
-process.on('SIGINT', interrupt);
-process.on('SIGTERM', interrupt);
+const interrupt = (signal: NodeJS.Signals) => {
+  cancellation.abort(new Error('Test feed publication cancelled.'));
+  process.exitCode = signal === 'SIGTERM' ? 143 : 130;
+};
+for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, interrupt);
+
+// Every anonymous request refuses redirects and honors both cancellation and its own timeout.
+const anonymous = (url: string, timeoutMs: number, init: RequestInit = {}) =>
+  fetch(url, {
+    redirect: 'error',
+    signal: AbortSignal.any([cancellation.signal, AbortSignal.timeout(timeoutMs)]),
+    ...init,
+  });
+const metadataMatches = (headers: Headers, type: string, size: number) =>
+  Number(headers.get('content-length')) === size &&
+  headers.get('content-type')?.split(';', 1)[0] === type;
 
 const publish = async () => {
   const options = parseArgs({
@@ -131,21 +142,27 @@ const publish = async () => {
     throw new Error(
       'The selected remote needs an HTTPS origin without credentials, query or path.',
     );
-  // validateFeedUrl already parsed this value, so parse() cannot return null here.
-  const feedUrl = URL.parse(feed);
-  if (feedUrl?.origin === origin.origin && feedUrl.pathname !== `/${destination}`)
+  const feedUrl = new URL(feed);
+  if (feedUrl.origin === origin.origin && feedUrl.pathname !== `/${destination}`)
     throw new Error(
       'MCP_GATEWAY_TEST_FEED does not match the publish location MCP_GATEWAY_TEST_FEED_S3_PATH.',
     );
   const publicBase = `${origin.origin}/${destination}`;
+  // Archive first, legacy manifest last: both manifests name the same mutable archive key.
+  const files = [
+    { name: UPDATE_FILES.archive, contentType: 'application/zstd', noCache: false },
+    { name: UPDATE_FILES.integrity, contentType: 'application/json', noCache: true },
+    { name: UPDATE_FILES.manifest, contentType: 'application/json', noCache: true },
+  ].map((file) => ({
+    ...file,
+    path: join(directory, file.name),
+    url: `${publicBase}/${file.name}`,
+  }));
   if (cleanup) {
     // Exit code 4 means the key is already absent, which is the desired end state.
     for (const name of Object.values(UPDATE_FILES)) {
       await rclone(['deletefile', `${remote}:${destination}/${name}`], [0, 4]);
-      const response = await fetch(`${publicBase}/${name}`, {
-        redirect: 'error',
-        signal: AbortSignal.any([cancellation.signal, AbortSignal.timeout(30_000)]),
-      });
+      const response = await anonymous(`${publicBase}/${name}`, 30_000);
       await response.body?.cancel();
       if (response.status !== 404)
         throw new Error(`${name} is still readable anonymously (HTTP ${response.status}).`);
@@ -185,47 +202,33 @@ const publish = async () => {
   )
     throw new Error('Candidate identity or embedded feed does not match the selected test build.');
 
-  const files = [UPDATE_FILES.archive, UPDATE_FILES.integrity, UPDATE_FILES.manifest];
   const hashes = new Map<string, string>();
-  for (const name of files)
-    hashes.set(name, await hashFile(join(directory, name), cancellation.signal));
-  // Republishing an older candidate must include the archive: both manifests name the same mutable archive key.
-  for (const name of files) {
-    const type = contentType(name);
+  for (const file of files) hashes.set(file.name, await hashFile(file.path, cancellation.signal));
+  for (const file of files) {
     const args = [
       'copyto',
-      join(directory, name),
-      `${remote}:${destination}/${name}`,
+      file.path,
+      `${remote}:${destination}/${file.name}`,
       '--ignore-times',
       '--s3-no-check-bucket',
       '--metadata',
       '--metadata-set',
-      `content-type=${type}`,
+      `content-type=${file.contentType}`,
     ];
-    if (name.endsWith('.json')) args.push('--metadata-set', 'cache-control=no-cache');
+    if (file.noCache) args.push('--metadata-set', 'cache-control=no-cache');
     await rclone(args);
-    console.log(`Uploaded ${name}`);
+    console.log(`Uploaded ${file.name}`);
   }
-  for (const name of files) {
-    const expectedSize = (await lstat(join(directory, name))).size;
-    const type = contentType(name);
-    const head = await fetch(`${publicBase}/${name}`, {
-      method: 'HEAD',
-      redirect: 'error',
-      signal: AbortSignal.any([cancellation.signal, AbortSignal.timeout(30_000)]),
-    });
+  for (const file of files) {
+    const { name, contentType: type } = file;
+    const expectedSize = (await lstat(file.path)).size;
+    const head = await anonymous(file.url, 30_000, { method: 'HEAD' });
     await head.body?.cancel();
-    if (
-      head.status !== 200 ||
-      Number(head.headers.get('content-length')) !== expectedSize ||
-      head.headers.get('content-type')?.split(';', 1)[0] !== type
-    )
+    if (head.status !== 200 || !metadataMatches(head.headers, type, expectedSize))
       throw new Error(`Anonymous metadata does not match ${name}.`);
-    if (name.endsWith('.json') && !head.headers.get('cache-control')?.includes('no-cache'))
+    if (file.noCache && !head.headers.get('cache-control')?.includes('no-cache'))
       throw new Error('Published manifests must store Cache-Control: no-cache metadata.');
-    const response = await fetch(`${publicBase}/${name}`, {
-      redirect: 'error',
-      signal: AbortSignal.any([cancellation.signal, AbortSignal.timeout(120_000)]),
+    const response = await anonymous(file.url, 120_000, {
       headers: { 'Cache-Control': 'no-cache' },
     });
     if (response.status !== 200 || !response.body) {
@@ -236,15 +239,8 @@ const publish = async () => {
     const digest = createHash('sha256');
     let size = 0;
     try {
-      if (
-        Number(response.headers.get('content-length')) !== expectedSize ||
-        response.headers.get('content-type')?.split(';', 1)[0] !== type
-      )
+      if (!metadataMatches(response.headers, type, expectedSize))
         throw new Error(`Anonymous response headers do not match ${name}.`);
-      if (name.endsWith('.json') && !response.headers.get('cache-control')?.includes('no-cache'))
-        console.warn(
-          `Warning: ${name} stores no-cache metadata, but GET omits that directive; intermediary caching is not prevented by the response.`,
-        );
       while (true) {
         const chunk = await reader.read();
         if (chunk.done) break;
@@ -258,7 +254,7 @@ const publish = async () => {
     }
     if (size !== expectedSize || digest.digest('hex') !== hashes.get(name))
       throw new Error(`Anonymous readback differs from ${name}.`);
-    if ((await hashFile(join(directory, name), cancellation.signal)) !== hashes.get(name))
+    if ((await hashFile(file.path, cancellation.signal)) !== hashes.get(name))
       throw new Error('Local candidate changed during publication.');
     console.log(`Verified anonymous readback: ${name}`);
   }
@@ -273,8 +269,7 @@ try {
     console.error(
       'Publication is not atomic; if any upload completed, republish a verified candidate directory.',
     );
-  process.exitCode = cancellation.signal.aborted ? 130 : 1;
+  process.exitCode ||= 1;
 } finally {
-  process.removeListener('SIGINT', interrupt);
-  process.removeListener('SIGTERM', interrupt);
+  for (const signal of ['SIGINT', 'SIGTERM'] as const) process.removeListener(signal, interrupt);
 }

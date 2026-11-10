@@ -5,6 +5,7 @@ import { NoticeBanner } from '@mcp-gateway/mainview/components/banners/NoticeBan
 import { QuitBanners } from '@mcp-gateway/mainview/components/banners/QuitBanners';
 import { StaleConfigBanner } from '@mcp-gateway/mainview/components/banners/StaleConfigBanner';
 import { UpdateBanners } from '@mcp-gateway/mainview/components/banners/UpdateBanners';
+import type { Tab } from '@mcp-gateway/mainview/components/Shell';
 import type { AppSnapshot, QuitStatus, UpdateStatus } from '@mcp-gateway/shared/rpc';
 import type { GatewayConfig, GatewaySnapshot } from '@mcp-gateway/shared/types';
 
@@ -36,7 +37,7 @@ export const Banners = ({
   error: string | null;
   dismissLocalError: () => void;
   updateState: UpdateStatus | undefined;
-  tab: 'overview' | 'settings' | 'logs';
+  tab: Tab;
   dismissed: Set<string>;
   dismiss: (id: string) => void;
   quitting: boolean;

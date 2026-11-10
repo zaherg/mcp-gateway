@@ -1,5 +1,7 @@
 import { LOG_LIMITS, type LogEntry, type LogPage, type LogQuery } from '@mcp-gateway/shared/types';
 
+const TRUNCATION_MARKER = '\n[entry truncated]';
+
 /** Reads data descriptors only: diagnostic capture must never invoke custom inspection or getters. */
 const diagnosticText = (values: readonly unknown[]): string => {
   let remaining = LOG_LIMITS.entryBytes;
@@ -66,11 +68,10 @@ export class LogBuffer {
     let text = diagnosticText(values);
     const truncated = Buffer.byteLength(text) >= LOG_LIMITS.entryBytes;
     if (truncated) {
-      const marker = '\n[entry truncated]';
       text =
         Buffer.from(text)
-          .subarray(0, LOG_LIMITS.entryBytes - Buffer.byteLength(marker) - 3)
-          .toString('utf8') + marker;
+          .subarray(0, LOG_LIMITS.entryBytes - Buffer.byteLength(TRUNCATION_MARKER) - 3)
+          .toString('utf8') + TRUNCATION_MARKER;
     }
     const entry = {
       ...metadata,
@@ -82,7 +83,6 @@ export class LogBuffer {
     // Include escaped text and metadata in retention and RPC byte accounting.
     // One proportional pass per check: removing 256 characters at a time would
     // re-serialize the whole entry dozens of times.
-    const marker = '\n[entry truncated]';
     let size = Buffer.byteLength(JSON.stringify(entry));
     while (size > LOG_LIMITS.entryBytes) {
       entry.truncated = true;
@@ -90,7 +90,7 @@ export class LogBuffer {
         0,
         Math.floor((entry.text.length * LOG_LIMITS.entryBytes) / size) - 256,
       );
-      entry.text = `${entry.text.slice(0, keep)}${marker}`;
+      entry.text = `${entry.text.slice(0, keep)}${TRUNCATION_MARKER}`;
       size = Buffer.byteLength(JSON.stringify(entry));
     }
     // The loop above leaves `size` equal to the final entry's serialized length.

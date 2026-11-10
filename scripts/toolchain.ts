@@ -8,21 +8,26 @@ const validateBuildHost = (platform: NodeJS.Platform, architecture: string): voi
     throw new Error(`Unsupported build host: ${platform}/${architecture}.`);
 };
 
+const MODES = {
+  stable: { kind: 'production', signed: true, arguments: ['build', '--env=stable'] },
+  'stable-test': { kind: 'test', signed: true, arguments: ['build', '--env=stable'] },
+  dev: { kind: 'production', signed: false, arguments: ['dev', '--watch'] },
+  'dev-build': { kind: 'production', signed: false, arguments: ['build', '--env=dev'] },
+} as const;
+
+type BuildMode = keyof typeof MODES;
+
+const isBuildMode = (value: string | undefined): value is BuildMode =>
+  value !== undefined && Object.hasOwn(MODES, value);
+
 export const buildPlan = (
   mode: string | undefined,
   platform: NodeJS.Platform = process.platform,
   architecture: string = process.arch,
-): { signed: boolean; arguments: string[] } => {
+) => {
   validateBuildHost(platform, architecture);
-  if (!['stable', 'dev', 'dev-build'].includes(mode ?? ''))
-    throw new Error('Choose stable, dev, or dev-build.');
-  return {
-    signed: mode === 'stable',
-    arguments:
-      mode === 'dev'
-        ? ['dev', '--watch']
-        : ['build', `--env=${mode === 'dev-build' ? 'dev' : 'stable'}`],
-  };
+  if (!isBuildMode(mode)) throw new Error('Choose stable, stable-test, dev, or dev-build.');
+  return { ...MODES[mode], mode };
 };
 
 const createToolchainEnvironment = (

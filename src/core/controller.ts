@@ -29,6 +29,9 @@ import type {
   VisibleError,
 } from '@mcp-gateway/shared/types';
 
+const WATCH_UNAVAILABLE =
+  'Configuration watching is unavailable; reopen the controller before starting.';
+
 /** Local native/UI API. Snapshots contain explicit config credentials; do not log them. */
 export class McpGatewayController implements GatewayController {
   private readonly queue = createSerialQueue();
@@ -73,13 +76,8 @@ export class McpGatewayController implements GatewayController {
       const control = controller.control(controller.validationLifetime());
       try {
         controller.document = await controller.store.initialize();
-        controller.config = parseConfig(
-          controller.document.text,
-          process.env,
-          controller.store.format,
-        );
-        selectInterface(controller.config.gateway.host);
-        await rejectSelfProxy(controller.config, control);
+        controller.config = controller.parse(controller.document.text);
+        await controller.validate(controller.config, control);
         controller.event('info', 'Configuration loaded.');
       } catch (error) {
         controller.logs.append({ server: null, level: 'error', source: 'controller' }, [error]);
@@ -122,6 +120,16 @@ export class McpGatewayController implements GatewayController {
       configError: this.configError ? { ...this.configError } : null,
       operationalError: this.operationalError ? { ...this.operationalError } : null,
     };
+  }
+
+  private parse(text: string): GatewayConfig {
+    return parseConfig(text, process.env, this.store.format);
+  }
+
+  private async validate(config: GatewayConfig, control: SelfProxyOptions): Promise<GatewayConfig> {
+    selectInterface(config.gateway.host);
+    await rejectSelfProxy(config, control);
+    return config;
   }
 
   private event(level: 'info' | 'error', message: string): void {
@@ -174,6 +182,14 @@ export class McpGatewayController implements GatewayController {
     if (this.closed || this.closing) throw failure('Closed', 'The controller is closed.');
   }
 
+  private watchFailure(): GatewayError {
+    return failure('ConfigIO', WATCH_UNAVAILABLE);
+  }
+
+  private requireWatchHealthy(): void {
+    if (!this.watchHealthy) throw this.watchFailure();
+  }
+
   private report = (error: VisibleError): void => {
     this.logs.append({ server: null, level: 'error', source: 'controller' }, [error]);
     this.operationalError = error;
@@ -182,11 +198,7 @@ export class McpGatewayController implements GatewayController {
 
   private async startOwned(control: SelfProxyOptions): Promise<void> {
     this.ensureOpen();
-    if (!this.watchHealthy)
-      throw failure(
-        'ConfigIO',
-        'Configuration watching is unavailable; reopen the controller before starting.',
-      );
+    this.requireWatchHealthy();
     if (this.ingress?.running) return;
     // Read the authoritative bytes again, even if a watch notification is delayed.
     await this.refresh(control);
@@ -208,11 +220,7 @@ export class McpGatewayController implements GatewayController {
       });
       this.closingIngress = ingress;
       this.ensureOpen();
-      if (!this.watchHealthy)
-        throw failure(
-          'ConfigIO',
-          'Configuration watching is unavailable; reopen the controller before starting.',
-        );
+      this.requireWatchHealthy();
       this.ingress = ingress;
       this.closingIngress = undefined;
       this.cancelInterfaceRecovery();
@@ -330,9 +338,7 @@ export class McpGatewayController implements GatewayController {
     return this.serial(async () => {
       const control = this.control(signal);
       this.ensureOpen();
-      const next = parseConfig(text, process.env, this.store.format);
-      selectInterface(next.gateway.host);
-      await rejectSelfProxy(next, control);
+      const next = await this.validate(this.parse(text), control);
       const document = await this.store.save(text, expectedRevision).catch(async (error) => {
         await this.refresh(control);
         throw error;
@@ -351,14 +357,7 @@ export class McpGatewayController implements GatewayController {
     const running = this.ingress?.running ?? false;
     this.document = document;
     this.config = next;
-    this.configError = this.watchHealthy
-      ? null
-      : visible(
-          failure(
-            'ConfigIO',
-            'Configuration watching is unavailable; reopen the controller before starting.',
-          ),
-        );
+    this.configError = this.watchHealthy ? null : visible(this.watchFailure());
     if (!running) return;
     try {
       if (
@@ -393,9 +392,7 @@ export class McpGatewayController implements GatewayController {
       if (document.revision === this.document.revision && !this.configError) return null;
       // Validate the candidate before publishing its text/revision. A cancelled
       // refresh must leave document/config consistent so the next Start retries it.
-      const next = parseConfig(document.text, process.env, this.store.format);
-      selectInterface(next.gateway.host);
-      await rejectSelfProxy(next, control);
+      const next = await this.validate(this.parse(document.text), control);
       return { document, config: next };
     } catch (error) {
       // A superseded operation leaves the authoritative config and configError alone.
@@ -415,12 +412,7 @@ export class McpGatewayController implements GatewayController {
     if (!this.watchHealthy || this.closed || this.closing) return;
     this.watchHealthy = false;
     void this.serial(async () => {
-      this.configError = visible(
-        failure(
-          'ConfigIO',
-          'Configuration watching is unavailable; reopen the controller before starting.',
-        ),
-      );
+      this.configError = visible(this.watchFailure());
       await this.stopOwned();
     }).catch((error) => this.report(visible(error)));
   };

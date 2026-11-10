@@ -12,7 +12,7 @@ import {
 
 import { Badge } from '@mcp-gateway/mainview/components/mac/badge';
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
-import { type Editor, emptyEditor } from '@mcp-gateway/mainview/dialogs/ServerEditor';
+import { bearPreset, type Editor, emptyEditor } from '@mcp-gateway/mainview/dialogs/ServerEditor';
 import type { AppClient, AppResult, AppSnapshot } from '@mcp-gateway/shared/rpc';
 import type { GatewayConfig, GatewaySnapshot } from '@mcp-gateway/shared/types';
 
@@ -21,6 +21,13 @@ type Run = (
   message: string,
   saved?: boolean,
 ) => Promise<boolean>;
+
+const SERVER_STATUS = {
+  mounted: { label: 'Mounted', variant: 'accent' },
+  error: { label: 'Error', variant: 'danger' },
+  disabled: { label: 'Disabled', variant: 'secondary' },
+  stopped: { label: 'Stopped', variant: 'secondary' },
+} as const;
 
 export const Overview = ({
   gateway,
@@ -73,28 +80,13 @@ export const Overview = ({
             Object.entries(config.mcpServers).map(([name, server]) => {
               const live = gateway?.servers.find((item) => item.name === name);
               const status = live?.status ?? (server.disabled ? 'disabled' : 'stopped');
+              const badge = SERVER_STATUS[status];
               const http = 'url' in server;
               return (
                 <article className="server-card panel" key={name}>
                   <div className="card-heading">
                     <h3>{name}</h3>
-                    <Badge
-                      variant={
-                        status === 'mounted'
-                          ? 'accent'
-                          : status === 'error'
-                            ? 'danger'
-                            : 'secondary'
-                      }
-                    >
-                      {status === 'mounted'
-                        ? 'Mounted'
-                        : status === 'disabled'
-                          ? 'Disabled'
-                          : status === 'error'
-                            ? 'Error'
-                            : 'Stopped'}
-                    </Badge>
+                    <Badge variant={badge.variant}>{badge.label}</Badge>
                   </div>
                   <p className="transport">{http ? 'STREAMABLE HTTP' : 'LOCAL STDIO'}</p>
                   <p className="server-detail mono" title={http ? server.url : server.command}>
@@ -196,12 +188,8 @@ export const Overview = ({
               disabled={configurationLocked}
               onClick={() => {
                 if (configurationLocked) return;
-                const preset = emptyEditor();
-                preset.name = 'bear';
-                preset.command = '/Applications/Bear.app/Contents/MacOS/bearcli';
-                preset.args = '["mcp-server"]';
                 setEditorError(null);
-                setEditor(preset);
+                setEditor({ ...emptyEditor(), ...bearPreset() });
               }}
             >
               Use macOS Bear preset <ArrowUpRight />

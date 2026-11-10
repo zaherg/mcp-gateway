@@ -303,6 +303,10 @@ export const createMount = (
     const handled =
       (handle: (req: GatewayRequest, res: GatewayResponse) => Promise<void>) =>
       (req: GatewayRequest, res: GatewayResponse, next: (error?: unknown) => void) => {
+        if (children.closing) {
+          res.status(503).end();
+          return;
+        }
         void handle(req, res).catch(next);
       };
     const sessions = server.legacyProtocol
@@ -326,10 +330,6 @@ export const createMount = (
     if (sessions) {
       // A session's event stream (GET) and its end (DELETE).
       const request = handled(async (req, res) => {
-        if (children.closing) {
-          res.status(503).end();
-          return;
-        }
         await sessions.request(req, res);
       });
       app.get(path, request);
@@ -338,10 +338,6 @@ export const createMount = (
     app.post(
       path,
       handled(async (req, res) => {
-        if (children.closing) {
-          res.status(503).end();
-          return;
-        }
         const value = headerValue(req);
         const route = await admit(req, res, value, speaks);
         if (res.destroyed || res.writableEnded || children.closing) return;
@@ -497,18 +493,28 @@ const validExit = (code: string, signal: string): boolean => {
   );
 };
 
+const ERROR_CODES = new Set([
+  'ENOENT',
+  'EACCES',
+  'EPERM',
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'ETIMEDOUT',
+  'EADDRINUSE',
+  'ENOTFOUND',
+]);
+
+// Reads a data property without invoking getters. The result keeps the descriptor's `any` type.
+const own = (value: object, key: string) => Object.getOwnPropertyDescriptor(value, key)?.value;
+
+const exitSummary = (text: string): string | undefined => {
+  const exit = /^Child exited: code=(-?\d+|null), signal=(SIG[A-Z0-9]+|null)$/.exec(text);
+  if (!exit || !validExit(exit[1], exit[2])) return undefined;
+  return `Backend process exited (code ${exit[1]}, signal ${exit[2]}). Open Logs for details.`;
+};
+
 /** Only allowlisted codes and numeric statuses may enter status summaries. */
 export const backendSummary = (args: readonly unknown[]): string => {
-  const codes = new Set([
-    'ENOENT',
-    'EACCES',
-    'EPERM',
-    'ECONNREFUSED',
-    'ECONNRESET',
-    'ETIMEDOUT',
-    'EADDRINUSE',
-    'ENOTFOUND',
-  ]);
   const pending = [...args];
   const seen = new Set<object>();
   for (let index = 0; index < Math.min(pending.length, 16); index++) {
@@ -517,17 +523,15 @@ export const backendSummary = (args: readonly unknown[]): string => {
       if (seen.has(value)) continue;
       seen.add(value);
       try {
-        const cause = Object.getOwnPropertyDescriptor(value, 'cause')?.value;
+        const cause = own(value, 'cause');
         if (cause) pending.push(cause);
-        const code = Object.getOwnPropertyDescriptor(value, 'code')?.value;
-        if (typeof code === 'string' && codes.has(code))
+        const code = own(value, 'code');
+        if (typeof code === 'string' && ERROR_CODES.has(code))
           return `Backend failed (${code}). Check the executable, permissions or connection. Open Logs for details.`;
-        const status =
-          Object.getOwnPropertyDescriptor(value, 'status')?.value ??
-          (typeof code === 'number' ? code : undefined);
+        const status = own(value, 'status') ?? (typeof code === 'number' ? code : undefined);
         if (Number.isInteger(status) && status >= 400 && status <= 599)
           return `Backend HTTP request failed (${status}). Open Logs for details.`;
-        const message = Object.getOwnPropertyDescriptor(value, 'message')?.value;
+        const message = own(value, 'message');
         if (typeof message === 'string') {
           const remote = /^The remote server answered ([45]\d{2})$/.exec(message);
           if (remote) return `Backend HTTP request failed (${remote[1]}). Open Logs for details.`;
@@ -535,20 +539,16 @@ export const backendSummary = (args: readonly unknown[]): string => {
             message,
           );
           if (http) return `Backend HTTP request failed (${http[1]}). Open Logs for details.`;
-          const exit = /^Child exited: code=(-?\d+|null), signal=(SIG[A-Z0-9]+|null)$/.exec(
-            message,
-          );
-          if (exit && validExit(exit[1], exit[2]))
-            return `Backend process exited (code ${exit[1]}, signal ${exit[2]}). Open Logs for details.`;
+          const exit = exitSummary(message);
+          if (exit) return exit;
         }
       } catch {
         /* Unreadable diagnostics still remain a generic failure. */
       }
     }
     if (typeof value === 'string') {
-      const exit = /^Child exited: code=(-?\d+|null), signal=(SIG[A-Z0-9]+|null)$/.exec(value);
-      if (exit && validExit(exit[1], exit[2]))
-        return `Backend process exited (code ${exit[1]}, signal ${exit[2]}). Open Logs for details.`;
+      const exit = exitSummary(value);
+      if (exit) return exit;
     }
   }
   return 'A backend operation failed. Open Logs for details.';

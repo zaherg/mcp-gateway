@@ -15,12 +15,12 @@ export type QuitStatus =
   | { attempt: number; phase: 'idle' | 'pending' | 'ready'; error: null }
   | { attempt: number; phase: 'failed'; error: string };
 
-export interface QuitRequest {
+interface QuitRequest {
   requested: true;
   status: QuitStatus;
 }
 
-export type UpdatePhase =
+type UpdatePhase =
   | 'idle'
   | 'checking'
   | 'available'
@@ -88,21 +88,14 @@ export type AppRPC = {
   };
 };
 
-export interface AppClient {
-  readLogs(params: LogQuery): Promise<AppResult<LogPage>>;
-  clearLogs(): Promise<AppResult<LogPage>>;
-  snapshot(): Promise<AppResult<AppSnapshot>>;
-  quit(): Promise<AppResult<QuitRequest>>;
-  quitStatus(): Promise<AppResult<QuitStatus>>;
-  start(): Promise<AppResult<AppSnapshot>>;
-  stop(): Promise<AppResult<AppSnapshot>>;
-  restartServer(params: { name: string }): Promise<AppResult<AppSnapshot>>;
-  saveConfig(params: { text: string; expectedRevision: string }): Promise<AppResult<AppSnapshot>>;
-  copyEndpoint(params: { name: string }): Promise<AppResult<null>>;
-  copyClientConfig(params: { name: string }): Promise<AppResult<null>>;
-  updatesStatus(): Promise<AppResult<UpdateStatus>>;
-  updatesCheck(): Promise<AppResult<UpdateStatus>>;
-  updatesDownload(): Promise<AppResult<UpdateStatus>>;
-  updatesSetAutomatic(params: { automatic: boolean }): Promise<AppResult<UpdateStatus>>;
-  updatesRestart(): Promise<AppResult<QuitRequest>>;
-}
+type Requests = AppRPC['bun']['requests'];
+
+// Requests without parameters stay callable with no argument.
+type Method<Request> = Request extends { params: infer Params; response: infer Response }
+  ? [Params] extends [undefined]
+    ? () => Promise<Response>
+    : (params: Params) => Promise<Response>
+  : never;
+
+/** The renderer-facing client: one method per request in `AppRPC`. */
+export type AppClient = { [Name in keyof Requests]: Method<Requests[Name]> };

@@ -16,11 +16,8 @@ export const configFormat = (path: string): ConfigFormat =>
   path.endsWith('.jsonc') ? 'jsonc' : 'json';
 
 // Fixed messages only: parser diagnostics must not echo configuration credentials.
-class ConfigSyntaxError extends Error {
-  constructor() {
-    super('Configuration syntax is invalid or contains duplicate keys.');
-  }
-}
+const syntaxError = (): Error =>
+  new Error('Configuration syntax is invalid or contains duplicate keys.');
 
 const checkedTree = (text: string, format: ConfigFormat): Node => {
   const errors: ParseError[] = [];
@@ -29,13 +26,13 @@ const checkedTree = (text: string, format: ConfigFormat): Node => {
     allowTrailingComma: format === 'jsonc',
     allowEmptyContent: false,
   });
-  if (!root || errors.length) throw new ConfigSyntaxError();
+  if (!root || errors.length) throw syntaxError();
   const check = (node: Node): void => {
     if (node.type === 'object') {
       const keys = new Set<string>();
       for (const property of node.children ?? []) {
         const key: string = property.children?.[0]?.value;
-        if (keys.has(key)) throw new ConfigSyntaxError();
+        if (keys.has(key)) throw syntaxError();
         keys.add(key);
       }
     }
@@ -62,12 +59,11 @@ export const editConfigDocument = (
 ): string => {
   let root = checkedTree(text, format);
   if (rename && rename.from !== rename.to) {
-    const parent = findNodeAtLocation(root, rename.path);
     const source = findNodeAtLocation(root, [...rename.path, rename.from]);
-    if (!parent || !source?.parent || findNodeAtLocation(root, [...rename.path, rename.to]))
-      throw new ConfigSyntaxError();
+    if (!source?.parent || findNodeAtLocation(root, [...rename.path, rename.to]))
+      throw syntaxError();
     const key = source.parent.children?.[0];
-    if (!key) throw new ConfigSyntaxError();
+    if (!key) throw syntaxError();
     text = applyEdits(text, [
       { offset: key.offset, length: key.length, content: JSON.stringify(rename.to) },
     ]);
@@ -100,7 +96,7 @@ export const editConfigDocument = (
     if (!valueNode) return;
     const node = valueNode.parent?.type === 'property' ? valueNode.parent : valueNode;
     const parent = node.parent;
-    if (!parent?.children) throw new ConfigSyntaxError();
+    if (!parent?.children) throw syntaxError();
     const index = parent.children.indexOf(node);
     const scanner = createScanner(text, true);
     const end = node.offset + node.length;
@@ -109,7 +105,7 @@ export const editConfigDocument = (
     let comma = scanner.scan() === SyntaxKind.CommaToken ? scanner.getTokenOffset() : undefined;
     if (comma === undefined && index > 0) {
       const previous = parent.children[index - 1];
-      if (!previous) throw new ConfigSyntaxError();
+      if (!previous) throw syntaxError();
       scanner.setPosition(previous.offset + previous.length);
       if (scanner.scan() === SyntaxKind.CommaToken) comma = scanner.getTokenOffset();
     }

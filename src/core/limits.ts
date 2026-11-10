@@ -2,7 +2,7 @@ import type { IncomingMessage } from 'node:http';
 import type { Readable } from 'node:stream';
 import { MIMEType } from 'node:util';
 
-import { type JSONRPCMessage, JSONRPCMessageSchema } from '@modelcontextprotocol/sdk/types.js';
+import { JSONRPCMessageSchema } from '@modelcontextprotocol/sdk/types.js';
 
 export const MAX_BACKEND_MESSAGE_BYTES = 4 * 1024 * 1024;
 
@@ -282,7 +282,7 @@ export const readRequestBody = async (
   request: IncomingMessage,
   limit: number,
   signal: AbortSignal,
-): Promise<readonly JSONRPCMessage[]> => {
+): Promise<void> => {
   try {
     const mime = new MIMEType(request.headers['content-type'] ?? '');
     if (
@@ -346,5 +346,4 @@ export const readRequestBody = async (
   // Pinned body-parser 1.x checks _body before reading. Keep its exact checked
   // value and skip only its second byte read, never the transport's validation.
   Object.assign(request, { body: Array.isArray(body) ? messages : messages[0], _body: true });
-  return messages;
 };

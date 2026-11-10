@@ -77,6 +77,48 @@ const check = async (name: string, args: [string, ...string[]]) => {
   return stdout;
 };
 const hash = (path: string) => hashFile(path, cancellation.signal);
+// Evidence names are `${label} signature`, `${label} ticket`, `${label} Gatekeeper` and
+// `${label} version`; callers keep today's per-site order so the `checks` array is unchanged.
+const verifySignature = async (label: string, path: string, deep = true) =>
+  check(`${label} signature`, [
+    '/usr/bin/codesign',
+    '--verify',
+    ...(deep ? ['--deep'] : []),
+    '--strict',
+    '--verbose=2',
+    path,
+  ]);
+// Test builds are signed but not notarized: no ticket or Gatekeeper check runs for them.
+const verifyTicket = async (label: string, path: string) => {
+  if (testBuild) return;
+  await check(`${label} ticket`, ['/usr/bin/xcrun', 'stapler', 'validate', path]);
+};
+const verifyGatekeeper = async (label: string, path: string, type: 'execute' | 'open') => {
+  if (testBuild) return;
+  await check(`${label} Gatekeeper`, [
+    '/usr/sbin/spctl',
+    '--assess',
+    '--type',
+    type,
+    ...(type === 'open' ? ['--context', 'context:primary-signature'] : []),
+    '--verbose=4',
+    path,
+  ]);
+};
+const verifyBundleVersion = async (label: string, path: string, subject: string) => {
+  const version = (
+    await check(`${label} version`, [
+      '/usr/bin/plutil',
+      '-extract',
+      'CFBundleVersion',
+      'raw',
+      join(path, 'Contents/Info.plist'),
+    ])
+  ).trim();
+  if (version !== packageInfo.version)
+    throw new Error(`${subject} version does not match package.json.`);
+  return version;
+};
 const evidence: Record<string, unknown> = {
   version: packageInfo.version,
   architecture: 'arm64',
@@ -131,50 +173,14 @@ try {
     integrity: UPDATE_FILES.integrity,
     runtimeArchive: UPDATE_FILES.archive,
   };
-  await check('wrapper signature', [
-    '/usr/bin/codesign',
-    '--verify',
-    '--deep',
-    '--strict',
-    '--verbose=2',
-    wrapper,
-  ]);
-  const wrapperVersion = (
-    await check('wrapper version', [
-      '/usr/bin/plutil',
-      '-extract',
-      'CFBundleVersion',
-      'raw',
-      join(wrapper, 'Contents/Info.plist'),
-    ])
-  ).trim();
-  if (wrapperVersion !== packageInfo.version)
-    throw new Error('Wrapper version does not match package.json.');
-  if (!testBuild) {
-    await check('wrapper ticket', ['/usr/bin/xcrun', 'stapler', 'validate', wrapper]);
-    await check('wrapper Gatekeeper', [
-      '/usr/sbin/spctl',
-      '--assess',
-      '--type',
-      'execute',
-      '--verbose=4',
-      wrapper,
-    ]);
-  }
-  await check('DMG signature', ['/usr/bin/codesign', '--verify', '--strict', '--verbose=2', dmg]);
-  if (!testBuild) {
-    await check('DMG ticket', ['/usr/bin/xcrun', 'stapler', 'validate', dmg]);
-    await check('DMG Gatekeeper', [
-      '/usr/sbin/spctl',
-      '--assess',
-      '--type',
-      'open',
-      '--context',
-      'context:primary-signature',
-      '--verbose=4',
-      dmg,
-    ]);
-  }
+  await verifySignature('wrapper', wrapper);
+  await verifyBundleVersion('wrapper', wrapper, 'Wrapper');
+  await verifyTicket('wrapper', wrapper);
+  await verifyGatekeeper('wrapper', wrapper, 'execute');
+  // A disk image is not a bundle, so its signature check omits --deep.
+  await verifySignature('DMG', dmg, false);
+  await verifyTicket('DMG', dmg);
+  await verifyGatekeeper('DMG', dmg, 'open');
   const wrapperInventory = await inventoryBundle(wrapper, cancellation.signal);
   evidence.wrapperInventory = {
     entries: wrapperInventory.length,
@@ -201,16 +207,9 @@ try {
       const dmgApps = (await readdir(dmgMount)).filter((name) => name.endsWith('.app'));
       if (dmgApps.length !== 1) throw new Error('DMG must contain exactly one application bundle.');
       const dmgApp = join(dmgMount, dmgApps[0] as string);
-      await check('DMG app signature', [
-        '/usr/bin/codesign',
-        '--verify',
-        '--deep',
-        '--strict',
-        '--verbose=2',
-        dmgApp,
-      ]);
-      if (!testBuild)
-        await check('DMG app ticket', ['/usr/bin/xcrun', 'stapler', 'validate', dmgApp]);
+      // The DMG app has no Gatekeeper check on purpose; the extracted payload gets one below.
+      await verifySignature('DMG app', dmgApp);
+      await verifyTicket('DMG app', dmgApp);
       const dmgMetadata = JSON.parse(
         await readFile(join(dmgApp, 'Contents/Resources/metadata.json'), 'utf8'),
       );
@@ -220,17 +219,7 @@ try {
         dmgMetadata.hash !== manifest.hash
       )
         throw new Error('DMG application metadata does not match the update manifest.');
-      const dmgVersion = (
-        await check('DMG app version', [
-          '/usr/bin/plutil',
-          '-extract',
-          'CFBundleVersion',
-          'raw',
-          join(dmgApp, 'Contents/Info.plist'),
-        ])
-      ).trim();
-      if (dmgVersion !== packageInfo.version)
-        throw new Error('DMG application version does not match package.json.');
+      const dmgVersion = await verifyBundleVersion('DMG app', dmgApp, 'DMG application');
       const dmgPayload = join(dmgApp, 'Contents/Resources', `${manifest.hash}.tar.zst`);
       if ((await hash(dmgPayload)) !== digest)
         throw new Error('DMG application update payload does not match the runtime archive.');
@@ -271,36 +260,10 @@ try {
   await check('extract signed payload', ['/usr/bin/tar', '-xf', archive, '-C', destination]);
   const payload = join(destination, 'MCP Gateway.app');
   evidence.payloadPath = payload;
-  await check('payload signature', [
-    '/usr/bin/codesign',
-    '--verify',
-    '--deep',
-    '--strict',
-    '--verbose=2',
-    payload,
-  ]);
-  if (!testBuild) {
-    await check('payload ticket', ['/usr/bin/xcrun', 'stapler', 'validate', payload]);
-    await check('payload Gatekeeper', [
-      '/usr/sbin/spctl',
-      '--assess',
-      '--type',
-      'execute',
-      '--verbose=4',
-      payload,
-    ]);
-  }
-  const payloadVersion = (
-    await check('payload version', [
-      '/usr/bin/plutil',
-      '-extract',
-      'CFBundleVersion',
-      'raw',
-      join(payload, 'Contents/Info.plist'),
-    ])
-  ).trim();
-  if (payloadVersion !== packageInfo.version)
-    throw new Error('Payload version does not match package.json.');
+  await verifySignature('payload', payload);
+  await verifyTicket('payload', payload);
+  await verifyGatekeeper('payload', payload, 'execute');
+  await verifyBundleVersion('payload', payload, 'Payload');
   const payloadMetadata = JSON.parse(
     await readFile(join(payload, 'Contents/Resources/version.json'), 'utf8'),
   ) as Record<string, unknown>;

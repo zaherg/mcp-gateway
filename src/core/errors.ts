@@ -17,11 +17,12 @@ export class RequestError extends Error {
   readonly code = 'InvalidRequest';
 }
 
+let issueSequence = 0;
+
 export const failure = (code: GatewayErrorCode, message: string): GatewayError => {
   return new GatewayError({ code, message, occurrenceId: `issue-${++issueSequence}` });
 };
 
-let issueSequence = 0;
 export const visible = (error: unknown): VisibleError => {
   return error instanceof GatewayError
     ? { code: error.code, message: error.message, occurrenceId: error.occurrenceId }

@@ -4,13 +4,14 @@ import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { Banners } from '@mcp-gateway/mainview/components/banners/Banners';
 import { DraftBar } from '@mcp-gateway/mainview/components/DraftBar';
 import { GatewayStrip } from '@mcp-gateway/mainview/components/GatewayStrip';
-import { Shell } from '@mcp-gateway/mainview/components/Shell';
+import { Shell, type Tab } from '@mcp-gateway/mainview/components/Shell';
 import { ConfirmDialogs } from '@mcp-gateway/mainview/dialogs/ConfirmDialogs';
 import {
   type Document,
   type Editor,
   emptyEditor,
   formConfig,
+  parseStringMap,
   ServerEditor,
 } from '@mcp-gateway/mainview/dialogs/ServerEditor';
 import { useOperations } from '@mcp-gateway/mainview/hooks/useOperations';
@@ -42,7 +43,7 @@ export const App = ({ client }: { client: AppClient }) => {
   const [rawOpen, setRawOpen] = useState(false);
   const fallbackFocus = useRef<HTMLButtonElement>(null);
   const updatesHeading = useRef<HTMLHeadingElement>(null);
-  const [tab, setTab] = useState<'overview' | 'settings' | 'logs'>('overview');
+  const [tab, setTab] = useState<Tab>('overview');
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const dismiss = (id: string) => setDismissed((previous) => new Set([...previous, id]));
   const errorOccurrenceRef = useRef(errorOccurrence);
@@ -256,25 +257,12 @@ export const App = ({ client }: { client: AppClient }) => {
         if (!Array.isArray(parsedArgs) || !parsedArgs.every((arg) => typeof arg === 'string'))
           throw new Error('Arguments must be a JSON array of strings.');
         args = parsedArgs;
-        const parsedEnv = JSON.parse(editor.env || '{}');
-        if (
-          parsedEnv === null ||
-          typeof parsedEnv !== 'object' ||
-          Array.isArray(parsedEnv) ||
-          !Object.values(parsedEnv).every((value) => typeof value === 'string')
-        )
-          throw new Error('Environment must be a JSON object with string values.');
-        env = parsedEnv as Record<string, string>;
+        env = parseStringMap(editor.env, 'Environment must be a JSON object with string values.');
       } else {
-        const parsedHeaders = JSON.parse(editor.headers || '{}');
-        if (
-          parsedHeaders === null ||
-          typeof parsedHeaders !== 'object' ||
-          Array.isArray(parsedHeaders) ||
-          !Object.values(parsedHeaders).every((value) => typeof value === 'string')
-        )
-          throw new Error('Headers must be a JSON object with string values.');
-        headers = parsedHeaders as Record<string, string>;
+        headers = parseStringMap(
+          editor.headers,
+          'Headers must be a JSON object with string values.',
+        );
       }
     } catch (failure) {
       setEditorError(failure instanceof Error ? failure.message : 'The server fields are invalid.');

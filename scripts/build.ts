@@ -8,10 +8,10 @@ import { assertEmptyReleaseOutputs, buildIdentity, releaseOutputEnvironment } fr
 import { buildPlan, command, prepareToolchain, toolchainEnvironment } from './toolchain';
 
 const root = resolve(import.meta.dir, '..');
-const testBuild = process.argv[2] === 'stable-test';
-const plan = buildPlan(testBuild ? 'stable' : process.argv[2]);
+const plan = buildPlan(process.argv[2]);
 // The command, not inherited environment, chooses whether an override is allowed.
-const kind = testBuild ? 'test' : 'production';
+const { kind } = plan;
+const testBuild = kind === 'test';
 const identity = buildIdentity({ ...toolchainEnvironment, MCP_GATEWAY_BUILD_KIND: kind });
 const environment = {
   ...(plan.signed
@@ -23,6 +23,8 @@ const environment = {
   CLANG_MODULE_CACHE_PATH: resolve(root, '.cache/clang'),
   SWIFT_MODULECACHE_PATH: resolve(root, '.cache/swift'),
 };
+// Fail fast before minutes of compilation and signing. signedBuild repeats this check right
+// before Electrobun writes the release outputs; that later check is the one guarding the write.
 if (plan.signed) await assertEmptyReleaseOutputs(root, environment, kind);
 await prepareToolchain(environment);
 await mkdir(resolve(root, '.cache/native'), { recursive: true });
@@ -141,7 +143,7 @@ const signedBuild = async () => {
 };
 
 if (plan.signed) await signedBuild();
-else if (process.argv[2] === 'dev') {
+else if (plan.mode === 'dev') {
   // Ctrl+C reaches every process in the terminal's group, so no signal handling is needed.
   const server = await createServer({ clearScreen: false });
   try {

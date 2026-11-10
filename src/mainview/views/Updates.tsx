@@ -69,6 +69,9 @@ export const Updates = ({
   updatesHeading: RefObject<HTMLHeadingElement | null>;
 }) => {
   const updateReady = updateState.phase === 'ready';
+  const inProgress = updateState.phase === 'checking' || updateState.phase === 'downloading';
+  const actionsDisabled =
+    updateBusy || configurationLocked || inProgress || updateState.phase === 'restarting';
   return (
     <section className="panel updates-panel" aria-labelledby="updates-heading">
       <div className="section-heading">
@@ -106,7 +109,7 @@ export const Updates = ({
               </div>
             )}
           </div>
-          {(updateState.phase === 'checking' || updateState.phase === 'downloading') && (
+          {inProgress && (
             <div
               className="update-progress"
               role="progressbar"
@@ -132,13 +135,7 @@ export const Updates = ({
           />
           <div className="update-actions">
             <Button
-              disabled={
-                updateBusy ||
-                configurationLocked ||
-                updateState.phase === 'checking' ||
-                updateState.phase === 'downloading' ||
-                updateState.phase === 'restarting'
-              }
+              disabled={actionsDisabled}
               onClick={() => void runUpdate(() => client.updatesCheck(), 'Update check completed.')}
             >
               <RefreshCw />
@@ -146,13 +143,7 @@ export const Updates = ({
             </Button>
             {updateState.availableVersion && !updateReady && (
               <Button
-                disabled={
-                  updateBusy ||
-                  configurationLocked ||
-                  updateState.phase === 'checking' ||
-                  updateState.phase === 'downloading' ||
-                  updateState.phase === 'restarting'
-                }
+                disabled={actionsDisabled}
                 onClick={() =>
                   void runUpdate(() => client.updatesDownload(), 'The update download has started.')
                 }

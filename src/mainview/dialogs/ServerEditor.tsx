@@ -9,7 +9,7 @@ import {
 import { Textarea } from '@mcp-gateway/mainview/components/mac/textarea';
 import { Alert, CheckboxRow, Field, Modal } from '@mcp-gateway/mainview/components/ui';
 import type { ConfigFormat } from '@mcp-gateway/shared/config-document';
-import { parseConfigDocument } from '@mcp-gateway/shared/config-document';
+import { isRecord, parseConfigDocument } from '@mcp-gateway/shared/config-document';
 import type { GatewayConfig, HttpServerConfig, StdioServerConfig } from '@mcp-gateway/shared/types';
 
 export type Backend = StdioServerConfig | HttpServerConfig;
@@ -28,11 +28,14 @@ export type Editor = {
   legacyProtocol: boolean;
 };
 
-export const isRecord = (value: unknown): value is Record<string, unknown> => {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-};
 const stringMap = (value: unknown): value is Record<string, string> => {
   return isRecord(value) && Object.values(value).every((item) => typeof item === 'string');
+};
+/** Parses an editor JSON field that must hold an object of string values. */
+export const parseStringMap = (text: string, message: string): Record<string, string> => {
+  const value: unknown = JSON.parse(text || '{}');
+  if (!stringMap(value)) throw new Error(message);
+  return value;
 };
 const isBackend = (value: unknown): value is Backend => {
   if (
@@ -53,31 +56,24 @@ const isBackend = (value: unknown): value is Backend => {
     (value.cwd === undefined || typeof value.cwd === 'string')
   );
 };
+const isFormConfig = (value: unknown): value is GatewayConfig => {
+  if (!isRecord(value) || !isRecord(value.gateway) || !isRecord(value.mcpServers)) return false;
+  const { gateway, mcpServers } = value;
+  return (
+    typeof gateway.host === 'string' &&
+    typeof gateway.port === 'number' &&
+    typeof gateway.token === 'string' &&
+    (gateway.autoStart === undefined || typeof gateway.autoStart === 'boolean') &&
+    (gateway.launchAtLogin === undefined || typeof gateway.launchAtLogin === 'boolean') &&
+    Object.values(mcpServers).every(isBackend)
+  );
+};
 // This guard is for rendering only. Native validation remains authoritative on every save.
 export const formConfig = (text: string, format: ConfigFormat): GatewayConfig | null => {
   try {
     const value = parseConfigDocument(text, format);
-    if (!isRecord(value) || !isRecord(value.gateway) || !isRecord(value.mcpServers)) return null;
-    const gateway = value.gateway;
-    if (
-      typeof gateway.host !== 'string' ||
-      typeof gateway.port !== 'number' ||
-      typeof gateway.token !== 'string' ||
-      (gateway.autoStart !== undefined && typeof gateway.autoStart !== 'boolean') ||
-      (gateway.launchAtLogin !== undefined && typeof gateway.launchAtLogin !== 'boolean') ||
-      !Object.values(value.mcpServers).every(isBackend)
-    )
-      return null;
-    // Preserve all fields from the source document, including unknown fields for native rejection.
-    return {
-      ...value,
-      gateway: { ...gateway, host: gateway.host, port: gateway.port, token: gateway.token },
-      mcpServers: Object.fromEntries(
-        Object.entries(value.mcpServers).filter((entry): entry is [string, Backend] =>
-          isBackend(entry[1]),
-        ),
-      ),
-    };
+    // The parsed document keeps every field, including unknown ones for native rejection.
+    return isFormConfig(value) ? value : null;
   } catch {
     return null;
   }
@@ -94,6 +90,12 @@ export const emptyEditor = (): Editor => ({
   headers: '{}',
   disabled: false,
   legacyProtocol: false,
+});
+/** The macOS Bear preset fields; a name the user already typed is kept. */
+export const bearPreset = (name = ''): Pick<Editor, 'name' | 'command' | 'args'> => ({
+  name: name || 'bear',
+  command: '/Applications/Bear.app/Contents/MacOS/bearcli',
+  args: '["mcp-server"]',
 });
 
 export const ServerEditor = ({
@@ -195,13 +197,7 @@ export const ServerEditor = ({
               variant="link"
               className="h-auto px-0"
               disabled={configurationLocked}
-              onClick={() =>
-                onChange({
-                  name: editor.name || 'bear',
-                  command: '/Applications/Bear.app/Contents/MacOS/bearcli',
-                  args: '["mcp-server"]',
-                })
-              }
+              onClick={() => onChange(bearPreset(editor.name))}
             >
               Fill macOS Bear preset (all accessible notes & tools)
             </Button>

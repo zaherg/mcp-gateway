@@ -14,21 +14,4 @@ const rpc = Electroview.defineRPC<AppRPC>({
   },
 });
 new Electroview({ rpc });
-export const client: AppClient = {
-  readLogs: (params) => rpc.request.readLogs(params),
-  clearLogs: () => rpc.request.clearLogs(),
-  snapshot: () => rpc.request.snapshot(),
-  quit: () => rpc.request.quit(),
-  quitStatus: () => rpc.request.quitStatus(),
-  start: () => rpc.request.start(),
-  stop: () => rpc.request.stop(),
-  restartServer: (params) => rpc.request.restartServer(params),
-  saveConfig: (params) => rpc.request.saveConfig(params),
-  copyEndpoint: (params) => rpc.request.copyEndpoint(params),
-  copyClientConfig: (params) => rpc.request.copyClientConfig(params),
-  updatesStatus: () => rpc.request.updatesStatus(),
-  updatesCheck: () => rpc.request.updatesCheck(),
-  updatesDownload: () => rpc.request.updatesDownload(),
-  updatesSetAutomatic: (params) => rpc.request.updatesSetAutomatic(params),
-  updatesRestart: () => rpc.request.updatesRestart(),
-};
+export const client: AppClient = rpc.request;

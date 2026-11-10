@@ -4,7 +4,7 @@ import type { Socket } from 'node:net';
 
 import type { GatewayMount } from '@mcp-gateway/core/adapter';
 import { backendSummary, closeMount, createMount } from '@mcp-gateway/core/adapter';
-import { isHttpServer, serverFingerprint } from '@mcp-gateway/core/config';
+import { isHttpServer, SAFE_NAME, serverFingerprint } from '@mcp-gateway/core/config';
 import { failure, visible } from '@mcp-gateway/core/errors';
 import {
   BackendCalls,
@@ -284,12 +284,11 @@ export class GatewayIngress {
       reject(403);
       return;
     }
-    const match = /^\/mcp\/([A-Za-z0-9][A-Za-z0-9_-]{0,63})$/.exec(req.url ?? '');
-    if (!match) {
+    const name = req.url?.startsWith('/mcp/') ? req.url.slice(5) : '';
+    if (!SAFE_NAME.test(name)) {
       reject(404);
       return;
     }
-    const name = match[1];
     const endpoint = this.endpoints.get(name);
     if (!endpoint) {
       reject(404);

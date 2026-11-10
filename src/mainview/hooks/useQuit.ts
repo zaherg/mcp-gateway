@@ -82,9 +82,12 @@ export const useQuit = ({
     };
   }, [client, acceptQuitStatus]);
 
-  const requestQuit = async () => {
-    if (quitRequestPending.current) return;
-    setConfirmQuit(false);
+  // Quit and Restart to update share one request protocol; only the call and the texts differ.
+  const requestTerminal = async (
+    request: AppClient['quit'],
+    pendingNotice: string,
+    failureMessage: string,
+  ): Promise<void> => {
     setRequestingQuit(true);
     setQuitStatusKnown(false);
     quitRequestPending.current = true;
@@ -92,20 +95,29 @@ export const useQuit = ({
     setError(null);
     setNotice('');
     try {
-      const result = await client.quit();
+      const result = await request();
       if (!result.ok) {
         setError(`${result.error.code}: ${result.error.message}`);
         return;
       }
       acceptQuitStatus(result.value.status);
-      if (result.value.status.phase !== 'failed')
-        setNotice('Quit requested. Waiting for gateway cleanup.');
+      if (result.value.status.phase !== 'failed') setNotice(pendingNotice);
     } catch {
-      setError('Could not request Quit. Check application status before retrying.');
+      setError(failureMessage);
     } finally {
       quitRequestPending.current = false;
       setRequestingQuit(false);
     }
+  };
+
+  const requestQuit = async () => {
+    if (quitRequestPending.current) return;
+    setConfirmQuit(false);
+    await requestTerminal(
+      () => client.quit(),
+      'Quit requested. Waiting for gateway cleanup.',
+      'Could not request Quit. Check application status before retrying.',
+    );
   };
 
   const requestUpdateRestart = async () => {
@@ -113,27 +125,11 @@ export const useQuit = ({
     if (snapshot?.update.phase !== 'ready') return;
     setConfirmUpdate(false);
     generation.current++;
-    setRequestingQuit(true);
-    setQuitStatusKnown(false);
-    quitRequestPending.current = true;
-    quitGeneration.current++;
-    setError(null);
-    setNotice('');
-    try {
-      const result = await client.updatesRestart();
-      if (!result.ok) {
-        setError(`${result.error.code}: ${result.error.message}`);
-        return;
-      }
-      acceptQuitStatus(result.value.status);
-      if (result.value.status.phase !== 'failed')
-        setNotice('Restart requested. Waiting for gateway cleanup.');
-    } catch {
-      setError('Could not request the update restart. Check application status before retrying.');
-    } finally {
-      quitRequestPending.current = false;
-      setRequestingQuit(false);
-    }
+    await requestTerminal(
+      () => client.updatesRestart(),
+      'Restart requested. Waiting for gateway cleanup.',
+      'Could not request the update restart. Check application status before retrying.',
+    );
   };
 
   const interactiveQuit = useRef<() => boolean>(() => false);

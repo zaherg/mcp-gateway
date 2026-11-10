@@ -26,6 +26,9 @@ export const Settings = ({
   setShowToken: (show: boolean) => void;
   filename: string;
 }) => {
+  const setGateway = (patch: Partial<GatewayConfig['gateway']>) => {
+    if (config) update({ ...config, gateway: { ...config.gateway, ...patch } });
+  };
   return (
     <section className="panel settings-panel">
       <div className="section-heading">
@@ -47,12 +50,7 @@ export const Settings = ({
                 readOnly={configurationLocked}
                 list="interfaces"
                 value={config.gateway.host}
-                onChange={(event) =>
-                  update({
-                    ...config,
-                    gateway: { ...config.gateway, host: event.target.value },
-                  })
-                }
+                onChange={(event) => setGateway({ host: event.target.value })}
               />
               <datalist id="interfaces">
                 {gateway?.interfaces.map((item) => (
@@ -70,15 +68,9 @@ export const Settings = ({
                 min="1"
                 max="65535"
                 value={config.gateway.port === 0 ? '' : config.gateway.port}
+                // Keep an empty port editable; zero is explicitly rejected by native validation.
                 onChange={(event) =>
-                  update({
-                    ...config,
-                    // Keep an empty port editable; zero is explicitly rejected by native validation.
-                    gateway: {
-                      ...config.gateway,
-                      port: event.target.value === '' ? 0 : event.target.valueAsNumber,
-                    },
-                  })
+                  setGateway({ port: event.target.value === '' ? 0 : event.target.valueAsNumber })
                 }
               />
             </Field>
@@ -94,12 +86,7 @@ export const Settings = ({
                 spellCheck={false}
                 type={showToken ? 'text' : 'password'}
                 value={config.gateway.token}
-                onChange={(event) =>
-                  update({
-                    ...config,
-                    gateway: { ...config.gateway, token: event.target.value },
-                  })
-                }
+                onChange={(event) => setGateway({ token: event.target.value })}
               />
               <Button
                 variant="ghost"
@@ -116,12 +103,8 @@ export const Settings = ({
             disabled={configurationLocked}
             onClick={() => {
               const bytes = crypto.getRandomValues(new Uint8Array(32));
-              update({
-                ...config,
-                gateway: {
-                  ...config.gateway,
-                  token: Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join(''),
-                },
+              setGateway({
+                token: Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join(''),
               });
             }}
           >
@@ -133,12 +116,7 @@ export const Settings = ({
               description="While this is on, MCP Gateway opens in the background at every launch; open the window from the menu-bar icon."
               disabled={configurationLocked}
               checked={config.gateway.launchAtLogin ?? false}
-              onChange={(value) =>
-                update({
-                  ...config,
-                  gateway: { ...config.gateway, launchAtLogin: value },
-                })
-              }
+              onChange={(value) => setGateway({ launchAtLogin: value })}
             />
             <div className="login-status">
               <Badge variant="secondary">
@@ -159,9 +137,7 @@ export const Settings = ({
               disabled={configurationLocked}
               description="Begin listening automatically, independently of login startup."
               checked={config.gateway.autoStart ?? false}
-              onChange={(value) =>
-                update({ ...config, gateway: { ...config.gateway, autoStart: value } })
-              }
+              onChange={(value) => setGateway({ autoStart: value })}
             />
           </div>
         </>

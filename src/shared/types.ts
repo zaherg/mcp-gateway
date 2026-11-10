@@ -42,22 +42,22 @@ export interface GatewayConfig {
   mcpServers: Record<string, StdioServerConfig | HttpServerConfig>;
 }
 
-export interface StdioServerConfig {
-  command: string;
-  args?: string[];
-  env?: Record<string, string>;
-  cwd?: string;
+interface ServerBase {
   disabled?: boolean;
   /** Also serve session-based MCP (2025-11-25 and earlier) on this endpoint. */
   legacyProtocol?: boolean;
 }
 
-export interface HttpServerConfig {
+export interface StdioServerConfig extends ServerBase {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+}
+
+export interface HttpServerConfig extends ServerBase {
   url: string;
   headers?: Record<string, string>;
-  disabled?: boolean;
-  /** Also serve session-based MCP (2025-11-25 and earlier) on this endpoint. */
-  legacyProtocol?: boolean;
 }
 
 export interface InterfaceChoice {
