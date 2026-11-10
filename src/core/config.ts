@@ -173,14 +173,8 @@ export const serverFingerprint = (server: StdioServerConfig | HttpServerConfig):
     isHttpServer(server)
       ? {
           url: new URL(server.url).href,
-          headers: sorted(
-            Object.fromEntries(
-              Object.entries(server.headers ?? {}).map(([name, value]) => [
-                name.toLowerCase(),
-                value,
-              ]),
-            ),
-          ),
+          // parseConfig already lowercased the header names.
+          headers: sorted(server.headers),
           legacyProtocol: server.legacyProtocol === true,
           token: server.token,
         }

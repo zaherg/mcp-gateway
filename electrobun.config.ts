@@ -1,7 +1,7 @@
 import type { ElectrobunConfig } from 'electrobun';
 
 import packageInfo from './package.json';
-import { buildIdentity, releaseArtifactFolder } from './scripts/build-config';
+import { buildIdentity } from './scripts/build-config';
 
 const identity = buildIdentity();
 
@@ -13,7 +13,7 @@ export default {
   },
   build: {
     buildFolder: process.env.MCP_GATEWAY_BUILD_ROOT ?? 'build',
-    artifactFolder: releaseArtifactFolder(),
+    artifactFolder: process.env.MCP_GATEWAY_ARTIFACTS_DIR ?? 'artifacts',
     mainProcess: 'bun',
     bun: {
       entrypoint: 'src/main/index.ts',

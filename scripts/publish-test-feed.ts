@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { lstat, realpath } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -89,12 +88,7 @@ const publish = async () => {
   const destination = parseS3Path(process.env.MCP_GATEWAY_TEST_FEED_S3_PATH);
   const run = createCommandRunner({
     defaultTimeoutMs: 300_000,
-    start: (command, args) =>
-      spawn(command, [...args], {
-        env: childEnvironment(process.env),
-        shell: false,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      }),
+    env: childEnvironment(process.env),
   });
   const rclone = async (args: string[], accepted = [0]) => {
     const result = await run(

@@ -65,10 +65,6 @@ export const releaseOutputEnvironment = <T extends NodeJS.ProcessEnv>(
   };
 };
 
-export const releaseArtifactFolder = (environment: NodeJS.ProcessEnv = process.env): string => {
-  return environment.MCP_GATEWAY_ARTIFACTS_DIR ?? 'artifacts';
-};
-
 export const assertEmptyReleaseOutputs = async (
   root: string,
   environment: NodeJS.ProcessEnv,

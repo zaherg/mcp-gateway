@@ -19,21 +19,11 @@ export type CommandRunner = (
   signal?: AbortSignal,
 ) => Promise<CommandResult>;
 
-interface CommandChild {
-  readonly pid?: number;
-  readonly stdout: { on(event: 'data', listener: (chunk: Buffer) => void): unknown } | null;
-  readonly stderr: { on(event: 'data', listener: (chunk: Buffer) => void): unknown } | null;
-  kill(signal: 'SIGKILL'): unknown;
-  on(event: 'error', listener: (error: Error) => void): unknown;
-  on(event: 'close', listener: (code: number | null) => void): unknown;
-}
-
-type CommandStart = (command: string, args: readonly string[]) => CommandChild;
-
 interface CreateCommandRunnerOptions {
   defaultTimeoutMs?: number;
   maxOutputBytes?: number;
-  start?: CommandStart;
+  /** Replaces the inherited environment of every command this runner starts. */
+  env?: NodeJS.ProcessEnv;
 }
 
 const DEFAULT_COMMAND_TIMEOUT_MS = 60_000;
@@ -45,14 +35,6 @@ export const createCommandRunner = (options?: CreateCommandRunnerOptions): Comma
   for (const limit of [defaultTimeoutMs, maxOutputBytes]) {
     if (!Number.isSafeInteger(limit) || limit <= 0) throw new Error('Invalid command limit');
   }
-  const start: CommandStart =
-    options?.start ??
-    ((command, args) =>
-      spawn(command, [...args], {
-        shell: false,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      }));
-
   return (command, args, timeoutMs = defaultTimeoutMs, signal) =>
     new Promise((resolvePromise, reject) => {
       if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
@@ -64,7 +46,11 @@ export const createCommandRunner = (options?: CreateCommandRunnerOptions): Comma
         return;
       }
 
-      const child = start(command, args);
+      const child = spawn(command, [...args], {
+        env: options?.env,
+        shell: false,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
 
       const stdout: Buffer[] = [];
       const stderr: Buffer[] = [];
@@ -150,9 +136,8 @@ type BackendGroup =
 const runInspection = createCommandRunner({ defaultTimeoutMs: 2_000, maxOutputBytes: 16 * 1024 });
 
 const inspectBackendGroup = async (pgid: number): Promise<BackendGroup> => {
-  const run = runInspection;
   try {
-    const listed = await run('/usr/bin/pgrep', ['-g', String(pgid)]);
+    const listed = await runInspection('/usr/bin/pgrep', ['-g', String(pgid)]);
     if (listed.exitCode === 1 && !listed.stdout.trim() && !listed.stderr.trim())
       return { status: 'absent' };
     if (listed.exitCode !== 0 || listed.stderr.trim()) return { status: 'unknown' };
@@ -163,7 +148,7 @@ const inspectBackendGroup = async (pgid: number): Promise<BackendGroup> => {
       ids.some((id) => !/^[1-9]\d*$/.test(id) || !Number.isSafeInteger(Number(id)))
     )
       return { status: 'unknown' };
-    const inspected = await run('/bin/ps', [
+    const inspected = await runInspection('/bin/ps', [
       '-p',
       ids.join(','),
       '-o',

@@ -3,9 +3,9 @@ import { resolve } from 'node:path';
 
 const root = resolve(import.meta.dir, '..');
 
-const validateBuildHost = (platform: NodeJS.Platform, architecture: string): void => {
-  if (platform !== 'darwin' || architecture !== 'arm64')
-    throw new Error(`Unsupported build host: ${platform}/${architecture}.`);
+const validateBuildHost = (): void => {
+  if (process.platform !== 'darwin' || process.arch !== 'arm64')
+    throw new Error(`Unsupported build host: ${process.platform}/${process.arch}.`);
 };
 
 const MODES = {
@@ -20,12 +20,8 @@ type BuildMode = keyof typeof MODES;
 const isBuildMode = (value: string | undefined): value is BuildMode =>
   value !== undefined && Object.hasOwn(MODES, value);
 
-export const buildPlan = (
-  mode: string | undefined,
-  platform: NodeJS.Platform = process.platform,
-  architecture: string = process.arch,
-) => {
-  validateBuildHost(platform, architecture);
+export const buildPlan = (mode: string | undefined) => {
+  validateBuildHost();
   if (!isBuildMode(mode)) throw new Error('Choose stable, stable-test, dev, or dev-build.');
   return { ...MODES[mode], mode };
 };
@@ -65,7 +61,7 @@ export const command = async (args: string[], env = toolchainEnvironment) => {
 };
 
 export const prepareToolchain = async (environment = toolchainEnvironment) => {
-  validateBuildHost(process.platform, process.arch);
+  validateBuildHost();
   await mkdir(environment.TMPDIR, { recursive: true });
   await command(['node', 'node_modules/electrobun/bin/electrobun.cjs', 'prepare'], environment);
 };
