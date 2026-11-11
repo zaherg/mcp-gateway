@@ -492,7 +492,7 @@ export const App = ({ client }: App) => {
               visible={tab !== 'logs'}
               doc={doc}
               setDoc={setDoc}
-              configurationLocked={configurationLocked}
+              configurationLocked={configurationLocked || busy}
               format={format}
               filename={filename}
               gateway={gateway}

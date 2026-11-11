@@ -1,9 +1,18 @@
+import { history, historyKeymap, standardKeymap } from '@codemirror/commands';
+import {
+  bracketMatching,
+  indentUnit,
+  StreamLanguage,
+  syntaxHighlighting,
+} from '@codemirror/language';
+import { json } from '@codemirror/legacy-modes/mode/javascript';
+import { Compartment, EditorState, type Extension } from '@codemirror/state';
+import { EditorView, keymap, lineNumbers } from '@codemirror/view';
+import { classHighlighter } from '@lezer/highlight';
 import type { RefObject } from 'react';
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
-import { Label } from '@mcp-gateway/mainview/components/mac/label';
-import { Textarea } from '@mcp-gateway/mainview/components/mac/textarea';
 import type { Document } from '@mcp-gateway/mainview/dialogs/ServerEditor';
 import {
   CONFIG_TOO_LARGE,
@@ -34,9 +43,57 @@ interface Pending {
   attempt: number;
 }
 
+interface EditTarget {
+  text: string;
+  revision: string;
+  dirty: boolean;
+  locked: boolean;
+  invalid: boolean;
+  setDoc: (doc: Document) => void;
+  setNotice: (notice: string) => void;
+}
+
+// The stream mode highlights and indents JSONC; parseConfigTree and native Save stay authoritative.
+const configLanguage = StreamLanguage.define(json);
+
+const staticExtensions: Extension[] = [
+  configLanguage,
+  syntaxHighlighting(classHighlighter),
+  lineNumbers(),
+  bracketMatching(),
+  indentUnit.of('  '),
+  EditorState.tabSize.of(2),
+  history(),
+  keymap.of([...standardKeymap, ...historyKeymap]),
+];
+
+// Uniform endings survive edits; a mixed-ending draft normalizes to LF on its first real edit.
+const lineSeparatorOf = (text: string): string | null => {
+  const crlf = text.match(/\r\n/g)?.length ?? 0;
+  const loneCr = text.match(/\r(?!\n)/g)?.length ?? 0;
+  const loneLf = text.split('\n').length - 1 - crlf;
+  if (crlf > 0 && loneCr === 0 && loneLf === 0) return '\r\n';
+  if (loneCr > 0 && crlf === 0 && loneLf === 0) return '\r';
+  if (crlf === 0 && loneCr === 0) return '\n';
+  return null;
+};
+
+const fieldBehavior = (fieldId: string, locked: boolean, invalid: boolean): Extension[] => [
+  EditorState.readOnly.of(locked),
+  EditorView.editable.of(!locked),
+  EditorView.contentAttributes.of({
+    id: fieldId,
+    tabindex: '0',
+    spellcheck: 'false',
+    'aria-labelledby': `${fieldId}-label`,
+    'aria-describedby': `${fieldId}-feedback`,
+    ...(invalid ? { 'aria-invalid': 'true' } : {}),
+  }),
+];
+
 const positionOf = (text: string, offset: number): { line: number; column: number } => {
   const limit = Math.max(0, Math.min(offset, text.length));
-  // A bare CR ends a line too, as the text area displays it.
+  // A bare CR ends a line too, as the editor displays it.
   const lines = text.slice(0, limit).split(/\r\n|\r|\n/);
   return { line: lines.length, column: (lines.at(-1) ?? '').length + 1 };
 };
@@ -121,6 +178,37 @@ export const RawConfig = ({
   live.current = { open: previewOpen, locked: configurationLocked };
   const revisionRef = useRef(doc.revision);
   revisionRef.current = doc.revision;
+
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const viewRef = useRef<EditorView | null>(null);
+  const compartmentRef = useRef<Compartment | null>(null);
+  if (compartmentRef.current === null) compartmentRef.current = new Compartment();
+  // The editor's own emitted text, so the sync effect can tell an echo from an external replacement.
+  const lastEmitted = useRef<string | null>(null);
+  const lastSynced = useRef({ text: doc.text, revision: doc.revision, dirty: doc.dirty });
+  const editRef = useRef<EditTarget>({
+    text: doc.text,
+    revision: doc.revision,
+    dirty: doc.dirty,
+    locked: configurationLocked,
+    invalid: false,
+    setDoc,
+    setNotice,
+  });
+  const listenerRef = useRef<Extension | null>(null);
+  if (listenerRef.current === null) {
+    listenerRef.current = EditorView.updateListener.of((update) => {
+      if (!update.docChanged) return;
+      const edit = editRef.current;
+      if (edit.locked) return;
+      const text = update.state.sliceDoc();
+      if (text === (lastEmitted.current ?? edit.text)) return;
+      lastEmitted.current = text;
+      setFeedback({ kind: 'idle' });
+      edit.setDoc({ text, revision: edit.revision, dirty: true });
+      edit.setNotice('');
+    });
+  }
 
   const check = useCallback(
     function check(text: string, revision: string, format: ConfigFormat, attempt: number): void {
@@ -211,6 +299,117 @@ export const RawConfig = ({
     };
   }, []);
 
+  // A result never describes a draft that has since been replaced outside the editor.
+  const current: Feedback =
+    'text' in feedback && feedback.text !== doc.text ? { kind: 'idle' } : feedback;
+  // Native Save stays authoritative; this only blocks a flagged or not-yet-checked draft.
+  const saveReady = current.kind === 'ok' || current.kind === 'unavailable';
+  const invalid = current.kind === 'issue';
+
+  editRef.current = {
+    text: doc.text,
+    revision: doc.revision,
+    dirty: doc.dirty,
+    locked: configurationLocked,
+    invalid,
+    setDoc,
+    setNotice,
+  };
+
+  // The view exists only while its host is mounted; live values are read through stable refs.
+  useLayoutEffect(() => {
+    if (!previewOpen) return;
+    const host = hostRef.current;
+    const compartment = compartmentRef.current;
+    const listener = listenerRef.current;
+    if (!host || !compartment || !listener) return;
+    const edit = editRef.current;
+    const separator = lineSeparatorOf(edit.text);
+    const view = new EditorView({
+      doc: edit.text,
+      extensions: [
+        ...staticExtensions,
+        ...(separator === null ? [] : [EditorState.lineSeparator.of(separator)]),
+        compartment.of(fieldBehavior(fieldId, edit.locked, edit.invalid)),
+        listener,
+      ],
+      parent: host,
+    });
+    viewRef.current = view;
+    lastSynced.current = { text: edit.text, revision: edit.revision, dirty: edit.dirty };
+    return () => {
+      view.destroy();
+      viewRef.current = null;
+      lastEmitted.current = null;
+    };
+  }, [previewOpen, fieldId]);
+
+  useLayoutEffect(() => {
+    const view = viewRef.current;
+    const compartment = compartmentRef.current;
+    if (!view || !compartment) return;
+    view.dispatch({
+      effects: compartment.reconfigure(fieldBehavior(fieldId, configurationLocked, invalid)),
+    });
+  }, [configurationLocked, fieldId, invalid]);
+
+  useLayoutEffect(() => {
+    const view = viewRef.current;
+    const compartment = compartmentRef.current;
+    const listener = listenerRef.current;
+    if (!compartment || !listener) return;
+    if (!view) {
+      lastSynced.current = { text: doc.text, revision: doc.revision, dirty: doc.dirty };
+      return;
+    }
+    const previous = lastSynced.current;
+    if (
+      previous.text === doc.text &&
+      previous.revision === doc.revision &&
+      previous.dirty === doc.dirty
+    )
+      return;
+    lastSynced.current = { text: doc.text, revision: doc.revision, dirty: doc.dirty };
+    const isEditorEcho =
+      lastEmitted.current !== null &&
+      doc.text === lastEmitted.current &&
+      doc.dirty &&
+      previous.revision === doc.revision;
+    lastEmitted.current = null;
+    if (isEditorEcho) return;
+    const sameText = previous.text === doc.text;
+    const resetHistory =
+      !sameText || previous.revision !== doc.revision || (previous.dirty && !doc.dirty);
+    if (!resetHistory) return;
+    // External replacement or a clean/revision boundary: fresh state and history.
+    const scrollTop = view.scrollDOM.scrollTop;
+    const scrollLeft = view.scrollDOM.scrollLeft;
+    const main = view.state.selection.main;
+    const separator = lineSeparatorOf(doc.text);
+    const base = EditorState.create({
+      doc: doc.text,
+      extensions: [
+        ...staticExtensions,
+        ...(separator === null ? [] : [EditorState.lineSeparator.of(separator)]),
+        compartment.of(fieldBehavior(fieldId, configurationLocked, invalid)),
+        listener,
+      ],
+    });
+    const limit = base.doc.length;
+    view.setState(
+      base.update({
+        selection: {
+          anchor: Math.min(main.anchor, limit),
+          head: Math.min(main.head, limit),
+        },
+      }).state,
+    );
+    if (sameText) {
+      view.scrollDOM.scrollTop = scrollTop;
+      view.scrollDOM.scrollLeft = scrollLeft;
+    }
+  }, [doc.text, doc.revision, doc.dirty, configurationLocked, fieldId, invalid]);
+
   const formatDraft = () => {
     if (configurationLocked) return;
     if (tooLarge(doc.text)) {
@@ -238,12 +437,6 @@ export const RawConfig = ({
     setDoc({ ...doc, text, dirty: true });
     setNotice('');
   };
-
-  // A result never describes a draft that has since been replaced outside the editor.
-  const current: Feedback =
-    'text' in feedback && feedback.text !== doc.text ? { kind: 'idle' } : feedback;
-  // Native Save stays authoritative; this only blocks a flagged or not-yet-checked draft.
-  const saveReady = current.kind === 'ok' || current.kind === 'unavailable';
 
   // Keep the single-flight guard alive while Logs hides the editor.
   if (!visible) return null;
@@ -274,23 +467,15 @@ export const RawConfig = ({
             Changing the filename requires reopening the app.
           </p>
           <div className="field">
-            <Label htmlFor={fieldId} className="font-semibold">
+            <span
+              id={`${fieldId}-label`}
+              className="flex items-center text-mac-body leading-none font-semibold text-mac-label select-none"
+            >
               {filename}
-            </Label>
-            <Textarea
-              id={fieldId}
-              aria-describedby={`${fieldId}-feedback`}
-              aria-invalid={current.kind === 'issue' ? true : undefined}
-              className="min-h-87.5 text-[11px] whitespace-pre [tab-size:2]"
-              readOnly={configurationLocked}
-              spellCheck={false}
-              value={doc.text}
-              onChange={(event) => {
-                if (configurationLocked) return;
-                setFeedback({ kind: 'idle' });
-                setDoc({ ...doc, text: event.target.value, dirty: true });
-                setNotice('');
-              }}
+            </span>
+            <div
+              ref={hostRef}
+              className={invalid ? 'raw-code-editor raw-code-editor-error' : 'raw-code-editor'}
             />
             <small
               id={`${fieldId}-feedback`}

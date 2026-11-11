@@ -465,6 +465,86 @@ main {
   display: flex;
   gap: 9px;
 }
+.raw-code-editor {
+  width: 100%;
+  min-width: 0;
+  height: 350px;
+  min-height: 350px;
+  resize: vertical;
+  overflow: hidden;
+  contain: inline-size;
+  background: var(--mac-field);
+  border-radius: 6px;
+  box-shadow: 0 0 0 1px var(--mac-field-border);
+  transition: box-shadow 150ms;
+}
+.raw-code-editor:focus-within {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--mac-accent) 50%, var(--mac-field-border)),
+    0 0 0 3.5px color-mix(in srgb, var(--mac-accent) 50%, transparent);
+}
+.raw-code-editor.raw-code-editor-error,
+.raw-code-editor.raw-code-editor-error:focus-within {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--mac-red) 50%, var(--mac-field-border)),
+    0 0 0 3.5px color-mix(in srgb, var(--mac-red) 50%, transparent);
+}
+.raw-code-editor .cm-editor {
+  height: 100%;
+  font-family: var(--font-macos-mono);
+  font-size: 11px;
+  color: var(--mac-label);
+  background: transparent;
+}
+.raw-code-editor .cm-editor.cm-focused {
+  outline: none;
+}
+.raw-code-editor .cm-scroller {
+  overflow: auto;
+  font-family: inherit;
+  line-height: 1.625;
+}
+.raw-code-editor .cm-content {
+  padding: 4px 0;
+  caret-color: var(--mac-label);
+}
+.raw-code-editor .cm-line {
+  padding: 0 8px;
+}
+.raw-code-editor .cm-gutters {
+  font-size: 10px;
+  color: color-mix(in srgb, var(--mac-label) 64%, var(--mac-field));
+  background: var(--mac-field);
+  border: 0;
+  border-right: 1px solid var(--mac-border);
+}
+.raw-code-editor .cm-cursor {
+  border-left-color: var(--mac-label);
+}
+.raw-code-editor .cm-selectionBackground,
+.raw-code-editor .cm-content::selection,
+.raw-code-editor .cm-content ::selection {
+  background: color-mix(in srgb, var(--mac-accent) 30%, transparent);
+}
+.raw-code-editor .cm-matchingBracket,
+.raw-code-editor .cm-editor.cm-focused .cm-matchingBracket {
+  background: color-mix(in srgb, var(--mac-accent) 20%, transparent);
+  outline: none;
+}
+.raw-code-editor .tok-string {
+  color: var(--mac-link);
+}
+.raw-code-editor .tok-propertyName {
+  color: var(--mac-indigo);
+}
+.raw-code-editor .tok-number,
+.raw-code-editor .tok-atom,
+.raw-code-editor .tok-bool {
+  color: var(--mac-label);
+}
+.raw-code-editor .tok-comment {
+  color: color-mix(in srgb, var(--mac-label) 68%, var(--mac-field));
+}
 .page-footer {
   display: flex;
   justify-content: space-between;
