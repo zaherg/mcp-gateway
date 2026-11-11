@@ -8,7 +8,7 @@ import {
 import { json } from '@codemirror/legacy-modes/mode/javascript';
 import { Compartment, EditorState, type Extension } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers } from '@codemirror/view';
-import { classHighlighter } from '@lezer/highlight';
+import { classHighlighter, tags } from '@lezer/highlight';
 import type { RefObject } from 'react';
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 
@@ -54,7 +54,11 @@ interface EditTarget {
 }
 
 // The stream mode highlights and indents JSONC; parseConfigTree and native Save stay authoritative.
-const configLanguage = StreamLanguage.define(json);
+const configLanguage = StreamLanguage.define({
+  ...json,
+  // Resolve the legacy alias inside combined "string property" tokens.
+  tokenTable: { property: tags.propertyName },
+});
 
 const staticExtensions: Extension[] = [
   configLanguage,
