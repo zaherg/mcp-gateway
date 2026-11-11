@@ -1,3 +1,4 @@
+import type { ConfigIssue } from '@mcp-gateway/shared/config-document';
 import type { GatewaySnapshot, LogPage, LogQuery } from '@mcp-gateway/shared/types';
 
 export interface LoginStatus {
@@ -53,6 +54,11 @@ export type AppResult<T> =
   | { ok: true; value: T }
   | { ok: false; error: { code: string; message: string; occurrenceId?: string } };
 
+/** One fixed, sanitized configuration problem from the read-only native check. */
+export interface ConfigPreview {
+  issue: ConfigIssue | null;
+}
+
 export type AppRPC = {
   bun: {
     requests: {
@@ -68,6 +74,7 @@ export type AppRPC = {
         params: { text: string; expectedRevision: string };
         response: AppResult<AppSnapshot>;
       };
+      validateConfig: { params: { text: string }; response: AppResult<ConfigPreview> };
       confirmDiscard: { params: undefined; response: AppResult<boolean> };
       copyEndpoint: { params: { name: string }; response: AppResult<null> };
       copyClientConfig: { params: { name: string }; response: AppResult<null> };

@@ -2,6 +2,7 @@ import {
   applyEdits,
   createScanner,
   findNodeAtLocation,
+  format as formatText,
   getNodeValue,
   type JSONPath,
   modify,
@@ -15,31 +16,125 @@ export type ConfigFormat = 'json' | 'jsonc';
 export const configFormat = (path: string): ConfigFormat =>
   path.endsWith('.jsonc') ? 'jsonc' : 'json';
 
+/** Shared with the raw editor: main and the renderer enforce the same file limit. */
+export const MAX_CONFIG_BYTES = 1024 * 1024;
+export const CONFIG_TOO_LARGE = 'Configuration exceeds the size limit.';
+
 // Fixed messages only: parser diagnostics must not echo configuration credentials.
 const syntaxError = (): Error =>
   new Error('Configuration syntax is invalid or contains duplicate keys.');
 
-const checkedTree = (text: string, format: ConfigFormat): Node => {
+const SYNTAX_MESSAGE = 'Configuration syntax is invalid.';
+const DUPLICATE_MESSAGE = 'Duplicate property names are not allowed.';
+const DEPTH_MESSAGE = 'Configuration is nested too deeply.';
+// The schema nests four levels; the parser recurses per level and overflows on unbounded depth.
+const MAX_CONFIG_DEPTH = 64;
+
+export interface ConfigSourceRange {
+  offset: number;
+  length: number;
+}
+
+/** A fixed problem message with a source range when the parser can locate one. */
+export interface ConfigIssue {
+  message: string;
+  offset?: number;
+  length?: number;
+}
+
+export interface ConfigTextIssue extends ConfigSourceRange {
+  message: string;
+}
+
+export type ConfigTree = { ok: true; root: Node } | { ok: false; issue: ConfigTextIssue };
+
+const duplicateKey = (node: Node): Node | undefined => {
+  if (node.type === 'object') {
+    const keys = new Set<string>();
+    for (const property of node.children ?? []) {
+      const key = property.children?.[0];
+      if (!key) continue;
+      if (keys.has(key.value)) return key;
+      keys.add(key.value);
+    }
+  }
+  for (const child of node.children ?? []) {
+    const duplicate = duplicateKey(child);
+    if (duplicate) return duplicate;
+  }
+  return undefined;
+};
+
+/** The first bracket nested beyond the limit, found without recursion. */
+const tooDeep = (text: string): ConfigTextIssue | undefined => {
+  const scanner = createScanner(text, true);
+  const open: SyntaxKind[] = [];
+  for (let token = scanner.scan(); token !== SyntaxKind.EOF; token = scanner.scan()) {
+    if (token === SyntaxKind.OpenBraceToken || token === SyntaxKind.OpenBracketToken) {
+      if (open.push(token) > MAX_CONFIG_DEPTH)
+        return { message: DEPTH_MESSAGE, offset: scanner.getTokenOffset(), length: 1 };
+    } else if (
+      // The parser skips a mismatched closer without leaving its level, so only a match pops.
+      (token === SyntaxKind.CloseBraceToken && open.at(-1) === SyntaxKind.OpenBraceToken) ||
+      (token === SyntaxKind.CloseBracketToken && open.at(-1) === SyntaxKind.OpenBracketToken)
+    )
+      open.pop();
+  }
+  return undefined;
+};
+
+/** Parses once and reports the first depth, syntax or duplicate-key problem with its range. */
+export const parseConfigTree = (text: string, format: ConfigFormat = 'json'): ConfigTree => {
+  const deep = tooDeep(text);
+  if (deep) return { ok: false, issue: deep };
   const errors: ParseError[] = [];
   const root = parseTree(text, errors, {
     disallowComments: format === 'json',
     allowTrailingComma: format === 'jsonc',
     allowEmptyContent: false,
   });
-  if (!root || errors.length) throw syntaxError();
-  const check = (node: Node): void => {
-    if (node.type === 'object') {
-      const keys = new Set<string>();
-      for (const property of node.children ?? []) {
-        const key: string = property.children?.[0]?.value;
-        if (keys.has(key)) throw syntaxError();
-        keys.add(key);
-      }
-    }
-    for (const child of node.children ?? []) check(child);
-  };
-  check(root);
-  return root;
+  const error = errors[0];
+  if (error)
+    return {
+      ok: false,
+      issue: { message: SYNTAX_MESSAGE, offset: error.offset, length: error.length },
+    };
+  if (!root) return { ok: false, issue: { message: SYNTAX_MESSAGE, offset: 0, length: 0 } };
+  const duplicate = duplicateKey(root);
+  if (duplicate)
+    return {
+      ok: false,
+      issue: { message: DUPLICATE_MESSAGE, offset: duplicate.offset, length: duplicate.length },
+    };
+  return { ok: true, root };
+};
+
+/** Source range of the value at `path`, or of its property name when `key` is set. */
+export const configRange = (
+  root: Node,
+  path: JSONPath,
+  key = false,
+): ConfigSourceRange | undefined => {
+  const node = findNodeAtLocation(root, path);
+  if (!node) return undefined;
+  if (key && node.parent?.type === 'property') {
+    const name = node.parent.children?.[0];
+    return name ? { offset: name.offset, length: name.length } : undefined;
+  }
+  return { offset: node.offset, length: node.length };
+};
+
+const checkedTree = (text: string, format: ConfigFormat): Node => {
+  const parsed = parseConfigTree(text, format);
+  if (!parsed.ok) throw syntaxError();
+  return parsed.root;
+};
+
+/** Two-space indentation, the document's existing newline, and preserved comments and lexemes. */
+export const formatConfigDocument = (text: string, format: ConfigFormat = 'json'): string => {
+  checkedTree(text, format);
+  const eol = text.includes('\r\n') ? '\r\n' : '\n';
+  return applyEdits(text, formatText(text, undefined, { tabSize: 2, insertSpaces: true, eol }));
 };
 
 export const parseConfigDocument = (text: string, format: ConfigFormat = 'json'): unknown => {

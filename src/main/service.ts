@@ -4,6 +4,7 @@ import {
   effectiveServerToken,
   MAX_CONFIG_BYTES,
   parseConfig,
+  previewConfig,
   SAFE_NAME,
 } from '@mcp-gateway/core/config';
 import { GatewayError, RequestError } from '@mcp-gateway/core/errors';
@@ -40,6 +41,7 @@ let requestSequence = 0;
 const LogRequest = z.strictObject({ after: anyNumber });
 const NameRequest = z.strictObject({ name: z.string() });
 const SaveRequest = z.strictObject({ text: z.string(), expectedRevision: z.string() });
+const PreviewRequest = z.strictObject({ text: z.string() });
 const AutomaticRequest = z.strictObject({ automatic: z.boolean() });
 const SocialLinkRequest = z.strictObject({ target: z.enum(SOCIAL_LINK_TARGETS) });
 
@@ -224,6 +226,19 @@ export class AppService {
         return this.snapshot();
       });
     },
+    validateConfig: (input: unknown) =>
+      // Read-only: never wait behind a configuration operation that a later edit supersedes.
+      this.settle(() => {
+        if (
+          this.desktop.quitStatus().phase !== 'idle' ||
+          this.updates.status().phase === 'restarting'
+        )
+          throw new RequestError('Quit cleanup has started. The configuration was not checked.');
+        const { text } = decode(PreviewRequest, input);
+        if (Buffer.byteLength(text) > MAX_CONFIG_BYTES)
+          throw new RequestError('The configuration request is invalid.');
+        return { issue: previewConfig(text, process.env, this.controller.snapshot().configFormat) };
+      }, false),
     confirmDiscard: (input?: unknown) =>
       // The dialog can stay open; it must not hold the configuration queue.
       this.lifecycle(async () => {

@@ -4,21 +4,29 @@ import * as fs from 'node:fs/promises';
 import { validateHeaderName, validateHeaderValue } from 'node:http';
 import { basename, dirname, isAbsolute, join, parse, resolve } from 'node:path';
 
+import { getNodeValue, type JSONPath } from 'jsonc-parser';
 import * as z from 'zod/v4';
 
 import { failure, GatewayError } from '@mcp-gateway/core/errors';
 import { anyNumber, ownRecord } from '@mcp-gateway/core/schema';
 import {
+  CONFIG_TOO_LARGE,
   type ConfigFormat,
+  type ConfigIssue,
   configFormat,
+  configRange,
+  isRecord,
+  MAX_CONFIG_BYTES,
   parseConfigDocument,
+  parseConfigTree,
 } from '@mcp-gateway/shared/config-document';
 import type { GatewayConfig, HttpServerConfig, StdioServerConfig } from '@mcp-gateway/shared/types';
 
+// Re-exported for existing main-process callers; the renderer imports the shared definition.
+export { MAX_CONFIG_BYTES };
+
 const missing = (error: unknown) => (error as NodeJS.ErrnoException)?.code === 'ENOENT';
 
-export const MAX_CONFIG_BYTES = 1024 * 1024;
-const CONFIG_TOO_LARGE = 'Configuration exceeds the size limit.';
 const AMBIGUOUS_CONFIG = 'Both configuration files exist; keep only one and reopen the app.';
 // A lock with no readable pid is only treated as abandoned after this long.
 const STALE_UNOWNED_LOCK_MS = 10_000;
@@ -57,6 +65,125 @@ const invalid: (message?: string) => never = (
   throw failure('InvalidConfig', message);
 };
 
+/** A fixed, range-bearing explanation of the first structural configuration problem. */
+interface StructureIssue {
+  message: string;
+  path: JSONPath;
+  /** Point at the property name instead of its value, for unknown properties. */
+  key?: boolean;
+}
+
+const UNKNOWN_PROPERTY = 'An unknown property is present; remove or rename it.';
+const MISSING_PROPERTY = 'A required property is missing.';
+const WRONG_PROPERTY = 'A property has the wrong type or value.';
+const ROOT_OBJECT = 'The configuration must be a JSON object.';
+const SERVER_ENTRY = 'A server entry must be an object with supported fields.';
+const SERVER_TRANSPORT = 'A server entry must use either command fields or URL fields, not both.';
+const SERVERS_OBJECT = 'Servers must be an object with one entry per server.';
+
+/** Whether the parsed document has an entry at `path`; JSON cannot hold `undefined`. */
+const pathExists = (value: unknown, path: JSONPath): boolean => {
+  let current = value;
+  for (const segment of path) {
+    if (current === null || typeof current !== 'object') return false;
+    if (typeof segment === 'number') {
+      if (!Array.isArray(current) || segment >= current.length) return false;
+      current = current[segment];
+      continue;
+    }
+    // Own properties only: a parsed configuration carries no inherited keys.
+    if (!Object.hasOwn(current, segment)) return false;
+    current = (current as Record<string, unknown>)[segment];
+  }
+  return true;
+};
+
+const isUnrecognizedKeys = (issue: z.core.$ZodIssue): issue is z.core.$ZodIssueUnrecognizedKeys =>
+  issue.code === 'unrecognized_keys';
+
+const issuePath = (issue: z.core.$ZodIssue, base: JSONPath): JSONPath | null => {
+  const path: JSONPath = [...base];
+  for (const segment of issue.path) {
+    if (typeof segment !== 'string' && typeof segment !== 'number') return null;
+    path.push(segment);
+  }
+  return path;
+};
+
+const describeIssue = (
+  issue: z.core.$ZodIssue,
+  base: JSONPath,
+  root: unknown,
+): StructureIssue | null => {
+  const path = issuePath(issue, base);
+  if (!path) return null;
+  if (path.length === 0 && issue.code === 'invalid_type') return { message: ROOT_OBJECT, path };
+  if (isUnrecognizedKeys(issue)) {
+    const key = issue.keys[0];
+    if (key === undefined) return null;
+    return { message: UNKNOWN_PROPERTY, path: [...path, key], key: true };
+  }
+  // Only schema-owned field names may appear in diagnostics, never arbitrary input keys.
+  if (!pathExists(root, path)) {
+    const key = path.at(-1);
+    const known =
+      typeof key === 'string' &&
+      [ConfigSchema, ConfigSchema.shape.gateway, StdioSchema, HttpSchema].some((schema) =>
+        Object.hasOwn(schema.shape, key),
+      );
+    return {
+      message: known ? `The "${key}" property is required.` : MISSING_PROPERTY,
+      path: path.slice(0, -1),
+    };
+  }
+  return { message: WRONG_PROPERTY, path };
+};
+
+const preferredIssue = (issues: readonly z.core.$ZodIssue[]): z.core.$ZodIssue | undefined => {
+  return issues.find((issue) => issue.code === 'unrecognized_keys') ?? issues[0];
+};
+
+const serverIssue = (entry: unknown, path: JSONPath, root: unknown): StructureIssue | null => {
+  if (!isRecord(entry)) return { message: SERVER_ENTRY, path };
+  const http = Object.hasOwn(entry, 'url');
+  if (http && Object.hasOwn(entry, 'command')) return { message: SERVER_TRANSPORT, path };
+  const result = (http ? HttpSchema : StdioSchema).safeParse(entry);
+  if (result.success) return null;
+  const issue = preferredIssue(result.error.issues);
+  const field = issue?.path[0];
+  if (issue?.code === 'custom' && (field === 'headers' || field === 'env')) {
+    const values = entry[field];
+    if (isRecord(values)) {
+      // StringMap keeps its record-level error; locate the value using that same schema.
+      for (const [key, value] of Object.entries(values)) {
+        if (!StringMap.safeParse({ [key]: value }).success)
+          return { message: WRONG_PROPERTY, path: [...path, field, key] };
+      }
+    }
+  }
+  return issue ? describeIssue(issue, path, root) : null;
+};
+
+/** Explains a schema failure using the same schemas and rules as the authoritative parse. */
+const structureIssue = (value: unknown): StructureIssue | null => {
+  const result = ConfigSchema.safeParse(value);
+  if (result.success) return null;
+  const issue = preferredIssue(result.error.issues);
+  if (!issue) return null;
+  // ownRecord reports one record-level issue; recover the failing server entry's own path.
+  if (issue.code === 'custom' && issue.path.length === 1 && issue.path[0] === 'mcpServers') {
+    if (!pathExists(value, ['mcpServers'])) return describeIssue(issue, [], value);
+    const servers = isRecord(value) ? value.mcpServers : undefined;
+    if (!isRecord(servers)) return { message: SERVERS_OBJECT, path: ['mcpServers'] };
+    for (const [name, entry] of Object.entries(servers)) {
+      const found = serverIssue(entry, ['mcpServers', name], value);
+      if (found) return found;
+    }
+    return null;
+  }
+  return describeIssue(issue, [], value);
+};
+
 const TOKEN_RULE = '32 to 512 printable non-space ASCII characters.';
 const assertToken = (token: string, message: string): void => {
   if (!/^[\x21-\x7e]{32,512}$/.test(token)) invalid(message);
@@ -78,15 +205,10 @@ export const isHttpServer = (
   return 'url' in server;
 };
 
-export const parseConfig = (
-  text: string,
-  environment: NodeJS.ProcessEnv = process.env,
-  format: ConfigFormat = 'json',
-): GatewayConfig => {
-  if (Buffer.byteLength(text) > MAX_CONFIG_BYTES) invalid(CONFIG_TOO_LARGE);
+const validateConfig = (value: unknown, environment: NodeJS.ProcessEnv): GatewayConfig => {
   let config: GatewayConfig;
   try {
-    config = ConfigSchema.parse(parseConfigDocument(text, format));
+    config = ConfigSchema.parse(value);
   } catch {
     invalid();
   }
@@ -158,6 +280,49 @@ export const parseConfig = (
     }
   }
   return config;
+};
+
+export const parseConfig = (
+  text: string,
+  environment: NodeJS.ProcessEnv = process.env,
+  format: ConfigFormat = 'json',
+): GatewayConfig => {
+  if (Buffer.byteLength(text) > MAX_CONFIG_BYTES) invalid(CONFIG_TOO_LARGE);
+  let value: unknown;
+  try {
+    value = parseConfigDocument(text, format);
+  } catch {
+    invalid();
+  }
+  return validateConfig(value, environment);
+};
+
+/**
+ * Read-only dry run for the raw editor: one fixed, sanitized problem with its source range
+ * where one can be located. No save, process, network, registration, or log side effect.
+ */
+export const previewConfig = (
+  text: string,
+  environment: NodeJS.ProcessEnv = process.env,
+  format: ConfigFormat = 'json',
+): ConfigIssue | null => {
+  if (Buffer.byteLength(text) > MAX_CONFIG_BYTES) return { message: CONFIG_TOO_LARGE };
+  const parsed = parseConfigTree(text, format);
+  if (!parsed.ok) return parsed.issue;
+  const value = getNodeValue(parsed.root);
+  try {
+    validateConfig(value, environment);
+    return null;
+  } catch (error) {
+    // Structural failures get a range; field rules already carry fixed, actionable text.
+    if (!(error instanceof GatewayError)) throw error;
+    const structural = structureIssue(value);
+    if (!structural) return { message: error.message };
+    const range = configRange(parsed.root, structural.path, structural.key === true);
+    return range
+      ? { message: structural.message, offset: range.offset, length: range.length }
+      : { message: structural.message };
+  }
 };
 
 /** One route's accepted credential. Callers only pass a found own server entry. */

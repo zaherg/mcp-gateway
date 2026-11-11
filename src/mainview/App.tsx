@@ -233,6 +233,11 @@ export const App = ({ client }: App) => {
     }
     return false;
   };
+  const discard = async () => {
+    if (configurationLocked || !gateway || !(await confirmDiscard())) return;
+    setDoc({ text: gateway.configText, revision: gateway.revision, dirty: false });
+    setError(null);
+  };
   const openSocialLink = (target: SocialLinkTarget) => {
     if (busy || configurationLocked) return;
     void run(() => client.openSocialLink({ target }), '');
@@ -426,10 +431,8 @@ export const App = ({ client }: App) => {
               retryLogin={showLoginRetry}
               configurationLocked={configurationLocked}
               snapshot={snapshot}
-              setDoc={setDoc}
-              setError={setError}
               save={save}
-              confirmDiscard={confirmDiscard}
+              discard={discard}
             />
             {tab === 'logs' ? (
               <Logs client={client} servers={gateway?.servers.map((server) => server.name) ?? []} />
@@ -484,23 +487,24 @@ export const App = ({ client }: App) => {
                 updatesHeading={updatesHeading}
               />
             )}
-            {tab !== 'logs' && (
-              <RawConfig
-                doc={doc}
-                setDoc={setDoc}
-                configurationLocked={configurationLocked}
-                format={format}
-                filename={filename}
-                gateway={gateway}
-                dirty={dirty}
-                retryLogin={showLoginRetry}
-                save={save}
-                rawOpen={rawOpen}
-                setRawOpen={setRawOpen}
-                fallbackFocus={fallbackFocus}
-                setNotice={setNotice}
-              />
-            )}
+            <RawConfig
+              client={client}
+              visible={tab !== 'logs'}
+              doc={doc}
+              setDoc={setDoc}
+              configurationLocked={configurationLocked}
+              format={format}
+              filename={filename}
+              gateway={gateway}
+              dirty={dirty}
+              retryLogin={showLoginRetry}
+              save={save}
+              discard={discard}
+              rawOpen={rawOpen}
+              setRawOpen={setRawOpen}
+              fallbackFocus={fallbackFocus}
+              setNotice={setNotice}
+            />
           </fieldset>
           <footer className="page-footer">
             <span>

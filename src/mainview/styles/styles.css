@@ -458,6 +458,13 @@ main {
 .config-path {
   overflow-wrap: anywhere;
 }
+.field small.raw-feedback-error {
+  color: var(--mac-red);
+}
+.raw-actions {
+  display: flex;
+  gap: 9px;
+}
 .page-footer {
   display: flex;
   justify-content: space-between;
