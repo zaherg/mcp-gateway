@@ -473,13 +473,16 @@ export const createMount = (
       app,
       close: async () => {
         closing = true;
-        unguard?.();
-        await Promise.all([
+        const cleanup = [
           discovery?.close(),
           retained.close(),
           ...[...active].map((stop) => stop()),
           children.close(),
-        ]);
+        ];
+        // Cleanup still sends configured headers, such as the legacy session DELETE,
+        // so redirects stay refused until every cleanup step has settled.
+        void Promise.allSettled(cleanup).then(() => unguard?.());
+        await Promise.all(cleanup);
       },
     };
   } catch (error) {
