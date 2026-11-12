@@ -40,6 +40,9 @@ import type { LogLevel } from '@mcp-gateway/shared/types';
 /** A session with no open request or event stream ends after this long. */
 const SESSION_IDLE_MS = 60_000;
 
+/** Unanswered cancelled calls a session may hold before it is closed to free them. */
+const MAX_CANCELLED_CALLS = 4;
+
 const DUPLICATE_REQUEST_ERROR = {
   code: -32600,
   message: 'A request with this id is already in flight in this session.',
@@ -84,8 +87,8 @@ export const createSessions = (options: SessionOptions): StatefulSessions => {
     private readonly work = new WeakMap<StreamableHTTPServerTransport, WorkOwner>();
 
     // A request whose response ended early (the request deadline or a client
-    // disconnect) is cancelled the way a client cancel is, so it stops holding
-    // the shared call budget while the session's event stream keeps it alive.
+    // disconnect) is cancelled the way a client cancel is. The call stays
+    // charged until its backend answers or the session's cleanup ends it.
     override async post(req: GatewayRequest, res: GatewayResponse): Promise<void> {
       const sessionId = req.headers['mcp-session-id'];
       const transport = typeof sessionId === 'string' ? this.transports.get(sessionId) : undefined;
@@ -142,7 +145,17 @@ export const createSessions = (options: SessionOptions): StatefulSessions => {
             const owner = leasedOwner(children, release, localFailure, (stop) => {
               cleanup = stop;
             });
-            return charged(startBackend(source, owner, logger), work, calls);
+            let overloaded = false;
+            return charged(startBackend(source, owner, logger), work, calls, () => {
+              if (overloaded) return;
+              overloaded = true;
+              log('warn', ['Session: closed after too many unanswered cancelled calls.'], false);
+              // Deferred: this runs while the session is still handling the
+              // cancellation that crossed the limit.
+              void Promise.resolve()
+                .then(() => opened.close())
+                .catch(localFailure);
+            });
           },
         );
         transport = session.transport;
@@ -206,11 +219,20 @@ const leasedOwner = (
 };
 
 // Charges each client request to the shared budget when it reaches the backend
-// and settles it on the backend's reply, a forwarded cancellation, or the
-// session's confirmed cleanup. Refusals go through the session's own message
-// path so its pending-request bookkeeping is cleared.
-const charged = (factory: PeerFactory, work: WorkOwner, calls: BackendCalls): PeerFactory => {
+// and settles it on the backend's reply or the session's confirmed cleanup.
+// A cancellation does not settle: MCP servers send nothing for a cancelled call,
+// so the backend may still be working on it. A session that accumulates
+// MAX_CANCELLED_CALLS such calls is ended through `overloaded`, and its cleanup
+// settles them. Refusals go through the session's own message path so its
+// pending-request bookkeeping is cleared.
+const charged = (
+  factory: PeerFactory,
+  work: WorkOwner,
+  calls: BackendCalls,
+  overloaded: () => void,
+): PeerFactory => {
   return (owner) => {
+    const cancelled = new Set<string | number>();
     const refuse = (id: string | number, error: JsonRpcError) => {
       const response = { jsonrpc: '2.0' as const, id, error };
       owner.message(response, JSON.stringify(response));
@@ -220,7 +242,10 @@ const charged = (factory: PeerFactory, work: WorkOwner, calls: BackendCalls): Pe
       message: (message, line) => {
         if (!('method' in message) && 'id' in message) {
           const id = message.id;
-          if (typeof id === 'string' || typeof id === 'number') calls.settle(work, id);
+          if (typeof id === 'string' || typeof id === 'number') {
+            cancelled.delete(id);
+            calls.settle(work, id);
+          }
         }
         owner.message(message, line);
       },
@@ -240,7 +265,10 @@ const charged = (factory: PeerFactory, work: WorkOwner, calls: BackendCalls): Pe
         peer.write(message);
         if ('method' in message && message.method === 'notifications/cancelled') {
           const id = (message.params as { requestId?: unknown } | undefined)?.requestId;
-          if (typeof id === 'string' || typeof id === 'number') calls.settle(work, id);
+          if ((typeof id === 'string' || typeof id === 'number') && calls.holds(work, id)) {
+            cancelled.add(id);
+            if (cancelled.size >= MAX_CANCELLED_CALLS) overloaded();
+          }
         }
       },
       end: () => peer.end(),
