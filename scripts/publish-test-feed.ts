@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
-import { lstat, realpath } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { copyFile, lstat, mkdtemp, realpath, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 
@@ -165,94 +167,111 @@ const publish = async () => {
     console.log(`Removed the updater files under ${publicBase}`);
     return;
   }
-  const { manifest } = await readUpdateArtifacts(
-    directory,
-    { identifier: TEST_IDENTIFIER },
-    cancellation.signal,
-  );
-  const archive = join(directory, UPDATE_FILES.archive);
-  const extracted = await run(
-    '/usr/bin/tar',
-    ['-xOf', archive, 'MCP Gateway.app/Contents/Resources/version.json'],
-    60_000,
-    cancellation.signal,
-  );
-  if (extracted.exitCode !== 0) throw new Error('Could not read candidate version metadata.');
-  let embedded: Record<string, unknown>;
+  // Every later step reads this private copy, so writes to the candidate
+  // directory after this point cannot change what is validated and uploaded.
+  const staging = await mkdtemp(join(tmpdir(), 'mcp-gateway-publish-'));
   try {
-    const value = JSON.parse(extracted.stdout);
-    if (!value || typeof value !== 'object' || Array.isArray(value))
-      throw new Error('Invalid object.');
-    embedded = value;
-  } catch {
-    throw new Error('Candidate version metadata is invalid.');
-  }
-  if (
-    embedded.identifier !== TEST_IDENTIFIER ||
-    embedded.channel !== 'stable' ||
-    embedded.version !== manifest.version ||
-    embedded.hash !== manifest.hash ||
-    embedded.baseUrl !== feed
-  )
-    throw new Error('Candidate identity or embedded feed does not match the selected test build.');
-
-  const hashes = new Map<string, string>();
-  for (const file of files) hashes.set(file.name, await hashFile(file.path, cancellation.signal));
-  for (const file of files) {
-    const args = [
-      'copyto',
-      file.path,
-      `${remote}:${destination}/${file.name}`,
-      '--ignore-times',
-      '--s3-no-check-bucket',
-      '--metadata',
-      '--metadata-set',
-      `content-type=${file.contentType}`,
-    ];
-    if (file.noCache) args.push('--metadata-set', 'cache-control=no-cache');
-    await rclone(args);
-    console.log(`Uploaded ${file.name}`);
-  }
-  for (const file of files) {
-    const { name, contentType: type } = file;
-    const expectedSize = (await lstat(file.path)).size;
-    const head = await anonymous(file.url, 30_000, { method: 'HEAD' });
-    await head.body?.cancel();
-    if (head.status !== 200 || !metadataMatches(head.headers, type, expectedSize))
-      throw new Error(`Anonymous metadata does not match ${name}.`);
-    if (file.noCache && !head.headers.get('cache-control')?.includes('no-cache'))
-      throw new Error('Published manifests must store Cache-Control: no-cache metadata.');
-    const response = await anonymous(file.url, 120_000, {
-      headers: { 'Cache-Control': 'no-cache' },
-    });
-    if (response.status !== 200 || !response.body) {
-      await response.body?.cancel();
-      throw new Error(`Anonymous readback failed for ${name} (HTTP ${response.status}).`);
+    for (const file of files) {
+      const info = await lstat(file.path);
+      if (info.isSymbolicLink() || !info.isFile())
+        throw new Error('Update artifact is missing, unsafe, or exceeds its size limit.');
+      const staged = join(staging, file.name);
+      await copyFile(file.path, staged, constants.COPYFILE_EXCL);
+      file.path = staged;
     }
-    const reader = response.body.getReader();
-    const digest = createHash('sha256');
-    let size = 0;
+    const { manifest } = await readUpdateArtifacts(
+      staging,
+      { identifier: TEST_IDENTIFIER },
+      cancellation.signal,
+    );
+    const archive = join(staging, UPDATE_FILES.archive);
+    const extracted = await run(
+      '/usr/bin/tar',
+      ['-xOf', archive, 'MCP Gateway.app/Contents/Resources/version.json'],
+      60_000,
+      cancellation.signal,
+    );
+    if (extracted.exitCode !== 0) throw new Error('Could not read candidate version metadata.');
+    let embedded: Record<string, unknown>;
     try {
-      if (!metadataMatches(response.headers, type, expectedSize))
-        throw new Error(`Anonymous response headers do not match ${name}.`);
-      while (true) {
-        const chunk = await reader.read();
-        if (chunk.done) break;
-        size += chunk.value.byteLength;
-        if (size > expectedSize) throw new Error('Anonymous readback exceeds the expected size.');
-        digest.update(chunk.value);
-      }
-    } finally {
-      await reader.cancel();
-      reader.releaseLock();
+      const value = JSON.parse(extracted.stdout);
+      if (!value || typeof value !== 'object' || Array.isArray(value))
+        throw new Error('Invalid object.');
+      embedded = value;
+    } catch {
+      throw new Error('Candidate version metadata is invalid.');
     }
-    if (size !== expectedSize || digest.digest('hex') !== hashes.get(name))
-      throw new Error(`Anonymous readback differs from ${name}.`);
-    if ((await hashFile(file.path, cancellation.signal)) !== hashes.get(name))
-      throw new Error('Local candidate changed during publication.');
-    console.log(`Verified anonymous readback: ${name}`);
+    if (
+      embedded.identifier !== TEST_IDENTIFIER ||
+      embedded.channel !== 'stable' ||
+      embedded.version !== manifest.version ||
+      embedded.hash !== manifest.hash ||
+      embedded.baseUrl !== feed
+    )
+      throw new Error(
+        'Candidate identity or embedded feed does not match the selected test build.',
+      );
+
+    const hashes = new Map<string, string>();
+    for (const file of files) hashes.set(file.name, await hashFile(file.path, cancellation.signal));
+    for (const file of files) {
+      const args = [
+        'copyto',
+        file.path,
+        `${remote}:${destination}/${file.name}`,
+        '--ignore-times',
+        '--s3-no-check-bucket',
+        '--metadata',
+        '--metadata-set',
+        `content-type=${file.contentType}`,
+      ];
+      if (file.noCache) args.push('--metadata-set', 'cache-control=no-cache');
+      await rclone(args);
+      console.log(`Uploaded ${file.name}`);
+    }
+    for (const file of files) {
+      const { name, contentType: type } = file;
+      const expectedSize = (await lstat(file.path)).size;
+      const head = await anonymous(file.url, 30_000, { method: 'HEAD' });
+      await head.body?.cancel();
+      if (head.status !== 200 || !metadataMatches(head.headers, type, expectedSize))
+        throw new Error(`Anonymous metadata does not match ${name}.`);
+      if (file.noCache && !head.headers.get('cache-control')?.includes('no-cache'))
+        throw new Error('Published manifests must store Cache-Control: no-cache metadata.');
+      const response = await anonymous(file.url, 120_000, {
+        headers: { 'Cache-Control': 'no-cache' },
+      });
+      if (response.status !== 200 || !response.body) {
+        await response.body?.cancel();
+        throw new Error(`Anonymous readback failed for ${name} (HTTP ${response.status}).`);
+      }
+      const reader = response.body.getReader();
+      const digest = createHash('sha256');
+      let size = 0;
+      try {
+        if (!metadataMatches(response.headers, type, expectedSize))
+          throw new Error(`Anonymous response headers do not match ${name}.`);
+        while (true) {
+          const chunk = await reader.read();
+          if (chunk.done) break;
+          size += chunk.value.byteLength;
+          if (size > expectedSize) throw new Error('Anonymous readback exceeds the expected size.');
+          digest.update(chunk.value);
+        }
+      } finally {
+        await reader.cancel();
+        reader.releaseLock();
+      }
+      if (size !== expectedSize || digest.digest('hex') !== hashes.get(name))
+        throw new Error(`Anonymous readback differs from ${name}.`);
+      if ((await hashFile(file.path, cancellation.signal)) !== hashes.get(name))
+        throw new Error('Local candidate changed during publication.');
+      console.log(`Verified anonymous readback: ${name}`);
+    }
+    console.log(`Published test version ${manifest.version} at ${publicBase}`);
+  } finally {
+    await rm(staging, { recursive: true, force: true });
   }
-  console.log(`Published test version ${manifest.version} at ${publicBase}`);
 };
 
 try {
