@@ -390,12 +390,7 @@ export class GatewayIngress {
     void (async () => {
       try {
         if (post) await readRequestBody(req, MAX_BODY_BYTES, controller.signal);
-        if (
-          finished ||
-          controller.signal.aborted ||
-          this.closed ||
-          !this.serves(name, endpoint)
-        )
+        if (finished || controller.signal.aborted || this.closed || !this.serves(name, endpoint))
           return;
         endpoint.mount.app(req, res);
       } catch (error) {
