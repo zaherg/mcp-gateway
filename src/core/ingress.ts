@@ -246,6 +246,19 @@ export class GatewayIngress {
     if (this.closingMounts.get(name) === mount) this.closingMounts.delete(name);
   }
 
+  /** Whether this endpoint is mounted and was built from the route's current, enabled entry. */
+  private serves(name: string, endpoint: Endpoint): boolean {
+    const server = Object.hasOwn(this.config.mcpServers, name)
+      ? this.config.mcpServers[name]
+      : undefined;
+    return (
+      server !== undefined &&
+      !server.disabled &&
+      this.endpoints.get(name) === endpoint &&
+      endpoint.fingerprint === serverFingerprint(server)
+    );
+  }
+
   private handle(req: IncomingMessage, res: ServerResponse): void {
     const reject = (status: number) => {
       res.statusCode = status;
@@ -306,7 +319,9 @@ export class GatewayIngress {
       return;
     }
     const endpoint = this.endpoints.get(name);
-    if (!endpoint) {
+    // Reconcile can keep a previous-configuration endpoint mounted while it waits
+    // for earlier cleanup; it must never answer for the current route's key.
+    if (!endpoint || !this.serves(name, endpoint)) {
       reject(404);
       return;
     }
@@ -379,7 +394,7 @@ export class GatewayIngress {
           finished ||
           controller.signal.aborted ||
           this.closed ||
-          this.endpoints.get(name) !== endpoint
+          !this.serves(name, endpoint)
         )
           return;
         endpoint.mount.app(req, res);
