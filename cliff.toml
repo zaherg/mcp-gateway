@@ -1,0 +1,43 @@
+# git-cliff configuration for CHANGELOG.md, which follows Keep a Changelog 1.0.0.
+# Only a single section is rendered here. The file header, the release order and the
+# version links stay in CHANGELOG.md, so scripts/changelog.ts can splice one section.
+
+[changelog]
+header = ""
+footer = ""
+body = """
+{% if version %}## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}## [Unreleased]
+{% endif %}\
+{% for group in ["Added", "Changed", "Deprecated", "Removed", "Fixed", "Security"] %}\
+{% set items = commits | filter(attribute="group", value=group) %}\
+{% if items | length > 0 %}
+### {{ group }}
+
+{% for commit in items %}\
+- {% if commit.breaking %}**Breaking:** {% endif %}{{ commit.message | split(pat="\n") | first | trim | upper_first }}
+{% endfor %}\
+{% endif %}\
+{% endfor %}\
+"""
+trim = true
+
+[git]
+# A commit type selects the Keep a Changelog section, so subjects are written as
+# "feat: add x", "fix: stop y". A subject without a type lands under Changed.
+conventional_commits = true
+filter_unconventional = false
+protect_breaking_commits = true
+# The first matching rule wins.
+commit_parsers = [
+    { message = "^security", group = "Security" },
+    { message = "^feat", group = "Added" },
+    { message = "^deprecat", group = "Deprecated" },
+    { message = "^remove|^revert", group = "Removed" },
+    { message = "^fix", group = "Fixed" },
+    { message = "^docs|^doc|^chore|^test|^ci|^build|^style|^Merge ", skip = true },
+    { message = ".*", group = "Changed" },
+]
+# Tags are the released versions, with or without the v prefix.
+tag_pattern = "^(?:v)?[0-9]+\\.[0-9]+\\.[0-9]+$"
+sort_commits = "oldest"

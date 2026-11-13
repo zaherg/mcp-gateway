@@ -86,7 +86,7 @@ If the handoff fails, the gateway stays stopped; quit and reopen the app to try 
 `0.3.2` is the first release that can update itself.
 `0.3.0` cannot update, so install the `0.3.2` or later DMG by hand.
 A local rehearsal updated a signed test build that was not notarized.
-It used a loopback feed that redirected to an HTTPS test feed; see [RELEASING.md](RELEASING.md#testing-updates-locally).
+It used a loopback feed that redirected to an HTTPS test feed; see [UPDATE-TESTING.md](UPDATE-TESTING.md).
 Updating from one published GitHub release to the next has not been tested yet.
 
 ## Security

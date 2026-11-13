@@ -1,9 +1,9 @@
 # Changelog
 
 All notable changes to MCP Gateway are recorded here.
-The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versions follow the `version` in `package.json`.
-Release dates are the dates of the tagged commits.
+Release dates are the dates each section was stamped for release.
 
 ## [Unreleased]
 
@@ -14,11 +14,18 @@ Changes after `0.7.0`.
 - Tailscale and WireGuard listeners.
   Addresses in `100.64.0.0/10` can be selected as the listener address.
 - `gateway.allowedPeers`, an optional list of 1 to 16 IPv4 ranges that replaces the interface-subnet check for clients when it is set.
-  Each range must lie inside `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` or `100.64.0.0/10`.
+  Each range must lie inside `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` or `100.64.0.0/10`, with no host bits set.
+  The list cannot be combined with a loopback address.
   A change to the list restarts the listener, which closes open requests and sessions.
 - **Allowed client ranges** field in Settings.
 - The sidebar notice names the network of the saved address: this Mac only, LAN, Tailscale or VPN tunnel.
   The address list in Settings uses the same names.
+- `bun run release:all`, which builds, verifies, writes `SHA256SUMS` and publishes the GitHub release with `gh`, then reads the release and the update feed back.
+  It refuses a dirty working tree, an unpushed commit, an existing tag or an existing release, and publishes nothing when a step fails.
+  This affects maintainers only.
+- `bun run changelog`, which generates this file's Unreleased section from the commits with git-cliff, and `bun run changelog --tag <version>`, which moves it under a dated version heading.
+  The GitHub release notes are now that version's section.
+  This affects maintainers only.
 
 ### Changed
 
@@ -27,6 +34,8 @@ Changes after `0.7.0`.
 - A session-based client that holds 4 cancelled calls without a reply has its session closed, which frees them.
   A cancelled call now stays charged to the 16-call budget until the backend answers or the session ends.
 - The Overview note about the network now covers LAN and tunnel addresses.
+- README documents Tailscale and WireGuard listeners, and links to this file for release notes.
+- Updated the Biome development dependency to 2.6.7.
 - Configurations that contain `allowedPeers` are rejected by earlier releases, because their schemas are strict.
 
 ### Fixed
@@ -123,7 +132,7 @@ Changes after `0.7.0`.
 ## [0.3.2] - 2026-11-08
 
 The first release that can update itself.
-Version `0.3.1` has no tag, and its packaged update acceptance run did not pass; see [RELEASING.md](RELEASING.md).
+Version `0.3.1` has no tag, and its packaged update acceptance run did not pass.
 
 ### Added
 
