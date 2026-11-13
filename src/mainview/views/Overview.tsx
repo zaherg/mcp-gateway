@@ -208,11 +208,13 @@ export const Overview = ({
       <section className="network-note">
         <ShieldCheck size={22} />
         <div>
-          <h3>A local network, not a private tunnel.</h3>
+          <h3>Plain HTTP, protected only by your network.</h3>
           <p>
-            LAN traffic uses unencrypted HTTP, including the bearer token and tool data. Use only a
-            trusted network. Keep this computer awake for access; DHCP can change its address.
-            Remote-device reachability is not verified here.
+            The gateway sends the bearer token and tool data unencrypted. On a LAN, use only a
+            trusted network. On a Tailscale or WireGuard address, the tunnel carries the traffic,
+            and every device in the allowed client ranges can reach these endpoints. Keep this
+            computer awake for access; DHCP can change a LAN address. Remote-device reachability is
+            not verified here.
           </p>
         </div>
       </section>

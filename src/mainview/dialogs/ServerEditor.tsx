@@ -70,6 +70,9 @@ const isFormConfig = (value: unknown): value is GatewayConfig => {
     typeof gateway.token === 'string' &&
     (gateway.autoStart === undefined || typeof gateway.autoStart === 'boolean') &&
     (gateway.launchAtLogin === undefined || typeof gateway.launchAtLogin === 'boolean') &&
+    (gateway.allowedPeers === undefined ||
+      (Array.isArray(gateway.allowedPeers) &&
+        gateway.allowedPeers.every((item) => typeof item === 'string'))) &&
     Object.values(mcpServers).every(isBackend)
   );
 };

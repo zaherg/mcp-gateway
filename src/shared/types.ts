@@ -38,6 +38,8 @@ export interface GatewayConfig {
     token: string;
     autoStart?: boolean;
     launchAtLogin?: boolean;
+    /** IPv4 client ranges that replace the selected interface's netmask check. */
+    allowedPeers?: string[];
   };
   mcpServers: Record<string, StdioServerConfig | HttpServerConfig>;
 }
@@ -62,11 +64,14 @@ export interface HttpServerConfig extends ServerBase {
   headers?: Record<string, string>;
 }
 
+/** How clients reach a listener address. `tailscale` is a tunnel interface in 100.64.0.0/10. */
+export type NetworkKind = 'loopback' | 'lan' | 'tailscale' | 'tunnel';
+
 export interface InterfaceChoice {
   name: string;
   address: string;
   netmask: string;
-  loopback: boolean;
+  kind: NetworkKind;
 }
 
 export type GatewayErrorCode =
@@ -108,6 +113,8 @@ export interface GatewaySnapshot {
   running: boolean;
   address: string | null;
   interfaces: InterfaceChoice[];
+  /** Kind of the saved listener address; null while it is not assigned or the configuration is invalid. */
+  network: NetworkKind | null;
   servers: ServerSnapshot[];
   configError: VisibleError | null;
   operationalError: VisibleError | null;

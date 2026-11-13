@@ -99,6 +99,7 @@ export class McpGatewayController implements GatewayController {
   snapshot(): GatewaySnapshot {
     const config = this.config;
     const running = this.ingress?.running ?? false;
+    const interfaces = interfaceChoices();
     return {
       configPath: this.store.path,
       configFormat: this.store.format,
@@ -106,7 +107,8 @@ export class McpGatewayController implements GatewayController {
       revision: this.document.revision,
       running,
       address: running ? (this.ingress?.address ?? null) : null,
-      interfaces: interfaceChoices(),
+      interfaces,
+      network: interfaces.find((entry) => entry.address === config?.gateway.host)?.kind ?? null,
       servers:
         (running ? this.ingress?.snapshots() : undefined) ??
         Object.entries(config?.mcpServers ?? {}).map(([name, server]) => ({
@@ -363,7 +365,9 @@ export class McpGatewayController implements GatewayController {
       if (
         previous?.gateway.host !== next.gateway.host ||
         previous?.gateway.port !== next.gateway.port ||
-        previous?.gateway.token !== next.gateway.token
+        previous?.gateway.token !== next.gateway.token ||
+        // Narrowed ranges must also end streams and sessions opened by excluded peers.
+        JSON.stringify(previous?.gateway.allowedPeers) !== JSON.stringify(next.gateway.allowedPeers)
       ) {
         await this.stopOwned();
         await this.startOwned(control);

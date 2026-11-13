@@ -299,7 +299,9 @@ export class GatewayIngress {
       this.lostInterface();
       return;
     }
-    if (!peerAllowed(req.socket.remoteAddress ?? '', this.selected)) {
+    if (
+      !peerAllowed(req.socket.remoteAddress ?? '', this.selected, this.config.gateway.allowedPeers)
+    ) {
       reject(403);
       return;
     }

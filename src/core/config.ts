@@ -8,6 +8,7 @@ import { getNodeValue, type JSONPath } from 'jsonc-parser';
 import * as z from 'zod/v4';
 
 import { failure, GatewayError } from '@mcp-gateway/core/errors';
+import { ipv4Number, isLocalRange, isSharedIpv4, parseIpv4Range } from '@mcp-gateway/core/ipv4';
 import { anyNumber, ownRecord } from '@mcp-gateway/core/schema';
 import {
   CONFIG_TOO_LARGE,
@@ -55,6 +56,7 @@ const ConfigSchema = z.strictObject({
     token: z.string(),
     autoStart: z.boolean().exactOptional(),
     launchAtLogin: z.boolean().exactOptional(),
+    allowedPeers: z.array(z.string()).exactOptional(),
   }),
   mcpServers: ownRecord(z.union([StdioSchema, HttpSchema])),
 });
@@ -185,6 +187,7 @@ const structureIssue = (value: unknown): StructureIssue | null => {
 };
 
 const TOKEN_RULE = '32 to 512 printable non-space ASCII characters.';
+const MAX_ALLOWED_PEERS = 16;
 const assertToken = (token: string, message: string): void => {
   if (!/^[\x21-\x7e]{32,512}$/.test(token)) invalid(message);
 };
@@ -219,6 +222,24 @@ const validateConfig = (value: unknown, environment: NodeJS.ProcessEnv): Gateway
   if (!Number.isInteger(gateway.port) || gateway.port < 1 || gateway.port > 65535)
     invalid('The listener port must be an integer from 1 to 65535.');
   assertToken(gateway.token, `The bearer token must contain ${TOKEN_RULE}`);
+  // A shared-space interface netmask is a tunnel's single address or a carrier's
+  // other customers, so it never selects clients; the ranges must be explicit.
+  const host = ipv4Number(gateway.host);
+  if (gateway.allowedPeers === undefined && host !== null && isSharedIpv4(host))
+    invalid('A 100.64.0.0/10 address needs allowedPeers, such as ["100.64.0.0/10"].');
+  if (gateway.allowedPeers !== undefined) {
+    if (gateway.allowedPeers.length < 1 || gateway.allowedPeers.length > MAX_ALLOWED_PEERS)
+      invalid(`allowedPeers must list 1 to ${MAX_ALLOWED_PEERS} address ranges.`);
+    if (gateway.host.startsWith('127.'))
+      invalid('allowedPeers cannot be used with a loopback address.');
+    for (const text of gateway.allowedPeers) {
+      const range = parseIpv4Range(text);
+      if (!range || !isLocalRange(range))
+        invalid(
+          'Each allowedPeers entry must be a private or 100.64.0.0/10 IPv4 range, such as 100.64.0.0/10.',
+        );
+    }
+  }
   if (Object.keys(config.mcpServers).length > 64) invalid('At most 64 servers are supported.');
   for (const [name, server] of Object.entries(config.mcpServers)) {
     if (!SAFE_NAME.test(name)) invalid('Server names must be safe URL path segments.');

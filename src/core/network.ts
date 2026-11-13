@@ -4,7 +4,14 @@ import { networkInterfaces } from 'node:os';
 
 import { isHttpServer } from '@mcp-gateway/core/config';
 import { failure, GatewayError } from '@mcp-gateway/core/errors';
-import type { GatewayConfig, InterfaceChoice } from '@mcp-gateway/shared/types';
+import {
+  inIpv4Range,
+  ipv4Number,
+  isLocalIpv4,
+  isSharedIpv4,
+  parseIpv4Range,
+} from '@mcp-gateway/core/ipv4';
+import type { GatewayConfig, InterfaceChoice, NetworkKind } from '@mcp-gateway/shared/types';
 
 const ipv4 = (value: string): string | null => {
   if (isIP(value) === 4) return value;
@@ -21,25 +28,31 @@ const ipv4 = (value: string): string | null => {
 const numeric = (address: string) =>
   address.split('.').reduce((n, part) => (n * 256 + Number(part)) >>> 0, 0);
 const isLoopback = (address: string) => ipv4(address)?.startsWith('127.') === true;
-const isPrivate = (address: string): boolean => {
-  const ip = ipv4(address);
-  if (!ip) return false;
-  const [a, b] = ip.split('.').map(Number);
-  return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+const isLocal = (address: string): boolean => {
+  const value = ipv4Number(ipv4(address) ?? '');
+  return value !== null && isLocalIpv4(value);
+};
+
+// macOS names Tailscale, WireGuard and other VPN tunnel interfaces utunN. Tailscale
+// assigns shared-space addresses; other tunnels in that space are reported as Tailscale too.
+const networkKind = (name: string, address: string): NetworkKind => {
+  if (isLoopback(address)) return 'loopback';
+  if (!name.startsWith('utun')) return 'lan';
+  const value = ipv4Number(address);
+  return value !== null && isSharedIpv4(value) ? 'tailscale' : 'tunnel';
 };
 
 export const interfaceChoices = (): InterfaceChoice[] => {
   return Object.entries(networkInterfaces()).flatMap(([name, entries]) =>
     (entries ?? [])
       .filter(
-        (entry) =>
-          entry.family === 'IPv4' && (isPrivate(entry.address) || isLoopback(entry.address)),
+        (entry) => entry.family === 'IPv4' && (isLocal(entry.address) || isLoopback(entry.address)),
       )
       .map((entry) => ({
         name,
         address: entry.address,
         netmask: entry.netmask,
-        loopback: isLoopback(entry.address),
+        kind: networkKind(name, entry.address),
       })),
   );
 };
@@ -47,16 +60,34 @@ export const interfaceChoices = (): InterfaceChoice[] => {
 export const selectInterface = (host: string): InterfaceChoice => {
   const choice = interfaceChoices().find((entry) => entry.address === host);
   if (!choice)
-    throw failure('NetworkPolicy', 'Select a currently assigned private IPv4 or loopback address.');
+    throw failure(
+      'NetworkPolicy',
+      'Select a currently assigned private, 100.64.0.0/10 or loopback IPv4 address.',
+    );
   return choice;
 };
 
-export const peerAllowed = (peer: string, selected: InterfaceChoice): boolean => {
+export const peerAllowed = (
+  peer: string,
+  selected: InterfaceChoice,
+  allowedPeers?: readonly string[],
+): boolean => {
   const ip = ipv4(peer);
   if (!ip) return false;
   if (isLoopback(ip)) return true;
   // A broad local netmask must not admit public addresses or other networks.
-  if (selected.loopback || !isPrivate(ip)) return false;
+  if (selected.kind === 'loopback' || !isLocal(ip)) return false;
+  // Configured ranges replace the interface netmask, which a tunnel may report as /32.
+  if (allowedPeers) {
+    const value = ipv4Number(ip);
+    return (
+      value !== null &&
+      allowedPeers.some((text) => {
+        const range = parseIpv4Range(text);
+        return range !== null && inIpv4Range(value, range);
+      })
+    );
+  }
   const mask = numeric(selected.netmask);
   return (numeric(ip) & mask) === (numeric(selected.address) & mask);
 };

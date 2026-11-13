@@ -1,4 +1,5 @@
 import { Eye, EyeOff, Settings2 } from 'lucide-react';
+import { useState } from 'react';
 
 import { Badge } from '@mcp-gateway/mainview/components/mac/badge';
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
@@ -6,7 +7,23 @@ import { Input } from '@mcp-gateway/mainview/components/mac/input';
 import { Field, Toggle } from '@mcp-gateway/mainview/components/ui';
 import { generateToken } from '@mcp-gateway/mainview/lib/token';
 import type { AppSnapshot } from '@mcp-gateway/shared/rpc';
-import type { GatewayConfig, GatewaySnapshot } from '@mcp-gateway/shared/types';
+import type { GatewayConfig, GatewaySnapshot, NetworkKind } from '@mcp-gateway/shared/types';
+
+const NETWORK_LABELS: Record<NetworkKind, string> = {
+  loopback: 'this computer only',
+  lan: 'LAN',
+  tailscale: 'Tailscale',
+  tunnel: 'VPN tunnel',
+};
+
+/** Comma-separated field text as a list of ranges; an empty field removes the property. */
+const peerList = (text: string): string[] | undefined => {
+  const entries = text
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  return entries.length > 0 ? entries : undefined;
+};
 
 interface Settings {
   config: GatewayConfig | null;
@@ -32,6 +49,14 @@ export const Settings = ({
   const setGateway = (patch: Partial<GatewayConfig['gateway']>) => {
     if (config) update({ ...config, gateway: { ...config.gateway, ...patch } });
   };
+  const [peersText, setPeersText] = useState('');
+  const peers = config?.gateway.allowedPeers;
+  // The typed text stays while it still means the configured list, so separators are not
+  // rewritten under the caret; a discard, reset or raw edit shows the configured list.
+  const peersShown =
+    JSON.stringify(peerList(peersText)) === JSON.stringify(peers)
+      ? peersText
+      : (peers?.join(', ') ?? '');
   return (
     <section className="panel settings-panel">
       <div className="section-heading">
@@ -46,7 +71,7 @@ export const Settings = ({
           <div className="form-grid">
             <Field
               label="Interface / address"
-              help="Select a local IPv4 interface. Loopback is available only on this computer."
+              help="Select a LAN, Tailscale or WireGuard IPv4 address. Loopback is available only on this computer."
             >
               <Input
                 aria-label="Interface / address"
@@ -58,8 +83,7 @@ export const Settings = ({
               <datalist id="interfaces">
                 {gateway?.interfaces.map((item) => (
                   <option key={`${item.name}-${item.address}`} value={item.address}>
-                    {item.name}
-                    {item.loopback ? ' · this computer only' : ' · LAN'}
+                    {item.name} · {NETWORK_LABELS[item.kind]}
                   </option>
                 ))}
               </datalist>
@@ -78,6 +102,23 @@ export const Settings = ({
               />
             </Field>
           </div>
+          <Field
+            label="Allowed client ranges"
+            help="Comma-separated IPv4 ranges, such as 100.64.0.0/10 for Tailscale. Required for a 100.64.0.0/10 address. When set, only these clients are accepted, instead of the selected interface's subnet."
+          >
+            <Input
+              autoComplete="off"
+              readOnly={configurationLocked}
+              spellCheck={false}
+              placeholder="Selected interface's subnet"
+              value={peersShown}
+              // Native validation checks every entry on save.
+              onChange={(event) => {
+                setPeersText(event.target.value);
+                setGateway({ allowedPeers: peerList(event.target.value) });
+              }}
+            />
+          </Field>
           <Field
             label="Global bearer token"
             help="Used only by servers without their own key. 32–512 non-space ASCII characters. Client configurations include this secret."

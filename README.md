@@ -21,6 +21,7 @@ Copy the app to a writable location, then open it.
 
 Each server gets its own endpoint, such as `http://192.168.1.120:8765/mcp/bear`.
 Use `127.0.0.1` to allow only this Mac.
+The sidebar notice names the network of the saved address: this Mac only, LAN, Tailscale or a VPN tunnel.
 `Cmd+W` closes the window and leaves the gateway running.
 `Cmd+Q` stops the gateway and the backends it started, then quits.
 The Bear preset allows every Bear tool, including tools that change notes.
@@ -51,6 +52,18 @@ A session ends after 60 seconds without an open request or event stream, and the
 Session requests count toward the same 16-call limit and 4 MiB message limit as stateless requests.
 App versions up to `0.3.2` reject a configuration that contains `legacyProtocol`.
 
+## Tailscale and WireGuard
+
+The gateway can listen on a Tailscale or WireGuard address, so clients reach it through an encrypted tunnel.
+In **Settings**, select the tunnel address, such as this Mac's `100.x.y.z` Tailscale address.
+Then set **Allowed client ranges**, which is `allowedPeers` in `mcp.json`.
+A `100.64.0.0/10` address cannot be saved without it, and a WireGuard interface may report a single-address netmask that admits no other device.
+For Tailscale, use `100.64.0.0/10`; for WireGuard, use the tunnel's network, such as `10.8.0.0/24`.
+Clients must put the tunnel address in the endpoint URL.
+A MagicDNS or other host name gets 403, because the `Host` header must match the configured address.
+Every device in a listed range can reach the endpoints, including devices shared into your tailnet, so keep each key private.
+Tailscale access controls or WireGuard `AllowedIPs` decide which devices can connect at all.
+
 ## Automatic updates
 
 The app updates itself with the built-in Electrobun updater.
@@ -80,7 +93,8 @@ Updating from one published GitHub release to the next has not been tested yet.
 
 - Use the gateway only on a trusted LAN, because HTTP traffic is not encrypted.
   Separate server keys separate access, not traffic.
-- Every request needs the key for its endpoint and must come from the selected subnet or from loopback.
+- Every request needs the key for its endpoint and must come from this Mac or from an allowed client.
+  Allowed clients are those in the selected interface's subnet, or only those in the `allowedPeers` ranges when that list is set.
 - A server with its own key accepts only that key; the global key does not open that endpoint.
 - The `Host` header must match the configured address and port.
 - If a request has an `Origin` header, it must match the gateway's origin.
@@ -95,11 +109,18 @@ At most 16 backend calls can run at once across all servers; extra calls get a c
 At most 16 backend processes or upstream connections are open at once across all servers.
 A slot is freed when the matching reply arrives or the backend is confirmed closed.
 Cancelling a request may not free its slot right away.
+A session-based client that holds 4 cancelled calls without a reply has its session closed, which frees them.
 Request bodies, backend stdout lines and backend HTTP response bodies are limited to 4 MiB each.
 Successful SSE streams have a 4 MiB limit per event instead.
 Requests time out after 30 seconds.
 
 ## Configuration
+
+The app edits this configuration for you, and **Authoritative configuration**, below the Overview and Settings tabs, opens the whole file in an editor.
+The editor colors JSON and JSONC, numbers lines and matches brackets.
+It checks the draft as you type and shows the problem with its line and column.
+**Format** tidies the draft, **Reset** returns to the saved file after a confirmation, and **Save** stays off while the draft has a problem.
+Saving always validates the file again.
 
 Use one configuration file, either `mcp.json` or `mcp.jsonc`.
 It lives in `~/Library/Application Support/MCP Gateway/`, and this location cannot be changed.
@@ -129,8 +150,15 @@ Then delete the lock and try again.
 }
 ```
 
-`gateway` accepts `host`, `port`, `token`, `autoStart` and `launchAtLogin`.
-The host must be a private IPv4 or loopback address that this Mac has right now.
+`gateway` accepts `host`, `port`, `token`, `autoStart`, `launchAtLogin` and `allowedPeers`.
+The host must be a private IPv4, `100.64.0.0/10` or loopback address that this Mac has right now.
+`allowedPeers` is an optional list of 1 to 16 IPv4 ranges, such as `["100.64.0.0/10"]`.
+When it is set, the gateway accepts clients in those ranges and on this Mac, instead of clients in the selected interface's subnet.
+Each range must lie inside `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` or `100.64.0.0/10`, with no host bits set.
+`allowedPeers` cannot be combined with a loopback host.
+A `100.64.0.0/10` host requires `allowedPeers`, because Tailscale and carrier networks share that range and its interface netmask does not identify your devices.
+Changing `allowedPeers` restarts the listener and closes open requests and sessions.
+Earlier releases reject a configuration that contains `allowedPeers`, because their schemas are strict.
 The port must be between 1 and 65535.
 `${NAME}` reads a variable from the app's environment, not from your shell startup files.
 A missing variable is an error.
@@ -148,6 +176,10 @@ Earlier releases reject a configuration that contains a server `token`, because 
 Server names are 1 to 64 ASCII letters, digits, `_` or `-`, and start with a letter or digit.
 Tokens are 32 to 512 printable ASCII characters without spaces.
 The configuration can be at most 1 MiB and hold at most 64 servers.
+
+## Release notes
+
+See [CHANGELOG.md](CHANGELOG.md) for what changed in each release.
 
 ## Build from source
 

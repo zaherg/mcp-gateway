@@ -4,6 +4,23 @@ import { type ReactNode, useLayoutEffect, useRef } from 'react';
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
 import type { Editor } from '@mcp-gateway/mainview/dialogs/ServerEditor';
 import type { AppSnapshot, QuitStatus, SocialLinkTarget } from '@mcp-gateway/shared/rpc';
+import type { NetworkKind } from '@mcp-gateway/shared/types';
+
+// Sidebar notice for the saved listener address: [title, detail].
+const NETWORK_NOTICES: Record<NetworkKind, readonly [string, string]> = {
+  loopback: ['This Mac only', 'Authenticated, local HTTP.'],
+  lan: ['LAN-only access', 'Authenticated, unencrypted HTTP.'],
+  tailscale: ['Tailscale access', 'Authenticated, tunneled HTTP.'],
+  tunnel: ['VPN tunnel access', 'Authenticated, tunneled HTTP.'],
+};
+const NO_NETWORK_NOTICE = ['Network unavailable', 'The address is not assigned.'] as const;
+const LOADING_NOTICE = ['Network', 'Loading configuration.'] as const;
+
+const networkNotice = (snapshot: AppSnapshot | null): readonly [string, string] => {
+  if (!snapshot) return LOADING_NOTICE;
+  const network = snapshot.gateway.network;
+  return network ? NETWORK_NOTICES[network] : NO_NETWORK_NOTICE;
+};
 
 export type Tab = 'overview' | 'settings' | 'logs';
 
@@ -39,6 +56,7 @@ export const Shell = ({
   dialogs,
 }: Shell) => {
   const mainRef = useRef<HTMLElement>(null);
+  const [networkTitle, networkDetail] = networkNotice(snapshot);
 
   // The shared scroller keeps its offset across tabs; reset it on navigation only.
   // biome-ignore lint/correctness/useExhaustiveDependencies: `tab` is the trigger, not a value the effect reads.
@@ -83,7 +101,8 @@ export const Shell = ({
         <div className="sidebar-footer">
           <ShieldCheck size={18} />
           <span>
-            LAN-only access<small>Authenticated, unencrypted HTTP.</small>
+            {networkTitle}
+            <small>{networkDetail}</small>
           </span>
         </div>
         {/* Brand marks: Simple Icons (https://simpleicons.org), CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). */}
