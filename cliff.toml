@@ -30,6 +30,7 @@ filter_unconventional = false
 protect_breaking_commits = true
 # The first matching rule wins.
 commit_parsers = [
+    { message = "(?i)^wip\\b", skip = true },
     { message = "^security", group = "Security" },
     { message = "^feat", group = "Added" },
     { message = "^deprecat", group = "Deprecated" },

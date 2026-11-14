@@ -97,9 +97,10 @@ Write commit subjects as `<type>: <summary>`, because the subject becomes the ch
 | `deprecat` | Deprecated |
 | `remove`, `revert` | Removed |
 | `security` | Security |
-| `docs`, `doc`, `chore`, `test`, `ci`, `build`, `style`, merge commits | Left out |
+| `wip`, `docs`, `doc`, `chore`, `test`, `ci`, `build`, `style`, merge commits | Left out |
 | Anything else | Changed |
 
+Subjects beginning with the word `wip` are left out regardless of case, including bare `wip` and scoped forms such as `wip(ui):`.
 The first match wins, so a `fix:` for a vulnerability lands under Fixed.
 A `!` after the type, such as `feat!:`, marks the line as **Breaking:**.
 
