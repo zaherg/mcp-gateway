@@ -140,7 +140,7 @@ export const ServerEditor = ({
         <p className="dialog-intro">
           {configurationLocked
             ? 'Quit cleanup has started. This draft is read-only; select and copy fields before closing.'
-            : 'Connect a local tool or an existing MCP endpoint.'}
+            : 'Connect a local tool or an existing MCP endpoint'}
         </p>
         {editorError && <Alert onDismiss={onDismissError}>{editorError}</Alert>}
         <Field
@@ -206,14 +206,15 @@ export const ServerEditor = ({
                 />
               </Field>
             </div>
-            <Button
-              variant="link"
-              className="h-auto px-0"
-              disabled={configurationLocked}
-              onClick={() => onChange(bearPreset(editor.name))}
-            >
-              Fill macOS Bear preset (all accessible notes & tools)
-            </Button>
+            <div className="preset-row">
+              <Button
+                disabled={configurationLocked}
+                onClick={() => onChange(bearPreset(editor.name))}
+              >
+                Fill Bear preset
+              </Button>
+              <small>Optional, macOS only. Bear exposes all accessible notes and tools.</small>
+            </div>
           </>
         ) : (
           <>

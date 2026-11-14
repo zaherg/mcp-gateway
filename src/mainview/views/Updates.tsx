@@ -1,4 +1,4 @@
-import { ArrowDownToLine, CircleHelp } from 'lucide-react';
+import { CircleHelp } from 'lucide-react';
 import type { RefObject } from 'react';
 
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
@@ -7,10 +7,10 @@ import type { Editor } from '@mcp-gateway/mainview/dialogs/ServerEditor';
 import type { AppClient, AppResult, QuitStatus, UpdateStatus } from '@mcp-gateway/shared/rpc';
 
 const updateCheckedLabel = (value: string | null): string => {
-  if (!value) return 'Not checked yet.';
+  if (!value) return 'Not checked yet';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return 'Last check time is unavailable.';
-  return `Last checked ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`;
+  return `Last checked ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
 };
 
 const updateStatusText = (update: UpdateStatus): string => {
@@ -81,17 +81,12 @@ export const Updates = ({
           <h2 id="updates-heading" ref={updatesHeading} tabIndex={-1}>
             Updates
           </h2>
-          <p>
-            Signed macOS arm64 stable builds only. Downloads come from the fixed GitHub release
-            source.
-          </p>
+          <p>Signed macOS arm64 builds only, from the fixed GitHub release feed</p>
         </div>
-        <ArrowDownToLine size={20} />
       </div>
       {!updateState.supported ? (
         <p className="update-unavailable">
-          Automatic updates are unsupported in this build. This build does not contact the update
-          feed.
+          This build does not support updates and never contacts the update feed.
         </p>
       ) : (
         <>
@@ -125,7 +120,7 @@ export const Updates = ({
           <p className="fine-print">{updateCheckedLabel(updateState.checkedAt)}</p>
           <Toggle
             label="Automatically check and download updates"
-            description="Check after launch, then daily. A higher stable version downloads automatically; installation always requires explicit confirmation."
+            description="After launch, then daily. A newer stable version downloads on its own; installing waits for your confirmation."
             disabled={updateBusy || configurationLocked || updateState.phase === 'restarting'}
             checked={updateState.automaticUpdates}
             onChange={(value) =>
@@ -176,10 +171,8 @@ export const Updates = ({
             </p>
           )}
           <p className="fine-print">
-            <CircleHelp size={14} /> A downloaded update is not installed until the app restarts and
-            the expected version starts. Active MCP connections are interrupted during restart. Logs
-            and unsaved drafts remain available only in the current process; they are not retained
-            after a successful restart.
+            <CircleHelp size={16} /> A download installs only when the app restarts. Restarting
+            interrupts active MCP connections and does not carry logs or unsaved drafts over.
           </p>
         </>
       )}

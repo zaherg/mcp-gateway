@@ -9,6 +9,7 @@ import { json } from '@codemirror/legacy-modes/mode/javascript';
 import { Compartment, EditorState, type Extension } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers } from '@codemirror/view';
 import { classHighlighter, tags } from '@lezer/highlight';
+import { ChevronRight } from 'lucide-react';
 import type { RefObject } from 'react';
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 
@@ -458,6 +459,7 @@ export const RawConfig = ({
           <strong>Authoritative configuration</strong>
           <small>{filename} · advanced editing</small>
         </span>
+        <ChevronRight size={16} className="raw-chevron" aria-hidden="true" />
       </button>
       {rawOpen && (
         <div className="raw-body">

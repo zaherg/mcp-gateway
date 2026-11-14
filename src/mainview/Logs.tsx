@@ -141,21 +141,21 @@ export const Logs = ({ client, servers }: Logs) => {
       <div className="section-heading">
         <div>
           <h2>Backend logs</h2>
-          <p>Full local diagnostics, retained only while the app runs.</p>
+          <p>Full local diagnostics, kept only while the app runs</p>
         </div>
         <Button onClick={() => void clear()} disabled={clearing}>
           Clear logs
         </Button>
       </div>
       <p className="log-warning">
-        <strong>Sensitive data:</strong> Logs can contain credentials, note content, and other
-        private values. Nothing here is automatically saved, mirrored to the console, or served over
-        the LAN.
+        <strong>Sensitive data.</strong> Logs can contain credentials, note content and other
+        private values. They stay in memory and are never written to disk, mirrored to the console
+        or served over the LAN.
       </p>
       <p className="fine-print">
-        Rolling retention: {LOG_LIMITS.entries} entries / {LOG_LIMITS.bytes / 1024 / 1024} MiB
-        total; {LOG_LIMITS.entryBytes / 1024} KiB per entry. Older entries are removed and oversized
-        entries are marked truncated. Clearing logs does not clear actual failures.
+        Keeps the newest {LOG_LIMITS.entries} entries, {LOG_LIMITS.bytes / 1024 / 1024} MiB in
+        total, {LOG_LIMITS.entryBytes / 1024} KiB per entry. Oversized entries are marked truncated.
+        Clearing the log does not clear the failure behind it.
       </p>
       <div className="log-filters">
         <Label className={FILTER}>

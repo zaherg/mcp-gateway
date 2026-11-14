@@ -1,4 +1,4 @@
-import { Network, ShieldCheck } from 'lucide-react';
+import { Network } from 'lucide-react';
 import { type ReactNode, useLayoutEffect, useRef } from 'react';
 
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
@@ -8,13 +8,13 @@ import type { NetworkKind } from '@mcp-gateway/shared/types';
 
 // Sidebar notice for the saved listener address: [title, detail].
 const NETWORK_NOTICES: Record<NetworkKind, readonly [string, string]> = {
-  loopback: ['This Mac only', 'Authenticated, local HTTP.'],
-  lan: ['LAN-only access', 'Authenticated, unencrypted HTTP.'],
-  tailscale: ['Tailscale access', 'Authenticated, tunneled HTTP.'],
-  tunnel: ['VPN tunnel access', 'Authenticated, tunneled HTTP.'],
+  loopback: ['This Mac only', 'Authenticated, local only'],
+  lan: ['LAN-only access', 'Authenticated, not encrypted'],
+  tailscale: ['Tailscale access', 'Authenticated, tunneled'],
+  tunnel: ['VPN tunnel access', 'Authenticated, tunneled'],
 };
-const NO_NETWORK_NOTICE = ['Network unavailable', 'The address is not assigned.'] as const;
-const LOADING_NOTICE = ['Network', 'Loading configuration.'] as const;
+const NO_NETWORK_NOTICE = ['Network unavailable', 'Address is not assigned'] as const;
+const LOADING_NOTICE = ['Network', 'Reading configuration'] as const;
 
 const networkNotice = (snapshot: AppSnapshot | null): readonly [string, string] => {
   if (!snapshot) return LOADING_NOTICE;
@@ -69,11 +69,9 @@ export const Shell = ({
       <aside className="sidebar electrobun-webkit-app-region-drag">
         <div className="brand">
           <span className="brand-mark">
-            <Network size={22} />
+            <Network size={18} />
           </span>
-          <span>
-            MCP Gateway<small>LOCAL CONNECTIONS</small>
-          </span>
+          <span>MCP Gateway</span>
         </div>
         <nav aria-label="Main navigation" className="electrobun-webkit-app-region-no-drag">
           <button
@@ -99,7 +97,7 @@ export const Shell = ({
           </button>
         </nav>
         <div className="sidebar-footer">
-          <ShieldCheck size={18} />
+          <span className={`led ${snapshot?.gateway.running ? 'on' : ''}`} />
           <span>
             {networkTitle}
             <small>{networkDetail}</small>
@@ -145,20 +143,19 @@ export const Shell = ({
       <main ref={mainRef} data-tab={tab}>
         <header className="page-heading">
           <div>
-            <p className="eyebrow">YOUR LOCAL MCP WORKSPACE</p>
             <h1>
               {tab === 'overview'
                 ? 'MCP server connections'
                 : tab === 'logs'
-                  ? 'Local diagnostic logs'
+                  ? 'Diagnostic logs'
                   : 'Gateway settings'}
             </h1>
             <p className="subtitle">
               {tab === 'overview'
-                ? 'Manage separate MCP endpoints for authorized clients on your LAN.'
+                ? 'One keyed endpoint per server, for devices on your network'
                 : tab === 'logs'
-                  ? 'Inspect backend output locally. Diagnostic values are not redacted.'
-                  : 'Control the listener, startup behavior, and authoritative configuration.'}
+                  ? 'Backend output, not redacted, kept in memory until you quit'
+                  : 'Listener, startup and the configuration file'}
             </p>
           </div>
           <div>

@@ -1,6 +1,5 @@
 import { CircleHelp, Code2, Copy, RefreshCw, Server, ShieldCheck, Trash2 } from 'lucide-react';
 
-import { Badge } from '@mcp-gateway/mainview/components/mac/badge';
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
 import { bearPreset, type Editor, emptyEditor } from '@mcp-gateway/mainview/dialogs/ServerEditor';
 import type { AppClient, AppResult, AppSnapshot } from '@mcp-gateway/shared/rpc';
@@ -12,11 +11,12 @@ type Run = (
   saved?: boolean,
 ) => Promise<boolean>;
 
+// The LED carries the state; the word names it.
 const SERVER_STATUS = {
-  mounted: { label: 'Mounted', variant: 'accent' },
-  error: { label: 'Error', variant: 'danger' },
-  disabled: { label: 'Disabled', variant: 'secondary' },
-  stopped: { label: 'Stopped', variant: 'secondary' },
+  mounted: { label: 'Mounted', led: 'on' },
+  error: { label: 'Error', led: 'error' },
+  disabled: { label: 'Disabled', led: '' },
+  stopped: { label: 'Stopped', led: '' },
 } as const;
 
 interface Overview {
@@ -46,18 +46,17 @@ export const Overview = ({
   setEditor,
   setEditorError,
 }: Overview) => {
+  const serverCount = config ? Object.keys(config.mcpServers).length : 0;
   return (
     <>
       <section aria-labelledby="servers-heading">
         <div className="section-heading">
           <div>
             <h2 id="servers-heading">
-              Your servers{' '}
-              <Badge variant="secondary">
-                {config ? Object.keys(config.mcpServers).length : '?'}
-              </Badge>
+              Servers
+              {config && <span className="count">{serverCount}</span>}
             </h2>
-            <p>A separate endpoint for each configured MCP server.</p>
+            <p>A separate endpoint for each configured MCP server</p>
           </div>
           <Button
             variant="default"
@@ -72,18 +71,21 @@ export const Overview = ({
             Object.entries(config.mcpServers).map(([name, server]) => {
               const live = gateway?.servers.find((item) => item.name === name);
               const status = live?.status ?? (server.disabled ? 'disabled' : 'stopped');
-              const badge = SERVER_STATUS[status];
+              const state = SERVER_STATUS[status];
               const http = 'url' in server;
               return (
-                <article className="server-card panel" key={name}>
+                <article
+                  className={status === 'error' ? 'server-card panel error' : 'server-card panel'}
+                  key={name}
+                >
                   <div className="card-heading">
+                    <span className={`led ${state.led}`} />
                     <h3>{name}</h3>
-                    <Badge variant={badge.variant}>{badge.label}</Badge>
+                    <span className="card-meta">
+                      {http ? 'Streamable HTTP' : 'Local stdio'} ·{' '}
+                      <span className="card-status">{state.label}</span>
+                    </span>
                   </div>
-                  <p className="transport">{http ? 'STREAMABLE HTTP' : 'LOCAL STDIO'}</p>
-                  <p className="server-detail mono" title={http ? server.url : server.command}>
-                    {http ? server.url : server.command}
-                  </p>
                   <div className="endpoint">
                     <span className="mono">/mcp/{name}</span>
                     <Button
@@ -101,11 +103,14 @@ export const Overview = ({
                       <Copy />
                     </Button>
                   </div>
+                  <p className="server-detail mono" title={http ? server.url : server.command}>
+                    {http ? server.url : server.command}
+                  </p>
                   {live?.error && <p className="inline-error">{live.error.message}</p>}
                   <div className="card-actions">
                     <Button
                       variant="ghost"
-                      size="sm"
+                      size="lg"
                       disabled={configurationLocked}
                       onClick={() => openEditor(name)}
                     >
@@ -113,7 +118,7 @@ export const Overview = ({
                     </Button>
                     <Button
                       variant="ghost"
-                      size="sm"
+                      size="lg"
                       disabled={configurationLocked || dirty || !!gateway?.configError}
                       onClick={() => void toggleEndpoint(name, !server.disabled)}
                     >
@@ -159,17 +164,16 @@ export const Overview = ({
                       )
                     }
                   >
+                    <Copy size={14} />
                     Copy client configuration
                   </button>
                 </article>
               );
             })}
         </div>
-        {config && Object.keys(config.mcpServers).length === 0 && (
+        {config && serverCount === 0 && (
           <div className="empty-state panel">
-            <div className="empty-icon">
-              <Server size={29} />
-            </div>
+            <Server size={24} />
             <h3>No servers configured</h3>
             <p>
               Add a local command or an existing HTTP server.
@@ -191,7 +195,7 @@ export const Overview = ({
         )}
         {!config && (
           <div className="panel empty-state">
-            <Code2 size={26} />
+            <Code2 size={24} />
             <h3>Repair configuration to continue</h3>
             <p>
               No defaults have been substituted. Your original configuration text remains available
@@ -200,21 +204,23 @@ export const Overview = ({
           </div>
         )}
         <p className="fine-print">
-          <CircleHelp size={14} /> Mounted means the route is available, not that a backend
-          handshake has succeeded. Endpoint Start/Stop saves its enabled state; starting the gateway
-          is separate.
+          <CircleHelp size={16} /> Mounted means the endpoint is served, not that the backend
+          handshake succeeded. Start and Stop save the server's enabled state; the gateway starts
+          separately.
         </p>
       </section>
       <section className="network-note">
-        <ShieldCheck size={22} />
+        <ShieldCheck size={16} />
         <div>
-          <h3>Plain HTTP, protected only by your network.</h3>
+          <h3>HTTP is not encrypted</h3>
           <p>
-            The gateway sends the bearer token and tool data unencrypted. On a LAN, use only a
-            trusted network. On a Tailscale or WireGuard address, the tunnel carries the traffic,
-            and every device in the allowed client ranges can reach these endpoints. Keep this
-            computer awake for access; DHCP can change a LAN address. Remote-device reachability is
-            not verified here.
+            The gateway sends the bearer token and tool data in plain HTTP. On a LAN, use only a
+            network you trust. On a Tailscale or WireGuard address, the tunnel carries the traffic,
+            and every device in the allowed client ranges can reach these endpoints.
+          </p>
+          <p>
+            Keep this computer awake for access: sleep takes the endpoints offline, and DHCP can
+            change a LAN address. Reachability from other devices is not verified here.
           </p>
         </div>
       </section>

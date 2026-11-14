@@ -1,6 +1,3 @@
-import { Network } from 'lucide-react';
-
-import { Badge } from '@mcp-gateway/mainview/components/mac/badge';
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
 import type { AppClient, AppResult, AppSnapshot } from '@mcp-gateway/shared/rpc';
 import type { GatewaySnapshot } from '@mcp-gateway/shared/types';
@@ -19,7 +16,7 @@ interface GatewayStrip {
   client: AppClient;
 }
 
-// Shown on every tab, above the draft bar.
+// Shown on every tab, above the draft bar. The address is the one figure the page leads with.
 export const GatewayStrip = ({
   gateway,
   dirty,
@@ -27,34 +24,31 @@ export const GatewayStrip = ({
   run,
   client,
 }: GatewayStrip) => {
+  const running = gateway?.running ?? false;
   return (
-    <section className="gateway-strip panel" aria-label="Gateway status">
-      <div className={`status-orb ${gateway?.running ? 'online' : ''}`}>
-        <Network size={25} />
-      </div>
-      <div className="gateway-summary">
-        <div className="inline">
-          <h2>Gateway</h2>
-          <Badge variant={gateway?.running ? 'accent' : 'secondary'}>
-            {gateway?.running ? 'Running' : 'Stopped'}
-          </Badge>
+    <section className="listener panel" aria-label="Gateway status">
+      <div className="listener-body">
+        <div className="listener-label">
+          <span className={`led ${running ? 'on' : ''}`} />
+          <strong>Gateway</strong>
+          <span>{running ? 'Running' : 'Stopped'}</span>
         </div>
-        <p className="mono">
-          {gateway?.running ? (gateway.address ?? 'Listener starting') : 'No active listener'}
+        <p className={running ? 'listener-address' : 'listener-address idle'}>
+          {running ? (gateway?.address ?? 'Starting listener') : 'No active listener'}
         </p>
       </div>
-      <div className="gateway-actions">
+      <div className="listener-actions">
         <Button
-          variant={gateway?.running ? 'secondary' : 'default'}
-          disabled={configurationLocked || (!gateway?.running && (dirty || !!gateway?.configError))}
+          variant={running ? 'secondary' : 'default'}
+          disabled={configurationLocked || (!running && (dirty || !!gateway?.configError))}
           onClick={() =>
             void run(
-              () => (gateway?.running ? client.stop() : client.start()),
-              gateway?.running ? 'Gateway stopped.' : 'Gateway started.',
+              () => (running ? client.stop() : client.start()),
+              running ? 'Gateway stopped.' : 'Gateway started.',
             )
           }
         >
-          {gateway?.running ? 'Stop gateway' : 'Start gateway'}
+          {running ? 'Stop gateway' : 'Start gateway'}
         </Button>
       </div>
     </section>

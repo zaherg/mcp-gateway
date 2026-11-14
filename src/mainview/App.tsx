@@ -521,10 +521,10 @@ export const App = ({ client }: App) => {
           </fieldset>
           <footer className="page-footer">
             <span>
-              <span className={`dot ${gateway?.running ? 'online' : ''}`} />
+              <span className={`led ${gateway?.running ? 'on' : ''}`} />
               {gateway?.running ? 'Listener active' : 'No active listener'}
             </span>
-            <span>Closing this window keeps the app running. Use Quit to stop it.</span>
+            <span>Closing this window keeps the gateway running. Use Quit to stop it.</span>
           </footer>
         </>
       )}

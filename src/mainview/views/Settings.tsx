@@ -1,7 +1,6 @@
-import { Eye, EyeOff, Settings2 } from 'lucide-react';
+import { Eye, EyeOff } from 'lucide-react';
 import { useState } from 'react';
 
-import { Badge } from '@mcp-gateway/mainview/components/mac/badge';
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
 import { Input } from '@mcp-gateway/mainview/components/mac/input';
 import { Field, Toggle } from '@mcp-gateway/mainview/components/ui';
@@ -62,16 +61,15 @@ export const Settings = ({
       <div className="section-heading">
         <div>
           <h2>Gateway preferences</h2>
-          <p>Changes take effect after saving the full {filename}.</p>
+          <p>Changes take effect after saving the full {filename}</p>
         </div>
-        <Settings2 size={20} />
       </div>
       {config ? (
         <>
           <div className="form-grid">
             <Field
               label="Interface / address"
-              help="Select a LAN, Tailscale or WireGuard IPv4 address. Loopback is available only on this computer."
+              help="A LAN, Tailscale or WireGuard address on this Mac. Loopback is local only."
             >
               <Input
                 aria-label="Interface / address"
@@ -104,7 +102,7 @@ export const Settings = ({
           </div>
           <Field
             label="Allowed client ranges"
-            help="Comma-separated IPv4 ranges, such as 100.64.0.0/10 for Tailscale. Required for a 100.64.0.0/10 address. When set, only these clients are accepted, instead of the selected interface's subnet."
+            help="IPv4 ranges, comma separated, such as 100.64.0.0/10. Required for a 100.64.0.0/10 address. When set, only these clients are accepted."
           >
             <Input
               autoComplete="off"
@@ -121,7 +119,7 @@ export const Settings = ({
           </Field>
           <Field
             label="Global bearer token"
-            help="Used only by servers without their own key. 32–512 non-space ASCII characters. Client configurations include this secret."
+            help="Used by servers without their own key. 32 to 512 printable ASCII characters without spaces. Client configurations include this secret."
           >
             <div className="token-input">
               <Input
@@ -152,23 +150,26 @@ export const Settings = ({
           <div className="startup-settings">
             <Toggle
               label="Launch app at login"
-              description="While this is on, MCP Gateway opens in the background at every launch; open the window from the menu-bar icon."
+              description="Opens in the background at launch. Open the window from the menu bar."
               disabled={configurationLocked}
               checked={config.gateway.launchAtLogin ?? false}
               onChange={(value) => setGateway({ launchAtLogin: value })}
             />
             <div className="login-status">
-              <Badge variant="secondary">
-                Actual login registration:{' '}
+              <p className="login-state">
+                <span
+                  className={`led ${snapshot.login.supported && snapshot.login.enabled ? 'on' : ''}`}
+                />
+                macOS login item:{' '}
                 {snapshot.login.supported
                   ? snapshot.login.enabled
                     ? 'Enabled'
                     : 'Disabled'
                   : 'Unsupported'}
-              </Badge>
+              </p>
               {snapshot.login.error && <p className="inline-error">{snapshot.login.error}</p>}
               <small>
-                Desired setting above is separate from the actual macOS registration shown here.
+                The setting above is a request; this is the registration macOS has in effect.
               </small>
             </div>
             <Toggle
