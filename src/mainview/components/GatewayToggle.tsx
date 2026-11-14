@@ -43,12 +43,7 @@ export const GatewayToggle = ({
         <Button
           variant={running ? 'secondary' : 'default'}
           disabled={configurationLocked || blocked}
-          onClick={() =>
-            void run(
-              () => (running ? client.stop() : client.start()),
-              running ? 'Gateway stopped.' : 'Gateway started.',
-            )
-          }
+          onClick={() => void run(() => (running ? client.stop() : client.start()), '')}
         >
           {running ? 'Stop gateway' : 'Start gateway'}
         </Button>
