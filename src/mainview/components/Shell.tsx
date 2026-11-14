@@ -1,5 +1,5 @@
 import { Network } from 'lucide-react';
-import { type ReactNode, useLayoutEffect, useRef } from 'react';
+import { type ReactNode, type RefObject, useLayoutEffect, useRef } from 'react';
 
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
 import type { Editor } from '@mcp-gateway/mainview/dialogs/ServerEditor';
@@ -34,6 +34,7 @@ interface Shell {
   deleting: string | null;
   quitStatus: QuitStatus;
   interactiveQuit: { current: () => boolean };
+  fallbackFocus: RefObject<HTMLButtonElement | null>;
   onOpenSocialLink: (target: SocialLinkTarget) => void;
   socialLinksDisabled: boolean;
   gatewayToggle: ReactNode;
@@ -51,6 +52,7 @@ export const Shell = ({
   deleting,
   quitStatus,
   interactiveQuit,
+  fallbackFocus,
   onOpenSocialLink,
   socialLinksDisabled,
   gatewayToggle,
@@ -79,6 +81,7 @@ export const Shell = ({
           <button
             type="button"
             className={tab === 'overview' ? 'nav-item active' : 'nav-item'}
+            ref={fallbackFocus}
             onClick={() => setTab('overview')}
           >
             Overview

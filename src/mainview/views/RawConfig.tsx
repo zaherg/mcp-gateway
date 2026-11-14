@@ -10,7 +10,6 @@ import { Compartment, EditorState, type Extension } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers } from '@codemirror/view';
 import { classHighlighter, tags } from '@lezer/highlight';
 import { ChevronRight } from 'lucide-react';
-import type { RefObject } from 'react';
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
@@ -148,7 +147,6 @@ interface RawConfig {
   discard: () => Promise<void>;
   rawOpen: boolean;
   setRawOpen: (open: boolean) => void;
-  fallbackFocus: RefObject<HTMLButtonElement | null>;
   setNotice: (notice: string) => void;
 }
 
@@ -167,7 +165,6 @@ export const RawConfig = ({
   discard,
   rawOpen,
   setRawOpen,
-  fallbackFocus,
   setNotice,
 }: RawConfig) => {
   const previewOpen = visible && rawOpen;
@@ -443,7 +440,7 @@ export const RawConfig = ({
     setNotice('');
   };
 
-  // Keep the single-flight guard alive while Logs hides the editor.
+  // Keep the single-flight guard alive while another tab hides the editor.
   if (!visible) return null;
 
   return (
@@ -451,7 +448,6 @@ export const RawConfig = ({
       <button
         type="button"
         className="raw-heading"
-        ref={fallbackFocus}
         aria-expanded={rawOpen}
         onClick={() => setRawOpen(!rawOpen)}
       >

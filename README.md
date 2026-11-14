@@ -121,7 +121,7 @@ Requests time out after 30 seconds.
 
 ## Configuration
 
-The app edits this configuration for you, and **Authoritative configuration**, below the Overview and Settings tabs, opens the whole file in an editor.
+The app edits this configuration for you, and **Authoritative configuration** in **Settings** opens the whole file in an editor.
 The editor colors JSON and JSONC, numbers lines and matches brackets.
 It checks the draft as you type and shows the problem with its line and column.
 **Format** tidies the draft, **Reset** returns to the saved file after a confirmation, and **Save** stays off while the draft has a problem.

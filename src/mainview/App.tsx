@@ -356,6 +356,7 @@ export const App = ({ client }: App) => {
       interactiveQuit={interactiveQuit}
       onOpenSocialLink={openSocialLink}
       socialLinksDisabled={busy || configurationLocked}
+      fallbackFocus={fallbackFocus}
       gatewayToggle={
         snapshot &&
         doc && (
@@ -505,7 +506,7 @@ export const App = ({ client }: App) => {
             )}
             <RawConfig
               client={client}
-              visible={tab !== 'logs'}
+              visible={tab === 'settings'}
               doc={doc}
               setDoc={setDoc}
               configurationLocked={configurationLocked || busy}
@@ -518,7 +519,6 @@ export const App = ({ client }: App) => {
               discard={discard}
               rawOpen={rawOpen}
               setRawOpen={setRawOpen}
-              fallbackFocus={fallbackFocus}
               setNotice={setNotice}
             />
           </fieldset>

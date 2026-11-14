@@ -198,8 +198,8 @@ export const Overview = ({
             <Code2 size={24} />
             <h3>Repair configuration to continue</h3>
             <p>
-              No defaults have been substituted. Your original configuration text remains available
-              below.
+              No defaults have been substituted. Open Authoritative configuration in Settings to
+              repair your original configuration.
             </p>
           </div>
         )}
