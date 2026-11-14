@@ -13,8 +13,8 @@ export const StaleConfigBanner = ({ stale, revision, dismissed, dismiss }: Stale
   return (
     <Alert kind="warning" role="status" onDismiss={() => dismiss(`stale-${revision}`)}>
       The configuration changed outside this window. Your draft and its original revision are
-      preserved. A stale save will be refused. Copy your changes from the configuration editor
-      before reloading.
+      preserved. A stale save will be refused. Copy your changes from Authoritative configuration in
+      Settings before reloading.
     </Alert>
   );
 };

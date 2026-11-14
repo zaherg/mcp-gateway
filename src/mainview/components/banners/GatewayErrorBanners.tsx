@@ -31,8 +31,8 @@ export const GatewayErrorBanners = ({
         !reportedLocally(configError.occurrenceId) &&
         !dismissed.has(`config-${configError.occurrenceId}`) && (
           <Alert onDismiss={() => dismiss(`config-${configError.occurrenceId}`)}>
-            Configuration unavailable: {configError.message} Open the configuration editor to repair
-            the authoritative file.{' '}
+            Configuration unavailable: {configError.message} Open Authoritative configuration in
+            Settings to repair the file.{' '}
             {hasRetainedConfig && !configurationLocked
               ? 'The retained draft remains editable. Review external changes before saving.'
               : 'Structured editing is paused.'}
