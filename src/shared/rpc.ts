@@ -48,7 +48,7 @@ export interface AppSnapshot {
   whatsNew: string | null;
 }
 
-export const SOCIAL_LINK_TARGETS = ['github', 'x'] as const;
+export const SOCIAL_LINK_TARGETS = ['docs', 'github', 'x'] as const;
 
 export type SocialLinkTarget = (typeof SOCIAL_LINK_TARGETS)[number];
 

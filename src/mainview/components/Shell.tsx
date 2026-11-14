@@ -1,4 +1,4 @@
-import { Network } from 'lucide-react';
+import { BookOpen, Network } from 'lucide-react';
 import { type ReactNode, type RefObject, useLayoutEffect, useRef } from 'react';
 
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
@@ -116,6 +116,18 @@ export const Shell = ({
           role="group"
           aria-label="Project links"
         >
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xl"
+            className="sidebar-social-link"
+            aria-label="Open user guide in default browser"
+            title="Open user guide in default browser"
+            disabled={socialLinksDisabled}
+            onClick={() => onOpenSocialLink('docs')}
+          >
+            <BookOpen aria-hidden="true" focusable="false" />
+          </Button>
           <Button
             type="button"
             variant="ghost"

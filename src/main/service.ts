@@ -62,8 +62,9 @@ const serverName = (input: unknown): string => {
   return name;
 };
 
-// The two fixed destinations are native-owned so the renderer cannot pass a URL.
+// The fixed destinations are native-owned so the renderer cannot pass a URL.
 const SOCIAL_LINKS: Record<SocialLinkTarget, string> = {
+  docs: 'https://github.com/zaherg/mcp-gateway/blob/main/docs/README.md',
   github: 'https://github.com/zaherg/mcp-gateway',
   x: 'https://x.com/zaherg',
 };

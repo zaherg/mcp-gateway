@@ -362,6 +362,11 @@ const dispatch = async (event: unknown): Promise<void> => {
     case 'close-window':
       window?.close();
       break;
+    case 'open-docs': {
+      const result = await service.handlers.openSocialLink({ target: 'docs' });
+      if (!result.ok) controller.recordLocalError(`${result.error.code}: ${result.error.message}`);
+      break;
+    }
     case 'quit':
       Utils.quit();
       break;
@@ -410,6 +415,10 @@ ApplicationMenu.setApplicationMenu([
         },
       ]
     : []),
+  {
+    label: 'Help',
+    submenu: [{ label: 'MCP Gateway User Guide', action: 'open-docs' }],
+  },
 ]);
 ApplicationMenu.on('application-menu-clicked', (event) => {
   void dispatch(event).catch(() => console.error('Menu action failed.'));

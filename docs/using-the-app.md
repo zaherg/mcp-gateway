@@ -5,6 +5,7 @@
 The sidebar has three tabs: **Overview**, **Settings** and **Logs**.
 The page heading shows the tab title and, once the configuration has loaded, **Start gateway** or **Stop gateway**, then **Quit MCP Gateway**.
 The sidebar footer names the network of the saved address.
+The icons below it open this guide, the GitHub repository and @zaherg on X in your default browser.
 The page footer reads "Listener active" or "No active listener".
 
 ## Drafts and saving
@@ -25,6 +26,7 @@ The update item reads "Check for Updates…", "Update available: <version>" or "
 
 The app menu has **Settings…** (`Cmd+,`), **Check for Updates…** when the app supports updates, and **Quit MCP Gateway** (`Cmd+Q`).
 The File menu has **Close Window** (`Cmd+W`).
+The Help menu has **MCP Gateway User Guide**, which opens this guide in your default browser.
 
 ## Closing and quitting
 
