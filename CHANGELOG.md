@@ -7,45 +7,34 @@ Release dates are the dates each section was stamped for release.
 
 ## [Unreleased]
 
-Changes after `0.7.0`.
+Changes after `0.8.0`.
+
+## [0.8.0] - 2026-11-14
 
 ### Added
 
-- Tailscale and WireGuard listeners.
-  Addresses in `100.64.0.0/10` can be selected as the listener address.
-- `gateway.allowedPeers`, an optional list of 1 to 16 IPv4 ranges that replaces the interface-subnet check for clients when it is set.
-  Each range must lie inside `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` or `100.64.0.0/10`, with no host bits set.
-  The list cannot be combined with a loopback address.
-  A change to the list restarts the listener, which closes open requests and sessions.
-- **Allowed client ranges** field in Settings.
-- The sidebar notice names the network of the saved address: this Mac only, LAN, Tailscale or VPN tunnel.
-  The address list in Settings uses the same names.
-- `bun run release:all`, which builds, verifies, writes `SHA256SUMS` and publishes the GitHub release with `gh`, then reads the release and the update feed back.
-  It refuses a dirty working tree, an unpushed commit, an existing tag or an existing release, and publishes nothing when a step fails.
-  This affects maintainers only.
-- `bun run changelog`, which generates this file's Unreleased section from the commits with git-cliff, and `bun run changelog --tag <version>`, which moves it under a dated version heading.
-  The GitHub release notes are now that version's section.
-  This affects maintainers only.
+- Show release notes once after an update
+- Add a full-width draggable title bar with a bottom border
+- Add Help menu and sidebar documentation link
 
 ### Changed
 
-- A `100.64.0.0/10` address must be saved together with `allowedPeers`.
-  That range is shared with carrier networks, and a tunnel's interface netmask does not identify your devices.
-- A session-based client that holds 4 cancelled calls without a reply has its session closed, which frees them.
-  A cancelled call now stays charged to the 16-call budget until the backend answers or the session ends.
-- The Overview note about the network now covers LAN and tunnel addresses.
-- README documents Tailscale and WireGuard listeners, and links to this file for release notes.
-- Updated the Biome development dependency to 2.6.7.
-- Configurations that contain `allowedPeers` are rejected by earlier releases, because their schemas are strict.
+- Update libraries
+- Dispatch only to endpoints built from the current configuration
+- Keep redirect protection until mount cleanup settles
+- Keep legacy cancelled calls charged until they end
+- Publish the test feed from a private artifact copy
+- Update format
+- Allow Tailscale and WireGuard listeners with explicit client ranges
+- Redesign the window around the listener address and a status LED
+- Move the gateway start/stop button into the page heading
+- Keep the authoritative configuration editor in Settings only
+- Version bump
 
 ### Fixed
 
-- A request is dispatched only to an endpoint built from the current configuration.
-  Before, an endpoint kept mounted during a restart could answer for a server whose key or backend had just changed.
-- Redirect protection for upstream requests stays on until a mount's cleanup has finished, so the session `DELETE` sent during cleanup cannot follow a redirect with configured headers.
-- JSON property names get their own color in the configuration editor.
-- The test-feed publisher copies the verified artifacts to a private directory first, so later changes to the source directory cannot alter what is uploaded.
-  This affects maintainers only.
+- Point configuration banners to the editor in Settings
+- Remove gateway start and stop success notices
 
 ## [0.7.0] - 2026-11-11
 
@@ -168,7 +157,8 @@ The first release.
 - In-memory logs, launch at login, and an optional gateway start when the app opens.
 - Experimental Linux and Windows packaging.
 
-[Unreleased]: https://github.com/zaherg/mcp-gateway/compare/0.7.0...HEAD
+[Unreleased]: https://github.com/zaherg/mcp-gateway/compare/0.8.0...HEAD
+[0.8.0]: https://github.com/zaherg/mcp-gateway/compare/0.7.0...0.8.0
 [0.7.0]: https://github.com/zaherg/mcp-gateway/compare/0.6.1...0.7.0
 [0.6.1]: https://github.com/zaherg/mcp-gateway/compare/0.6.0...0.6.1
 [0.6.0]: https://github.com/zaherg/mcp-gateway/compare/0.5.2...0.6.0
