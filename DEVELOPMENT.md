@@ -31,7 +31,7 @@ bun run build
 
 Unless `MCP_GATEWAY_BUILD_ROOT` is set, the development app is `build/dev-macos-arm64/MCP Gateway-dev.app`.
 `bun run build` and release builds load the bundled files and need no development server.
-A running app can read or change its configuration; see [Configuration](README.md#configuration).
+A running app can read or change its configuration; see [Configuration](docs/configuration.md).
 
 The build prepares the toolchain by itself.
 It writes generated files under `.cache/`, `.hutch/`, `.hutch-home/`, `dist/`, `assets/` and the chosen build folder.

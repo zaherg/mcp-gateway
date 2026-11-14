@@ -12,10 +12,12 @@ The app runs on Apple silicon Macs (arm64) with macOS 14.0 or newer.
 It has not been tested on macOS 14.0 itself.
 Linux and Windows are not supported.
 
-## Use
+## Install
 
 Download the signed, notarized DMG from [GitHub Releases](https://github.com/zaherg/mcp-gateway/releases).
 Copy the app to a writable location, then open it.
+
+## Quick start
 
 1. Add a server: a local executable or an HTTP(S) MCP server.
 2. In Settings, choose a private IPv4 address, a port and a global bearer token.
@@ -23,164 +25,20 @@ Copy the app to a writable location, then open it.
 4. Start the gateway, then copy its configuration into your MCP client.
 
 Each server gets its own endpoint, such as `http://192.168.1.120:8765/mcp/bear`.
-Use `127.0.0.1` to allow only this Mac.
-The sidebar notice names the network of the saved address: this Mac only, LAN, Tailscale or a VPN tunnel.
-`Cmd+W` closes the window and leaves the gateway running.
-`Cmd+Q` stops the gateway and the backends it started, then quits.
-The Bear preset allows every Bear tool, including tools that change notes.
+[Getting started](docs/getting-started.md) walks through the same steps with the fields to fill in.
 
-Logs are kept in memory only and are cleared when you quit.
-**Launch app at login** is off by default.
-When it is on, the app starts in the background, and you open the window from the menu-bar icon.
+## Documentation
 
-## Compatibility
+- [Getting started](docs/getting-started.md): install the app and serve your first server.
+- [Using the app](docs/using-the-app.md): the window, drafts, the menu-bar icon, logs and updates.
+- [Servers](docs/servers.md): local commands, HTTP servers, keys and the Bear preset.
+- [Connect a client](docs/clients.md): setup for six clients, and protocol compatibility.
+- [Remote access](docs/remote-access.md): LAN, Tailscale and WireGuard addresses.
+- [Security](docs/security.md): what the gateway enforces and how to share safely.
+- [Configuration](docs/configuration.md): the configuration file and environment variables.
+- [Troubleshooting](docs/troubleshooting.md): status codes and common failures.
 
-By default, an endpoint speaks only MCP protocol `2026-07-28`.
-This version is stateless: every message is a `POST` to `/mcp/<name>`.
-`GET` and `DELETE` return 405.
-Requests that use an older protocol version or the `initialize` handshake return 400.
-The gateway bridges stdio servers itself.
-An HTTP server must answer `server/discover` with `2026-07-28`, or the gateway refuses it.
-
-Some clients do not support `2026-07-28` yet.
-For them, turn on **Allow session-based clients** for a server, or set `"legacyProtocol": true` on it in `mcp.json`.
-That endpoint then also accepts session-based MCP (`2025-11-25` and earlier, whichever the client asks for).
-This includes the official `StreamableHTTPClientTransport`, with `initialize`, the `Mcp-Session-Id` header, the `GET` event stream and `DELETE`.
-On such an endpoint, an HTTP server is reached with sessions too, so it does not need to speak `2026-07-28`.
-Each session runs its own backend process or upstream session.
-At most 8 sessions can be open across all endpoints.
-Each session also takes one of the 16 shared backend slots.
-A new session beyond either limit gets 429.
-A session ends after 60 seconds without an open request or event stream, and the client must initialize again.
-Session requests count toward the same 16-call limit and 4 MiB message limit as stateless requests.
-App versions up to `0.3.2` reject a configuration that contains `legacyProtocol`.
-
-## Tailscale and WireGuard
-
-The gateway can listen on a Tailscale or WireGuard address, so clients reach it through an encrypted tunnel.
-In **Settings**, select the tunnel address, such as this Mac's `100.x.y.z` Tailscale address.
-Then set **Allowed client ranges**, which is `allowedPeers` in `mcp.json`.
-A `100.64.0.0/10` address cannot be saved without it, and a WireGuard interface may report a single-address netmask that admits no other device.
-For Tailscale, use `100.64.0.0/10`; for WireGuard, use the tunnel's network, such as `10.8.0.0/24`.
-Clients must put the tunnel address in the endpoint URL.
-A MagicDNS or other host name gets 403, because the `Host` header must match the configured address.
-Every device in a listed range can reach the endpoints, including devices shared into your tailnet, so keep each key private.
-Tailscale access controls or WireGuard `AllowedIPs` decide which devices can connect at all.
-
-## Automatic updates
-
-The app updates itself with the built-in Electrobun updater.
-It reads the fixed feed `https://github.com/zaherg/mcp-gateway/releases/latest/download`.
-Only signed stable builds can update.
-Development builds report that updates are unsupported and never contact the feed.
-
-Automatic checks and downloads are on by default.
-The first check runs about 10 seconds after launch, then once a day.
-A failed check or download is retried about once an hour.
-You can turn this off in **Settings → Updates**.
-The app stores that choice in `updates.json`, next to `mcp.json`.
-The app offers a release only when its version is higher than the installed one.
-
-You can also check by hand in **Settings → Updates**.
-An update installs only when you choose **Restart to Update** and confirm.
-This stops the gateway and discards unsaved configuration changes.
-If the handoff fails, the gateway stays stopped; quit and reopen the app to try again.
-The first window you open after an update shows that version's release notes, taken from `CHANGELOG.md`.
-They appear once; closing them records the version in `seen-version.json`, next to `mcp.json`.
-
-`0.3.2` is the first release that can update itself.
-`0.3.0` cannot update, so install the `0.3.2` or later DMG by hand.
-A local rehearsal updated a signed test build that was not notarized.
-It used a loopback feed that redirected to an HTTPS test feed; see [UPDATE-TESTING.md](UPDATE-TESTING.md).
-Updating from one published GitHub release to the next has not been tested yet.
-
-## Security
-
-- Use the gateway only on a trusted LAN, because HTTP traffic is not encrypted.
-  Separate server keys separate access, not traffic.
-- Every request needs the key for its endpoint and must come from this Mac or from an allowed client.
-  Allowed clients are those in the selected interface's subnet, or only those in the `allowedPeers` ranges when that list is set.
-- A server with its own key accepts only that key; the global key does not open that endpoint.
-- The `Host` header must match the configured address and port.
-- If a request has an `Origin` header, it must match the gateway's origin.
-- Upstream credentials in `headers` are configured separately from `token`, and client tokens are never passed on.
-- An upstream with configured headers must answer at its own address.
-  The gateway does not follow its redirects, so those headers cannot reach another host.
-- `mcp.json` can start processes, so protect it.
-- Logs and copied client configurations can expose tokens and note content.
-
-The gateway accepts at most 32 HTTP requests at once and 240 new requests per minute.
-At most 16 backend calls can run at once across all servers; extra calls get a capacity error.
-At most 16 backend processes or upstream connections are open at once across all servers.
-A slot is freed when the matching reply arrives or the backend is confirmed closed.
-Cancelling a request may not free its slot right away.
-A session-based client that holds 4 cancelled calls without a reply has its session closed, which frees them.
-Request bodies, backend stdout lines and backend HTTP response bodies are limited to 4 MiB each.
-Successful SSE streams have a 4 MiB limit per event instead.
-Requests time out after 30 seconds.
-
-## Configuration
-
-The app edits this configuration for you, and **Authoritative configuration** in **Settings** opens the whole file in an editor.
-The editor colors JSON and JSONC, numbers lines and matches brackets.
-It checks the draft as you type and shows the problem with its line and column.
-**Format** tidies the draft, **Reset** returns to the saved file after a confirmation, and **Save** stays off while the draft has a problem.
-Saving always validates the file again.
-
-Use one configuration file, either `mcp.json` or `mcp.jsonc`.
-It lives in `~/Library/Application Support/MCP Gateway/`, and this location cannot be changed.
-The same folder holds `updates.json`, the automatic-update setting, and `seen-version.json`, the version whose release notes you closed.
-`mcp.json` must be strict JSON.
-`mcp.jsonc` also allows comments and trailing commas.
-If both files exist, the app reports an error.
-To rename the file, quit the app first, then reopen it.
-The files must be readable only by you, and symlinks are refused.
-
-After a crash, an `mcp.json.lock` file may remain next to the configuration.
-Quit every running copy of the app and make sure nothing else is writing the file.
-Then delete the lock and try again.
-
-```json
-{
-  "gateway": { "host": "127.0.0.1", "port": 8765, "token": "${MCP_GATEWAY_TOKEN}" },
-  "mcpServers": {
-    "bear": { "command": "/Applications/Bear.app/Contents/MacOS/bearcli", "args": ["mcp-server"] },
-    "shared": { "command": "/path/to/mcp-server", "token": "${SHARED_MCP_TOKEN}" },
-    "remote": {
-      "url": "https://mcp.example.com/mcp",
-      "headers": { "Authorization": "Bearer ${UPSTREAM_TOKEN}" },
-      "disabled": true
-    }
-  }
-}
-```
-
-`gateway` accepts `host`, `port`, `token`, `autoStart`, `launchAtLogin` and `allowedPeers`.
-The host must be a private IPv4, `100.64.0.0/10` or loopback address that this Mac has right now.
-`allowedPeers` is an optional list of 1 to 16 IPv4 ranges, such as `["100.64.0.0/10"]`.
-When it is set, the gateway accepts clients in those ranges and on this Mac, instead of clients in the selected interface's subnet.
-Each range must lie inside `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` or `100.64.0.0/10`, with no host bits set.
-`allowedPeers` cannot be combined with a loopback host.
-A `100.64.0.0/10` host requires `allowedPeers`, because Tailscale and carrier networks share that range and its interface netmask does not identify your devices.
-Changing `allowedPeers` restarts the listener and closes open requests and sessions.
-Earlier releases reject a configuration that contains `allowedPeers`, because their schemas are strict.
-The port must be between 1 and 65535.
-`${NAME}` reads a variable from the app's environment, not from your shell startup files.
-A missing variable is an error.
-Stdio servers accept `command`, `args`, `env`, `cwd`, `token` and `disabled`.
-HTTP servers accept `url`, `headers`, `token` and `disabled`.
-`token` is optional on a server.
-Without it, the server accepts the global `gateway.token`.
-With it, the server accepts only its own key, and the global key gets 401 on that endpoint.
-A server `token` accepts the same `${NAME}` references as the global key.
-An invalid explicit value is an error, never a silent fallback to the global key.
-Bearer strings carry no identity, so give each shared server its own generated key.
-Changing a server key refuses the old key at once and closes that endpoint's open requests and sessions before its replacement serves the new key, while other endpoints keep running.
-Changing `gateway.token` still restarts the listener, but servers with their own key keep accepting only their own key.
-Earlier releases reject a configuration that contains a server `token`, because their schemas are strict.
-Server names are 1 to 64 ASCII letters, digits, `_` or `-`, and start with a letter or digit.
-Tokens are 32 to 512 printable ASCII characters without spaces.
-The configuration can be at most 1 MiB and hold at most 64 servers.
+The [user guide index](docs/README.md) lists the same pages in reading order.
 
 ## Release notes
 
