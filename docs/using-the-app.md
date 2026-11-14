@@ -43,7 +43,7 @@ The setting above that line is a request; the status line is what macOS reports.
 
 ## Logs
 
-The **Logs** tab shows backend output, not redacted, kept in memory until you quit.
+The **Logs** tab shows backend output that is not redacted.
 Logs are kept in memory only and are cleared when you quit.
 Filter by level, by server or by search text, and empty the list with **Clear logs**.
 Clearing the list does not fix the failure behind an entry.

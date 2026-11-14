@@ -2,15 +2,18 @@
 
 ## Before you start
 
-- An Apple silicon Mac with macOS 14 or newer. See [Platform support](../README.md#platform-support).
-- A trusted network. HTTP traffic is not encrypted, so keep the gateway off the public internet.
+- An Apple silicon Mac with macOS 14 or newer.
+  See [Platform support](../README.md#platform-support).
+- A trusted network.
+  HTTP traffic is not encrypted, so keep the gateway off the public internet.
 - The MCP client you want to connect, such as Cursor or Claude Code.
 
 ## Install and open the app
 
 1. Download the signed, notarized DMG from [GitHub Releases](https://github.com/zaherg/mcp-gateway/releases).
 2. Copy the app to `/Applications` or another writable folder.
-3. Open the app. A window appears, and an icon appears in the menu bar.
+3. Open the app.
+   A window opens, and an icon appears in the menu bar.
 
 The window has three tabs: **Overview**, **Settings** and **Logs**.
 After you close the window, choose **Open settings…** from the menu-bar icon, or open the app again, to bring it back.
@@ -18,9 +21,11 @@ After you close the window, choose **Open settings…** from the menu-bar icon, 
 ## Add your first server
 
 1. Open **Overview** and choose **Add server**.
-2. Enter a **Server name**. It becomes part of the endpoint, as in `/mcp/server-name`.
+2. Enter a **Server name**.
+   It becomes part of the endpoint, as in `/mcp/server-name`.
 3. Choose **Local command (stdio)** for an executable on this Mac, or **Streamable HTTP** for an existing MCP endpoint.
-4. Fill in the fields for that transport. The command is an executable path only; arguments go in **Arguments (JSON array)**.
+4. Fill in the fields for that transport.
+   The command is an executable path only; arguments go in **Arguments (JSON array)**.
 5. Choose **Apply to draft**.
 
 Applying changes only the draft.

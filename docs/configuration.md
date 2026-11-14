@@ -3,8 +3,8 @@
 ## Editing in the app
 
 Most settings are structured fields: the gateway preferences in **Settings**, and the server dialog on **Overview**.
-The whole file is editable in **Authoritative configuration**, a collapsible section in **Settings**.
-Use it to review or edit the whole file at once, or to repair a file that structured editing cannot load; it shows the file path and the full contents, including credentials.
+**Authoritative configuration**, a collapsible section in **Settings**, shows the file path and the full contents, including credentials.
+Use it to edit the file directly, or to repair one that structured editing cannot load.
 The section below describes the file itself.
 
 ## The configuration file

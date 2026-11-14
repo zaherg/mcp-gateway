@@ -22,13 +22,15 @@ The server dialog asks for:
 
 The app reads `${NAME}` from its own environment, not from your shell startup files.
 A Mac app opened from Finder or at login receives launchd's environment, which does not include the `PATH` additions or exported variables from your shell.
-A bare command name such as `npx`, or a program installed by Homebrew, is then not found, and the start fails with `ENOENT`.
+A bare command name such as `npx`, or a program installed by Homebrew, is then not found, and the server fails to start with `ENOENT`.
 A script started by its full path can still fail when the program it runs, such as `node` for `npx`, is not on that `PATH`.
 
 Two fixes work together:
 
-1. Put an absolute path in **Command**. Run `which <command>` in Terminal and use the path it prints.
-2. If the command starts another program, extend `PATH` in **Environment (JSON object)**, for example `"PATH": "/opt/homebrew/bin:${PATH}"`. Adjust the folder to the one `which` printed.
+1. Put an absolute path in **Command**.
+   Run `which <command>` in Terminal and use the path it prints.
+2. If the command starts another program, extend `PATH` in **Environment (JSON object)**, for example `"PATH": "/opt/homebrew/bin:${PATH}"`.
+   Adjust the folder to the one `which` printed.
 
 This describes standard macOS behavior for apps opened from Finder or at login; if your setup differs, check **Logs** for the exact error.
 

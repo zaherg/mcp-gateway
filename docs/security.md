@@ -2,11 +2,15 @@
 
 ## Before you share an endpoint
 
-- Use the gateway only on a trusted network. HTTP traffic is not encrypted.
+- Use the gateway only on a trusted network.
+  HTTP traffic is not encrypted.
 - Give each client or device its own key, so one lost key can be revoked alone.
-- Keep the copied configuration private. It contains the key in plain text.
-- Treat the logs as sensitive. They can contain credentials and note content.
-- To reach the gateway from outside your LAN, use a Tailscale or WireGuard address. Clients must come from this Mac, the selected interface's subnet, or **Allowed client ranges**, and those ranges accept only private and `100.64.0.0/10` addresses, so the gateway does not serve the public internet.
+- Keep the copied configuration private.
+  It contains the key in plain text.
+- Treat the logs as sensitive.
+  They can contain credentials and note content.
+- To reach the gateway from outside your LAN, use a Tailscale or WireGuard address.
+  Clients must come from this Mac, the selected interface's subnet, or **Allowed client ranges**, and those ranges accept only private and `100.64.0.0/10` addresses, so the gateway does not serve the public internet.
 
 ## Rotating a key
 

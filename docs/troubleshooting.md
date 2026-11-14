@@ -4,8 +4,10 @@
 
 Check these first:
 
-- The gateway is running. The footer reads "Listener active".
-- The Mac is awake. Sleep takes the endpoints offline.
+- The gateway is running.
+  The footer reads "Listener active".
+- The Mac is awake.
+  Sleep takes the endpoints offline.
 - The endpoint uses the address currently saved in **Settings**, not an older DHCP address.
 - The port in the client matches the port in **Settings**.
 
@@ -63,9 +65,12 @@ Open **Authoritative configuration** in **Settings** to repair the file; your or
 
 Common causes:
 
-- Both `mcp.json` and `mcp.jsonc` exist. The app accepts one file only.
+- Both `mcp.json` and `mcp.jsonc` exist.
+  The app accepts one file only.
 - The file is not readable only by you, or it is a symlink.
-- A leftover `mcp.json.lock` from a crash. Quit every running copy, make sure nothing else is writing the file, then delete the lock.
-- A field this version does not accept. Earlier releases reject `allowedPeers` and a server `token`.
+- A leftover `mcp.json.lock` from a crash.
+  Quit every running copy, make sure nothing else is writing the file, then delete the lock.
+- A field this version does not accept.
+  Earlier releases reject `allowedPeers` and a server `token`.
 
 [The configuration file](configuration.md#the-configuration-file) lists the accepted fields and limits.

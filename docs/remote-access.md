@@ -9,8 +9,6 @@ Settings suggests addresses with a label for each network: "this computer only",
 Use `127.0.0.1` to allow only this Mac.
 The sidebar notice names the network of the saved address: this Mac only, LAN, Tailscale or a VPN tunnel.
 
-The sidebar footer repeats that network for the saved address.
-
 ## Using it from another device on your LAN
 
 1. In **Settings**, choose the LAN address of this Mac and a port.
@@ -37,7 +35,6 @@ Clients must put the tunnel address in the endpoint URL.
 A MagicDNS or other host name gets 403, because the `Host` header must match the configured address.
 Every device in a listed range can reach the endpoints, including devices shared into your tailnet, so keep each key private.
 Tailscale access controls or WireGuard `AllowedIPs` decide which devices can connect at all.
-
 
 ## Allowed client ranges
 

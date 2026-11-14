@@ -1,6 +1,7 @@
 # Connect a client
 
-Each client section follows that client's documentation as of 2026-11-14. Client formats change; if a step no longer matches, check the linked source.
+Each client section follows that client's documentation as of 2026-11-14.
+Client formats change; if a step no longer matches, check the linked source.
 
 ## What the app copies
 
@@ -19,14 +20,18 @@ Each client section follows that client's documentation as of 2026-11-14. Client
 }
 ```
 
-The key is in plain text. Keep the paste target private.
+The key is in plain text.
+Keep the paste target private.
 **Copy endpoint** copies only the URL.
 
 ## Before you connect
 
-- Start the gateway. The client cannot connect while the footer reads "No active listener".
-- Use the IP address from the endpoint. A host name such as a MagicDNS name gets `403`, because the `Host` header must match the configured address.
-- Turn on **Allow session-based clients (MCP 2025-11-25 and earlier)** for any server used from the clients below. Most desktop hosts still speak the older protocol.
+- Start the gateway.
+  The client cannot connect while the footer reads "No active listener".
+- Use the IP address from the endpoint.
+  A host name such as a MagicDNS name gets `403`, because the `Host` header must match the configured address.
+- Turn on **Allow session-based clients (MCP 2025-11-25 and earlier)** for any server used from the clients below.
+  Most desktop hosts still speak the older protocol.
 - Keep the Mac awake while a client is connected; sleep takes the endpoints offline.
 
 ## Cursor
