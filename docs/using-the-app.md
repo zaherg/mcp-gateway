@@ -38,6 +38,7 @@ When you have unsaved changes or a dialog open, **Quit MCP Gateway** in the page
 
 **Launch app at login** is off by default.
 When it is on, the app starts in the background, and you open the window from the menu-bar icon.
+The exception is pending release notes: when the installed version's notes have not been dismissed, the window opens in the foreground even during a background start.
 Settings shows the registration macOS has in effect: "macOS login item: Enabled", "Disabled" or "Unsupported".
 The setting above that line is a request; the status line is what macOS reports.
 
@@ -73,8 +74,9 @@ You can also check by hand in **Settings → Updates**.
 An update installs only when you choose **Restart to Update** and confirm.
 This stops the gateway and discards unsaved configuration changes.
 If the handoff fails, the gateway stays stopped; quit and reopen the app to try again.
-The first window you open after an update shows that version's release notes, taken from `CHANGELOG.md`.
-They appear once; closing them records the version in `seen-version.json`, next to `mcp.json`.
+After an update, the next start opens the window and shows that version's release notes, taken from `CHANGELOG.md`, even when the app would otherwise start in the background.
+Dismissing the notes leaves the window open and records the version in `seen-version.json`, next to `mcp.json`, so later background starts stay in the menu bar.
+Closing the window without dismissing the notes leaves them pending, so a later start opens them again.
 
 `0.3.2` is the first release that can update itself.
 `0.3.0` cannot update, so install the `0.3.2` or later DMG by hand.

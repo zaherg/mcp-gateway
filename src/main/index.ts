@@ -442,4 +442,9 @@ try {
 }
 const background =
   process.argv.includes('--background') || login.manager.status().enabled || savedLoginPreference;
-if (!background) openWindow();
+// Unread release notes take precedence over background startup until dismissed.
+const showReleaseNotes = whatsNew.pending !== null;
+if (!background || showReleaseNotes) {
+  openWindow();
+  if (showReleaseNotes && window) restoreWindow(window);
+}
