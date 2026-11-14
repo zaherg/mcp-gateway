@@ -31,6 +31,8 @@ protect_breaking_commits = true
 # The first matching rule wins.
 commit_parsers = [
     { message = "(?i)^wip\\b", skip = true },
+    # Any subject mentioning a bump (version bumps, "bump X to Y") is release noise.
+    { message = "(?i)\\bbump", skip = true },
     { message = "^security", group = "Security" },
     { message = "^feat", group = "Added" },
     { message = "^deprecat", group = "Deprecated" },
