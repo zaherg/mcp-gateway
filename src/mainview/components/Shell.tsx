@@ -70,6 +70,7 @@ export const Shell = ({
 
   return (
     <div className="app-shell">
+      <div className="window-titlebar electrobun-webkit-app-region-drag" aria-hidden="true" />
       <aside className="sidebar electrobun-webkit-app-region-drag">
         <div className="brand">
           <span className="brand-mark">

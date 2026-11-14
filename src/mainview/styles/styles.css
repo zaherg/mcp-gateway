@@ -15,6 +15,9 @@
 
   /* Red for error text on a light surface; the macOS red is too bright for small type. */
   --mac-red-ink: #a24e45;
+
+  /* The draggable strip above both columns; the native traffic lights sit inside it. */
+  --window-titlebar-height: 32px;
 }
 
 /* The root font size is 14px and Tailwind spacing is rem-based, which would shrink every
@@ -109,16 +112,25 @@ h3 {
   display: flex;
   height: 100vh;
 }
+.window-titlebar {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 1;
+  height: var(--window-titlebar-height);
+  background: var(--mac-titlebar);
+  border-bottom: 1px solid var(--mac-border);
+  user-select: none;
+}
 .sidebar {
   width: 248px;
   flex-shrink: 0;
-  padding: 48px 20px 20px;
+  padding: 16px 20px 20px;
   border-right: 1px solid var(--mac-border);
   background: var(--mac-sidebar);
   display: flex;
   flex-direction: column;
   position: fixed;
-  top: 0;
+  top: var(--window-titlebar-height);
   bottom: 0;
 }
 .brand {
@@ -209,9 +221,10 @@ nav {
 main {
   flex: 1 1 auto;
   min-width: 0;
-  height: 100vh;
+  height: calc(100vh - var(--window-titlebar-height));
+  margin-top: var(--window-titlebar-height);
   margin-left: 248px;
-  padding: 40px 32px 24px;
+  padding: 16px 32px 24px;
   overflow-y: auto;
 }
 .page-heading {
