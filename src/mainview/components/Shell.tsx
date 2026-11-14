@@ -36,6 +36,7 @@ interface Shell {
   interactiveQuit: { current: () => boolean };
   onOpenSocialLink: (target: SocialLinkTarget) => void;
   socialLinksDisabled: boolean;
+  gatewayToggle: ReactNode;
   children: ReactNode;
   dialogs: ReactNode;
 }
@@ -52,6 +53,7 @@ export const Shell = ({
   interactiveQuit,
   onOpenSocialLink,
   socialLinksDisabled,
+  gatewayToggle,
   children,
   dialogs,
 }: Shell) => {
@@ -158,7 +160,8 @@ export const Shell = ({
                   : 'Listener, startup and the configuration file'}
             </p>
           </div>
-          <div>
+          <div className="page-actions">
+            {gatewayToggle}
             <Button
               data-action="quit"
               disabled={

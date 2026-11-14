@@ -111,7 +111,6 @@ export interface GatewaySnapshot {
   configText: string;
   revision: string;
   running: boolean;
-  address: string | null;
   interfaces: InterfaceChoice[];
   /** Kind of the saved listener address; null while it is not assigned or the configuration is invalid. */
   network: NetworkKind | null;

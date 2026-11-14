@@ -221,6 +221,12 @@ main {
   align-items: flex-start;
   margin-bottom: 32px;
 }
+.page-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-shrink: 0;
+}
 .subtitle {
   color: var(--mac-label-secondary);
   font-size: 13px;
@@ -238,48 +244,6 @@ main {
   min-width: 0;
   display: grid;
   gap: 32px;
-}
-/* The listener: the one element on the page that carries the address at reading size. */
-.listener {
-  padding: 20px 24px;
-  display: flex;
-  gap: 16px;
-  align-items: center;
-}
-.listener-body {
-  min-width: 0;
-  flex: 1 1 auto;
-}
-.listener-label {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  font-size: 12px;
-  color: var(--mac-label-secondary);
-}
-.listener-label strong {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--mac-label);
-}
-.listener-address {
-  font-family: var(--font-macos-mono);
-  font-variant-numeric: tabular-nums;
-  font-size: 21px;
-  font-weight: 500;
-  color: var(--mac-label);
-  margin-top: 8px;
-  overflow-wrap: anywhere;
-}
-.listener-address.idle {
-  font-family: inherit;
-  font-size: 15px;
-  font-weight: 400;
-  color: var(--mac-label-secondary);
-}
-.listener-actions {
-  margin-left: auto;
-  flex-shrink: 0;
 }
 .section-heading {
   display: flex;

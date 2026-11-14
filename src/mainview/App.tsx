@@ -3,7 +3,7 @@ import { type FormEvent, useEffect, useRef, useState } from 'react';
 
 import { Banners } from '@mcp-gateway/mainview/components/banners/Banners';
 import { DraftBar } from '@mcp-gateway/mainview/components/DraftBar';
-import { GatewayStrip } from '@mcp-gateway/mainview/components/GatewayStrip';
+import { GatewayToggle } from '@mcp-gateway/mainview/components/GatewayToggle';
 import { Shell, type Tab } from '@mcp-gateway/mainview/components/Shell';
 import { ConfirmDialogs } from '@mcp-gateway/mainview/dialogs/ConfirmDialogs';
 import {
@@ -356,6 +356,18 @@ export const App = ({ client }: App) => {
       interactiveQuit={interactiveQuit}
       onOpenSocialLink={openSocialLink}
       socialLinksDisabled={busy || configurationLocked}
+      gatewayToggle={
+        snapshot &&
+        doc && (
+          <GatewayToggle
+            gateway={gateway}
+            dirty={dirty}
+            configurationLocked={configurationLocked || busy}
+            run={run}
+            client={client}
+          />
+        )
+      }
       dialogs={
         <>
           {snapshot?.whatsNew && !whatsNewClosed && (
@@ -450,28 +462,19 @@ export const App = ({ client }: App) => {
             {tab === 'logs' ? (
               <Logs client={client} servers={gateway?.servers.map((server) => server.name) ?? []} />
             ) : tab === 'overview' ? (
-              <>
-                <GatewayStrip
-                  gateway={gateway}
-                  dirty={dirty}
-                  configurationLocked={configurationLocked}
-                  run={run}
-                  client={client}
-                />
-                <Overview
-                  gateway={gateway}
-                  config={config}
-                  dirty={dirty}
-                  configurationLocked={configurationLocked}
-                  run={run}
-                  client={client}
-                  openEditor={openEditor}
-                  toggleEndpoint={toggleEndpoint}
-                  setDeleting={setDeleting}
-                  setEditor={setEditor}
-                  setEditorError={setEditorError}
-                />
-              </>
+              <Overview
+                gateway={gateway}
+                config={config}
+                dirty={dirty}
+                configurationLocked={configurationLocked}
+                run={run}
+                client={client}
+                openEditor={openEditor}
+                toggleEndpoint={toggleEndpoint}
+                setDeleting={setDeleting}
+                setEditor={setEditor}
+                setEditorError={setEditorError}
+              />
             ) : (
               <Settings
                 config={config}

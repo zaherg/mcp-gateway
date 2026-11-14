@@ -106,7 +106,6 @@ export class McpGatewayController implements GatewayController {
       configText: this.document.text,
       revision: this.document.revision,
       running,
-      address: running ? (this.ingress?.address ?? null) : null,
       interfaces,
       network: interfaces.find((entry) => entry.address === config?.gateway.host)?.kind ?? null,
       servers:
