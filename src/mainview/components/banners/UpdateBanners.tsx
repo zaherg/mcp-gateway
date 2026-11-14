@@ -3,41 +3,16 @@ import type { UpdateStatus } from '@mcp-gateway/shared/rpc';
 
 interface UpdateBanners {
   updateState: UpdateStatus | undefined;
-  showAvailableNotice: boolean;
   showErrors: boolean;
   dismissed: ReadonlySet<string>;
   dismiss: (id: string) => void;
 }
 
-export const UpdateBanners = ({
-  updateState,
-  showAvailableNotice,
-  showErrors,
-  dismissed,
-  dismiss,
-}: UpdateBanners) => {
-  if (!updateState) return null;
-  const available =
-    showAvailableNotice && (updateState.phase === 'available' || updateState.phase === 'ready');
-  const failed = showErrors && updateState.phase === 'error';
+export const UpdateBanners = ({ updateState, showErrors, dismissed, dismiss }: UpdateBanners) => {
+  if (!updateState || !showErrors || updateState.phase !== 'error') return null;
   // App retains acknowledgements under this same key, so a new phase, version or error shows again.
   const id = `update-${updateState.phase}-${updateState.availableVersion ?? ''}-${updateState.error ?? ''}`;
-  if ((!available && !failed) || dismissed.has(id)) return null;
-  if (available) {
-    return (
-      <Alert
-        kind="warning"
-        role="status"
-        label="Dismiss update notice"
-        onDismiss={() => dismiss(id)}
-      >
-        {updateState.phase === 'ready'
-          ? `Version ${updateState.availableVersion} is ready to install.`
-          : `Version ${updateState.availableVersion} is available.`}{' '}
-        Open Settings → Updates to review and confirm.
-      </Alert>
-    );
-  }
+  if (dismissed.has(id)) return null;
   return (
     <Alert onDismiss={() => dismiss(id)}>
       Update: {updateState.error ?? 'The update operation failed.'}

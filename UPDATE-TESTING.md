@@ -161,7 +161,7 @@ printf '%s\n' "$!" > "$RUN/initial-launcher.pid"
 ```
 
 Wait for the automatic check, about 10 seconds after launch, and then for the download.
-In Settings → Updates, confirm that B is ready.
+Open Updates in the sidebar and confirm that B is ready.
 Before you accept the restart, make an unsaved configuration change, choose Restart to Update, and cancel the confirmation.
 The unsaved change, the running app, the saved configuration and the A bundle must stay the same.
 Then choose Restart to Update again, confirm, and wait for the new window.

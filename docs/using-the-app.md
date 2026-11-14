@@ -4,6 +4,7 @@
 
 The sidebar has three tabs: **Overview**, **Settings** and **Logs**.
 The page heading shows the tab title and, once the configuration has loaded, **Start gateway** or **Stop gateway**, then **Quit MCP Gateway**.
+When the build supports updates, **Updates** appears above the sidebar footer as a quiet single-line button while idle, shows short status text when an update is active or needs attention, and opens the **Updates** dialog.
 The sidebar footer names the network of the saved address.
 The icons below it open this guide, the GitHub repository and @zaherg on X in your default browser.
 The page footer reads "Listener active" or "No active listener".
@@ -61,16 +62,16 @@ Only backend activity appears there, so a `401` or `403` has to be read from the
 The app updates itself with the built-in Electrobun updater.
 It reads the fixed feed `https://github.com/zaherg/mcp-gateway/releases/latest/download`.
 Only signed stable builds can update.
-Development builds report that updates are unsupported and never contact the feed.
+Unsupported development builds hide **Updates** in the sidebar and never contact the feed.
 
 Automatic checks and downloads are on by default.
 The first check runs about 10 seconds after launch, then once a day.
 A failed check or download is retried about once an hour.
-You can turn this off in **Settings → Updates**.
+You can turn this off by choosing **Updates** in the sidebar to open the **Updates** dialog.
 The app stores that choice in `updates.json`, next to `mcp.json`.
 The app offers a release only when its version is higher than the installed one.
 
-You can also check by hand in **Settings → Updates**.
+You can also check by hand in the **Updates** dialog from the sidebar, or from the menu bar and app menu.
 An update installs only when you choose **Restart to Update** and confirm.
 This stops the gateway and discards unsaved configuration changes.
 If the handoff fails, the gateway stays stopped; quit and reopen the app to try again.

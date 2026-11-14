@@ -69,7 +69,6 @@ export const Banners = ({
       <LocalErrorBanner error={error} onDismiss={dismissLocalError} />
       <UpdateBanners
         updateState={updateState}
-        showAvailableNotice={tab === 'overview'}
         showErrors={showStatus}
         dismissed={dismissed}
         dismiss={dismiss}

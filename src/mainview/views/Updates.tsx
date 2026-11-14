@@ -1,8 +1,7 @@
 import { CircleHelp } from 'lucide-react';
-import type { RefObject } from 'react';
 
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
-import { Toggle } from '@mcp-gateway/mainview/components/ui';
+import { Alert, Toggle } from '@mcp-gateway/mainview/components/ui';
 import type { Editor } from '@mcp-gateway/mainview/dialogs/ServerEditor';
 import type { AppClient, AppResult, QuitStatus, UpdateStatus } from '@mcp-gateway/shared/rpc';
 
@@ -47,13 +46,14 @@ interface Updates {
   quitStatus: QuitStatus;
   editor: Editor | null;
   deleting: string | null;
+  error: string | null;
+  onDismissError: () => void;
   runUpdate: (
     operation: () => Promise<AppResult<UpdateStatus>>,
     message: string,
   ) => Promise<boolean>;
   client: AppClient;
-  setConfirmUpdate: (confirm: boolean) => void;
-  updatesHeading: RefObject<HTMLHeadingElement | null>;
+  onRequestRestart: () => void;
 }
 
 export const Updates = ({
@@ -65,25 +65,30 @@ export const Updates = ({
   quitStatus,
   editor,
   deleting,
+  error,
+  onDismissError,
   runUpdate,
   client,
-  setConfirmUpdate,
-  updatesHeading,
+  onRequestRestart,
 }: Updates) => {
   const updateReady = updateState.phase === 'ready';
   const inProgress = updateState.phase === 'checking' || updateState.phase === 'downloading';
-  const actionsDisabled =
-    updateBusy || configurationLocked || inProgress || updateState.phase === 'restarting';
+  const toggleDisabled =
+    busy || updateBusy || configurationLocked || updateState.phase === 'restarting';
+  const actionsDisabled = toggleDisabled || inProgress;
+  const restartDisabled =
+    toggleDisabled ||
+    !quitStatusKnown ||
+    editor !== null ||
+    deleting !== null ||
+    quitStatus.phase === 'pending' ||
+    quitStatus.phase === 'ready';
   return (
-    <section className="panel updates-panel" aria-labelledby="updates-heading">
-      <div className="section-heading">
-        <div>
-          <h2 id="updates-heading" ref={updatesHeading} tabIndex={-1}>
-            Updates
-          </h2>
-          <p>Signed macOS arm64 builds only, from the fixed GitHub release feed</p>
-        </div>
-      </div>
+    <div className="updates-content">
+      <p className="dialog-intro">
+        Signed macOS arm64 builds only, from the fixed GitHub release feed
+      </p>
+      {error && <Alert onDismiss={onDismissError}>{error}</Alert>}
       {!updateState.supported ? (
         <p className="update-unavailable">
           This build does not support updates and never contacts the update feed.
@@ -121,7 +126,7 @@ export const Updates = ({
           <Toggle
             label="Automatically check and download updates"
             description="After launch, then daily. A newer stable version downloads on its own; installing waits for your confirmation."
-            disabled={updateBusy || configurationLocked || updateState.phase === 'restarting'}
+            disabled={toggleDisabled}
             checked={updateState.automaticUpdates}
             onChange={(value) =>
               void runUpdate(
@@ -148,19 +153,7 @@ export const Updates = ({
               </Button>
             )}
             {updateReady && (
-              <Button
-                variant="default"
-                disabled={
-                  busy ||
-                  !quitStatusKnown ||
-                  updateState.phase === 'restarting' ||
-                  !!editor ||
-                  !!deleting ||
-                  quitStatus.phase === 'pending' ||
-                  quitStatus.phase === 'ready'
-                }
-                onClick={() => setConfirmUpdate(true)}
-              >
+              <Button variant="default" disabled={restartDisabled} onClick={onRequestRestart}>
                 Restart to Update
               </Button>
             )}
@@ -176,6 +169,6 @@ export const Updates = ({
           </p>
         </>
       )}
-    </section>
+    </div>
   );
 };

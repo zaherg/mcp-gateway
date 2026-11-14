@@ -5,6 +5,8 @@ import { Banners } from '@mcp-gateway/mainview/components/banners/Banners';
 import { DraftBar } from '@mcp-gateway/mainview/components/DraftBar';
 import { GatewayToggle } from '@mcp-gateway/mainview/components/GatewayToggle';
 import { Shell, type Tab } from '@mcp-gateway/mainview/components/Shell';
+import { SidebarUpdates } from '@mcp-gateway/mainview/components/SidebarUpdates';
+import { Modal } from '@mcp-gateway/mainview/components/ui';
 import { ConfirmDialogs } from '@mcp-gateway/mainview/dialogs/ConfirmDialogs';
 import {
   type Document,
@@ -22,10 +24,12 @@ import { Overview } from '@mcp-gateway/mainview/views/Overview';
 import { RawConfig } from '@mcp-gateway/mainview/views/RawConfig';
 import { Settings } from '@mcp-gateway/mainview/views/Settings';
 import { Updates } from '@mcp-gateway/mainview/views/Updates';
+import { changelogSection } from '@mcp-gateway/shared/changelog';
 import { editConfigDocument } from '@mcp-gateway/shared/config-document';
 import type { AppClient, AppSnapshot, SocialLinkTarget } from '@mcp-gateway/shared/rpc';
 import { needsLoginRetry } from '@mcp-gateway/shared/rpc';
 import type { GatewayConfig } from '@mcp-gateway/shared/types';
+import changelog from '../../CHANGELOG.md?raw';
 
 interface App {
   client: AppClient;
@@ -52,8 +56,10 @@ export const App = ({ client }: App) => {
   const [showToken, setShowToken] = useState(false);
   const [rawOpen, setRawOpen] = useState(false);
   const [whatsNewClosed, setWhatsNewClosed] = useState(false);
+  const [updatesOpen, setUpdatesOpen] = useState(false);
+  const [updatesRequested, setUpdatesRequested] = useState(false);
   const fallbackFocus = useRef<HTMLButtonElement>(null);
-  const updatesHeading = useRef<HTMLHeadingElement>(null);
+  const updatesTrigger = useRef<HTMLButtonElement>(null);
   const [tab, setTab] = useState<Tab>('overview');
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const dismiss = (id: string) => setDismissed((previous) => new Set([...previous, id]));
@@ -177,14 +183,53 @@ export const App = ({ client }: App) => {
     };
   }, [client, quitRequestPending]);
 
+  const updateReady = updateState?.phase === 'ready';
+  const whatsNewOpen = Boolean(
+    snapshot?.whatsNew && !whatsNewClosed && changelogSection(changelog, snapshot.whatsNew),
+  );
+  const competingDialog =
+    whatsNewOpen ||
+    confirmQuit ||
+    (confirmUpdate && Boolean(updateReady)) ||
+    editor !== null ||
+    deleting !== null;
+  const updatesTriggerDisabled =
+    busy || configurationLocked || quitting || updateRestarting || competingDialog;
+  const showUpdatesModal =
+    updatesOpen &&
+    Boolean(updateState?.supported) &&
+    !competingDialog &&
+    !quitting &&
+    !updateRestarting;
+
   useEffect(() => {
-    const showUpdates = () => {
-      setTab('settings');
-      requestAnimationFrame(() => updatesHeading.current?.focus());
-    };
+    const showUpdates = () => setUpdatesRequested(true);
     window.addEventListener('mcp-gateway:show-updates', showUpdates);
     return () => window.removeEventListener('mcp-gateway:show-updates', showUpdates);
   }, []);
+
+  useEffect(() => {
+    if (!quitting && !updateRestarting) return;
+    setUpdatesOpen(false);
+    setUpdatesRequested(false);
+  }, [quitting, updateRestarting]);
+
+  useEffect(() => {
+    if (!updatesRequested || !updateState) return;
+    if (!updateState.supported) {
+      setUpdatesOpen(false);
+      setUpdatesRequested(false);
+      return;
+    }
+    if (updatesOpen) {
+      setUpdatesRequested(false);
+      return;
+    }
+    if (updatesTriggerDisabled) return;
+    setUpdatesRequested(false);
+    updatesTrigger.current?.focus();
+    setUpdatesOpen(true);
+  }, [updatesOpen, updatesRequested, updatesTriggerDisabled, updateState]);
 
   const format = snapshot?.gateway.configFormat ?? 'json';
   const filename = snapshot?.gateway.configPath.split('/').at(-1) ?? 'mcp.json';
@@ -205,7 +250,6 @@ export const App = ({ client }: App) => {
   const parsed = doc ? formConfig(doc.text, format) : null;
   const config = snapshot?.gateway.configError && !doc?.dirty ? null : parsed;
   const gateway = snapshot?.gateway;
-  const updateReady = updateState?.phase === 'ready';
   const stale = !!doc && !!gateway && doc.revision !== gateway.revision;
   const retryLogin = !!(
     config &&
@@ -356,6 +400,14 @@ export const App = ({ client }: App) => {
       interactiveQuit={interactiveQuit}
       onOpenSocialLink={openSocialLink}
       socialLinksDisabled={busy || configurationLocked}
+      sidebarUpdates={
+        <SidebarUpdates
+          updateState={updateState}
+          disabled={updatesTriggerDisabled}
+          onOpen={() => setUpdatesRequested(true)}
+          triggerRef={updatesTrigger}
+        />
+      }
       fallbackFocus={fallbackFocus}
       gatewayToggle={
         snapshot &&
@@ -401,6 +453,32 @@ export const App = ({ client }: App) => {
             update={update}
             fallbackFocus={fallbackFocus}
           />
+          {showUpdatesModal && updateState && (
+            <Modal
+              title="Updates"
+              onClose={() => setUpdatesOpen(false)}
+              fallbackFocus={fallbackFocus}
+            >
+              <Updates
+                updateState={updateState}
+                updateBusy={updateBusy}
+                configurationLocked={configurationLocked}
+                busy={busy}
+                quitStatusKnown={quitStatusKnown}
+                quitStatus={quitStatus}
+                editor={editor}
+                deleting={deleting}
+                error={error}
+                onDismissError={dismissLocalError}
+                runUpdate={runUpdate}
+                client={client}
+                onRequestRestart={() => {
+                  setUpdatesOpen(false);
+                  setConfirmUpdate(true);
+                }}
+              />
+            </Modal>
+          )}
           {editor && (
             <ServerEditor
               editor={editor}
@@ -486,22 +564,6 @@ export const App = ({ client }: App) => {
                 showToken={showToken}
                 setShowToken={setShowToken}
                 filename={filename}
-              />
-            )}
-            {tab === 'settings' && updateState && (
-              <Updates
-                updateState={updateState}
-                updateBusy={updateBusy}
-                configurationLocked={configurationLocked}
-                busy={busy}
-                quitStatusKnown={quitStatusKnown}
-                quitStatus={quitStatus}
-                editor={editor}
-                deleting={deleting}
-                runUpdate={runUpdate}
-                client={client}
-                setConfirmUpdate={setConfirmUpdate}
-                updatesHeading={updatesHeading}
               />
             )}
             <RawConfig

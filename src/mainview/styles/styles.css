@@ -182,11 +182,97 @@ nav {
   border-color: transparent;
   box-shadow: none;
 }
-.sidebar-footer {
+.sidebar-bottom {
   margin-top: auto;
+  padding-top: 16px;
+}
+.sidebar-updates {
+  margin-bottom: 12px;
+}
+.sidebar-updates-button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  min-height: 36px;
+  padding: 8px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--mac-radius-item);
+  background: transparent;
+  color: var(--mac-label-secondary);
+  text-align: left;
+  white-space: normal;
+}
+.sidebar-updates-button:hover:not(:disabled):not([data-disabled]) {
+  background: var(--mac-fill-tertiary);
+  color: var(--mac-label);
+}
+.sidebar-updates-button[data-phase='checking'],
+.sidebar-updates-button[data-phase='restarting'] {
+  color: var(--mac-label);
+}
+.sidebar-updates-button[data-phase='downloading'] {
+  background: var(--mac-fill-tertiary);
+  color: var(--mac-label);
+}
+.sidebar-updates-button[data-phase='available'],
+.sidebar-updates-button[data-phase='ready'] {
+  background: var(--mac-fill-tertiary);
+  border-color: color-mix(in srgb, var(--mac-accent) 45%, var(--mac-border));
+  color: var(--mac-label);
+}
+.sidebar-updates-button[data-phase='error'] {
+  background: var(--mac-fill-tertiary);
+  border-color: var(--mac-border);
+  color: var(--mac-label);
+}
+.sidebar-updates-button[data-phase='downloading']:hover:not(:disabled):not([data-disabled]),
+.sidebar-updates-button[data-phase='available']:hover:not(:disabled):not([data-disabled]),
+.sidebar-updates-button[data-phase='ready']:hover:not(:disabled):not([data-disabled]),
+.sidebar-updates-button[data-phase='error']:hover:not(:disabled):not([data-disabled]) {
+  background: var(--mac-fill-secondary);
+}
+.sidebar-updates-button:active:not(:disabled):not([data-disabled]) {
+  background-image: linear-gradient(var(--mac-control-pressed), var(--mac-control-pressed));
+}
+.sidebar-updates-button:focus-visible {
+  outline: none;
+  box-shadow: var(--mac-focus-ring);
+}
+.sidebar-updates-button:disabled,
+.sidebar-updates-button[data-disabled] {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+.sidebar-updates-title {
+  max-width: 100%;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+}
+.sidebar-updates-button[data-phase='error'] .sidebar-updates-title {
+  color: var(--mac-red-ink);
+}
+.dark .sidebar-updates-button[data-phase='error'] .sidebar-updates-title {
+  color: color-mix(in srgb, var(--mac-red) 62%, white);
+}
+.sidebar-updates-detail {
+  max-width: 100%;
+  color: var(--mac-label-secondary);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 14px;
+  overflow-wrap: anywhere;
+}
+.sidebar-footer {
   display: flex;
   gap: 8px;
-  padding: 16px 8px 0;
+  padding: 0 8px;
   color: var(--mac-label-secondary);
   font-size: 11px;
   line-height: 1.4;
@@ -623,73 +709,8 @@ main {
   gap: 8px;
   flex-shrink: 0;
 }
-.settings-panel,
-.updates-panel {
+.settings-panel {
   padding: 24px;
-}
-.updates-panel h2:focus-visible {
-  outline: none;
-  box-shadow: var(--mac-focus-ring);
-}
-.update-summary {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
-  gap: 24px;
-  padding: 16px;
-  border: 1px solid var(--mac-border);
-  border-radius: var(--mac-radius-item);
-  background: var(--mac-group);
-}
-.update-summary > div {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-.update-label {
-  color: var(--mac-label-secondary);
-  font-size: 12px;
-  font-weight: 400;
-}
-.update-summary strong {
-  color: var(--mac-label);
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-.update-unavailable {
-  color: var(--mac-label-secondary);
-  font-size: 13px;
-  line-height: 1.6;
-}
-.update-progress {
-  height: 4px;
-  margin: 16px 0 8px;
-  overflow: hidden;
-  border-radius: 2px;
-  background: var(--mac-fill-secondary);
-}
-.update-progress span {
-  display: block;
-  width: 42%;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--mac-accent);
-  animation: update-progress 1.4s cubic-bezier(0.22, 1, 0.36, 1) infinite;
-}
-@keyframes update-progress {
-  0% {
-    transform: translateX(-110%);
-  }
-  100% {
-    transform: translateX(260%);
-  }
-}
-.update-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 9px;
-  margin-top: 18px;
 }
 .form-grid {
   display: grid;
@@ -847,6 +868,77 @@ dialog [data-slot='alert'] {
 .whats-new code {
   font-family: var(--font-macos-mono);
   font-size: 12px;
+}
+.updates-content {
+  min-width: 0;
+}
+.updates-content .dialog-intro {
+  margin-bottom: 16px;
+}
+.updates-content .update-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
+  gap: 12px 20px;
+  padding: 14px 16px;
+  border: 1px solid var(--mac-border);
+  border-radius: var(--mac-radius-item);
+  background: var(--mac-group);
+}
+.updates-content .update-summary > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.updates-content .update-label {
+  color: var(--mac-label-secondary);
+  font-size: 12px;
+  font-weight: 400;
+}
+.updates-content .update-summary strong {
+  color: var(--mac-label);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.updates-content .update-unavailable {
+  color: var(--mac-label-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.updates-content .toggle-row {
+  margin-top: 12px;
+  border-top: 1px solid var(--mac-separator);
+  border-bottom: 1px solid var(--mac-separator);
+}
+.update-progress {
+  height: 4px;
+  margin: 14px 0 6px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--mac-fill-secondary);
+}
+.update-progress span {
+  display: block;
+  width: 42%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--mac-accent);
+  animation: update-progress 1.4s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+@keyframes update-progress {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(260%);
+  }
+}
+.updates-content .update-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
 }
 .dialog-footnote {
   font-size: 11px;
