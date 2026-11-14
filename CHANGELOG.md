@@ -7,7 +7,36 @@ Release dates are the dates each section was stamped for release.
 
 ## [Unreleased]
 
-Changes after `0.8.0`.
+Changes after `0.8.2`.
+
+## [0.8.2] - 2026-11-14
+
+### Added
+
+- Show release notes once after an update
+- Add a full-width draggable title bar with a bottom border
+- Add Help menu and sidebar documentation link
+- Open the window when release notes are pending after an update
+
+### Changed
+
+- Update libraries
+- Dispatch only to endpoints built from the current configuration
+- Keep redirect protection until mount cleanup settles
+- Keep legacy cancelled calls charged until they end
+- Publish the test feed from a private artifact copy
+- Update format
+- Allow Tailscale and WireGuard listeners with explicit client ranges
+- Redesign the window around the listener address and a status LED
+- Move the gateway start/stop button into the page heading
+- Keep the authoritative configuration editor in Settings only
+- Update changelog
+- Move update controls from Settings to the sidebar
+
+### Fixed
+
+- Point configuration banners to the editor in Settings
+- Remove gateway start and stop success notices
 
 ## [0.8.0] - 2026-11-14
 
@@ -157,7 +186,8 @@ The first release.
 - In-memory logs, launch at login, and an optional gateway start when the app opens.
 - Experimental Linux and Windows packaging.
 
-[Unreleased]: https://github.com/zaherg/mcp-gateway/compare/0.8.0...HEAD
+[Unreleased]: https://github.com/zaherg/mcp-gateway/compare/0.8.2...HEAD
+[0.8.2]: https://github.com/zaherg/mcp-gateway/compare/0.8.0...0.8.2
 [0.8.0]: https://github.com/zaherg/mcp-gateway/compare/0.7.0...0.8.0
 [0.7.0]: https://github.com/zaherg/mcp-gateway/compare/0.6.1...0.7.0
 [0.6.1]: https://github.com/zaherg/mcp-gateway/compare/0.6.0...0.6.1
