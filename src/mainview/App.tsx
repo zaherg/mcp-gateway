@@ -14,6 +14,7 @@ import {
   parseStringMap,
   ServerEditor,
 } from '@mcp-gateway/mainview/dialogs/ServerEditor';
+import { WhatsNew } from '@mcp-gateway/mainview/dialogs/WhatsNew';
 import { useOperations } from '@mcp-gateway/mainview/hooks/useOperations';
 import { useQuit } from '@mcp-gateway/mainview/hooks/useQuit';
 import { Logs } from '@mcp-gateway/mainview/Logs';
@@ -50,6 +51,7 @@ export const App = ({ client }: App) => {
   const [deleting, setDeleting] = useState<string | null>(null);
   const [showToken, setShowToken] = useState(false);
   const [rawOpen, setRawOpen] = useState(false);
+  const [whatsNewClosed, setWhatsNewClosed] = useState(false);
   const fallbackFocus = useRef<HTMLButtonElement>(null);
   const updatesHeading = useRef<HTMLHeadingElement>(null);
   const [tab, setTab] = useState<Tab>('overview');
@@ -356,6 +358,17 @@ export const App = ({ client }: App) => {
       socialLinksDisabled={busy || configurationLocked}
       dialogs={
         <>
+          {snapshot?.whatsNew && !whatsNewClosed && (
+            <WhatsNew
+              version={snapshot.whatsNew}
+              fallbackFocus={fallbackFocus}
+              onClose={() => {
+                // Close now; a failed save is logged by main and the notes return next launch.
+                setWhatsNewClosed(true);
+                void client.dismissWhatsNew().catch(() => undefined);
+              }}
+            />
+          )}
           <ConfirmDialogs
             confirmQuit={confirmQuit}
             setConfirmQuit={setConfirmQuit}

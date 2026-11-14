@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
+import { changelogSection } from '@mcp-gateway/shared/changelog';
 import packageInfo from '../package.json';
 import { PRODUCTION_FEED, releaseOutputEnvironment } from './build-config';
 import { hashFile, UPDATE_FILES } from './update-artifacts';
@@ -102,7 +103,7 @@ const preflight = async (): Promise<string> => {
   if (!containing.trim())
     throw new Error('Push HEAD to a remote branch first; the release points at that commit.');
   const changelog = await readFile(join(root, 'CHANGELOG.md'), 'utf8');
-  if (!versionHeading().test(changelog))
+  if (changelogSection(changelog, tag) === null)
     throw new Error(
       `CHANGELOG.md has no dated section for ${tag}. Run: bun run changelog --tag ${tag}`,
     );
@@ -153,17 +154,11 @@ const manifestVersion = (text: string): string => {
   return version;
 };
 
-const versionHeading = () =>
-  new RegExp(`^## \\[${tag.replaceAll('.', '\\.')}\\] - \\d{4}-\\d{2}-\\d{2}$`, 'm');
-
 /** The released section of CHANGELOG.md, which is also the text of the GitHub release. */
 const releaseNotes = async (): Promise<string> => {
-  const changelog = await readFile(join(root, 'CHANGELOG.md'), 'utf8');
-  const heading = versionHeading().exec(changelog);
-  if (!heading) throw new Error(`CHANGELOG.md has no dated section for ${tag}.`);
-  const rest = changelog.slice(heading.index + heading[0].length);
-  const next = /^## \[/m.exec(rest);
-  return (next ? rest.slice(0, next.index) : rest).trim();
+  const section = changelogSection(await readFile(join(root, 'CHANGELOG.md'), 'utf8'), tag);
+  if (section === null) throw new Error(`CHANGELOG.md has no dated section for ${tag}.`);
+  return section;
 };
 
 /** `shasum -a 256` compatible, because the release notes tell readers to check with it. */

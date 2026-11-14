@@ -44,6 +44,8 @@ export interface AppSnapshot {
   gateway: GatewaySnapshot;
   login: LoginStatus;
   update: UpdateStatus;
+  /** The installed version while its release notes are waiting to be shown, else null. */
+  whatsNew: string | null;
 }
 
 export const SOCIAL_LINK_TARGETS = ['github', 'x'] as const;
@@ -79,6 +81,7 @@ export type AppRPC = {
       copyEndpoint: { params: { name: string }; response: AppResult<null> };
       copyClientConfig: { params: { name: string }; response: AppResult<null> };
       openSocialLink: { params: { target: SocialLinkTarget }; response: AppResult<null> };
+      dismissWhatsNew: { params: undefined; response: AppResult<null> };
       updatesCheck: { params: undefined; response: AppResult<UpdateStatus> };
       updatesDownload: { params: undefined; response: AppResult<UpdateStatus> };
       updatesSetAutomatic: {

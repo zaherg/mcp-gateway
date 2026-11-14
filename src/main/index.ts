@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 import Electrobun, {
@@ -26,6 +27,7 @@ import {
   restoreWindow,
 } from '@mcp-gateway/main/native';
 import { AppService } from '@mcp-gateway/main/service';
+import { WhatsNewStore } from '@mcp-gateway/main/whats-new';
 import { clampWindowSize, MIN_WINDOW_SIZE, WindowSizeStore } from '@mcp-gateway/main/window-size';
 import type { AppRPC } from '@mcp-gateway/shared/rpc';
 
@@ -46,8 +48,11 @@ const nativeQuitSignal = observeNativeQuitSignals(nativeLibrary);
 const login = openLoginManager(nativeLibrary);
 const setMinimumWindowSize = openMinimumWindowSize(nativeLibrary);
 const windowSize = await WindowSizeStore.open(dataDirectory);
+// Opening the controller creates the folder on a first launch, so look before it does.
+const existingInstall = existsSync(dataDirectory);
 const controller = await McpGatewayController.open(join(dataDirectory, 'mcp.json'));
 const support = await resolveUpdateSupport();
+const whatsNew = await WhatsNewStore.open(dataDirectory, support.installedVersion, existingInstall);
 const TRAY_SIZE = 18;
 const tray = new Tray({
   image: 'views://assets/tray.png',
@@ -290,6 +295,8 @@ const service = new AppService(
       });
       return response === 1;
     },
+    whatsNew: () => whatsNew.pending,
+    dismissWhatsNew: () => whatsNew.dismiss(),
   },
   updater,
 );

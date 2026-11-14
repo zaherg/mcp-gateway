@@ -73,6 +73,8 @@ interface DesktopActions {
   quitStatus: () => QuitStatus;
   openExternal: (url: string) => boolean;
   confirmDiscard: () => Promise<boolean>;
+  whatsNew: () => string | null;
+  dismissWhatsNew: () => Promise<void>;
 }
 
 /** Runtime-validated local RPC boundary. No exception may echo a raw request. */
@@ -96,6 +98,7 @@ export class AppService {
       gateway: this.controller.snapshot(),
       login: this.loginStatus,
       update: this.updates.status(),
+      whatsNew: this.desktop.whatsNew(),
     };
   }
 
@@ -294,6 +297,13 @@ export class AppService {
           throw new RequestError('Quit cleanup has started. The link was not opened.');
         if (!this.desktop.openExternal(SOCIAL_LINKS[target]))
           throw new RequestError('The link could not be opened in your default browser.');
+        return null;
+      }),
+    dismissWhatsNew: (input?: unknown) =>
+      // Closing the notes must not wait behind a configuration operation.
+      this.lifecycle(async () => {
+        empty(input);
+        await this.desktop.dismissWhatsNew();
         return null;
       }),
     updatesCheck: (input?: unknown) =>

@@ -82,6 +82,8 @@ You can also check by hand in **Settings → Updates**.
 An update installs only when you choose **Restart to Update** and confirm.
 This stops the gateway and discards unsaved configuration changes.
 If the handoff fails, the gateway stays stopped; quit and reopen the app to try again.
+The first window you open after an update shows that version's release notes, taken from `CHANGELOG.md`.
+They appear once; closing them records the version in `seen-version.json`, next to `mcp.json`.
 
 `0.3.2` is the first release that can update itself.
 `0.3.0` cannot update, so install the `0.3.2` or later DMG by hand.
@@ -124,7 +126,7 @@ Saving always validates the file again.
 
 Use one configuration file, either `mcp.json` or `mcp.jsonc`.
 It lives in `~/Library/Application Support/MCP Gateway/`, and this location cannot be changed.
-The same folder holds `updates.json`, the automatic-update setting.
+The same folder holds `updates.json`, the automatic-update setting, and `seen-version.json`, the version whose release notes you closed.
 `mcp.json` must be strict JSON.
 `mcp.jsonc` also allows comments and trailing commas.
 If both files exist, the app reports an error.
