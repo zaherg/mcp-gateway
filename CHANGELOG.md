@@ -7,7 +7,13 @@ Release dates are the dates each section was stamped for release.
 
 ## [Unreleased]
 
-Changes after `0.8.2`.
+### Added
+
+- Add Show in Finder for the configuration file
+- Use the JSON editor for server dialog fields
+- Move interface text into a translatable catalog
+- Move language picker to the sidebar and drop the pseudo-locale
+- Add French, German and Turkish translations
 
 ## [0.8.2] - 2026-11-14
 
