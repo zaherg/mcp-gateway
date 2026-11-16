@@ -1,16 +1,25 @@
+import deDE from '@mcp-gateway/shared/locales/de_DE.json';
 import enUS from '@mcp-gateway/shared/locales/en_US.json';
+import frFR from '@mcp-gateway/shared/locales/fr_FR.json';
+import trTR from '@mcp-gateway/shared/locales/tr_TR.json';
 
 /** Every message key. `en_US.json` is the source catalog. */
 export type MessageKey = keyof typeof enUS;
 type Catalog = Record<MessageKey, string>;
 
 /** Locales with a catalog file, named `language_REGION`. Add a new locale here and in `CATALOGS`. */
-export const CATALOG_LOCALES = ['en_US'] as const;
+// A language with no exact region match falls back to the first listed catalog in that language.
+export const CATALOG_LOCALES = ['en_US', 'fr_FR', 'de_DE', 'tr_TR'] as const;
 export type CatalogLocale = (typeof CATALOG_LOCALES)[number];
 export const DEFAULT_LOCALE: CatalogLocale = 'en_US';
 
 // Typing every catalog as `Catalog` makes a key missing from a translation a typecheck error.
-const CATALOGS: Record<CatalogLocale, Catalog> = { en_US: enUS };
+const CATALOGS: Record<CatalogLocale, Catalog> = {
+  en_US: enUS,
+  fr_FR: frFR,
+  de_DE: deDE,
+  tr_TR: trTR,
+};
 
 export type Locale = CatalogLocale;
 export type LanguagePreference = 'system' | Locale;
