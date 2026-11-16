@@ -30,7 +30,7 @@ Each server gets its own endpoint, such as `http://192.168.1.120:8765/mcp/bear`.
 ## Documentation
 
 - [Getting started](docs/getting-started.md): install the app and serve your first server.
-- [Using the app](docs/using-the-app.md): the window, drafts, the menu-bar icon, logs and updates.
+- [Using the app](docs/using-the-app.md): the window, drafts, language, the menu-bar icon, logs and updates.
 - [Servers](docs/servers.md): local commands, HTTP servers, keys and the Bear preset.
 - [Connect a client](docs/clients.md): setup for six clients, and protocol compatibility.
 - [Remote access](docs/remote-access.md): LAN, Tailscale and WireGuard addresses.

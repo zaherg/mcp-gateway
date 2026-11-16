@@ -98,8 +98,10 @@ To add a locale:
 2. In `src/shared/i18n.ts`, import the file and add its code to `CATALOG_LOCALES` and `CATALOGS`.
 3. Run `bun run typecheck` and `bun run lint`.
 
+Current locales: `en_US`, `fr_FR`, `de_DE` and `tr_TR`.
+When no catalog matches a region exactly, the first listed catalog in the same language is used, so list the preferred regional variant first.
 The app picks the first macOS language that matches a locale, by language and region and then by language alone, and falls back to `en_US`.
-Settings shows a language picker; the choice is stored in `language.json` next to `mcp.json`.
+The sidebar shows a language picker under the tabs; the choice is stored in `language.json` next to `mcp.json`.
 Messages from the gateway, servers and logs are not translated.
 Right-to-left languages are not supported yet.
 

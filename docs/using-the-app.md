@@ -4,6 +4,7 @@
 
 The sidebar has three tabs: **Overview**, **Settings** and **Logs**.
 The page heading shows the tab title and, once the configuration has loaded, **Start gateway** or **Stop gateway**, then **Quit MCP Gateway**.
+Below the tabs, a **Language** dropdown sets the app language; see [Language](#language).
 When the build supports updates, **Updates** appears above the sidebar footer as a quiet single-line button while idle, shows short status text when an update is active or needs attention, and opens the **Updates** dialog.
 The sidebar footer names the network of the saved address.
 The icons below it open this guide, the GitHub repository and @zaherg on X in your default browser.
@@ -28,6 +29,23 @@ The update item reads "Check for Updates…", "Update available: <version>" or "
 The app menu has **Settings…** (`Cmd+,`), **Check for Updates…** when the app supports updates, and **Quit MCP Gateway** (`Cmd+Q`).
 The File menu has **Close Window** (`Cmd+W`).
 The Help menu has **MCP Gateway User Guide**, which opens this guide in your default browser, and **Show Configuration in Finder**, which selects the configuration file in Finder.
+
+## Language
+
+The app is available in English (United States), French (France), German (Germany) and Turkish (Turkey).
+Choose one from the **Language** dropdown in the sidebar, under the tabs.
+The default, **System default**, follows the first language in your macOS preferred-language list that the app has.
+A regional variant without its own translation uses the same language, so Belgian French shows French (France) and Austrian German shows German.
+If none of your languages is available, the app shows English.
+
+A new choice applies right away to the window, the menu bar icon menu and the app menu.
+The dropdown is disabled while the app is busy, quitting or locked read-only.
+The app stores the choice in `language.json`, next to `mcp.json`.
+If that file is unreadable or holds an unknown language, the app uses the system language.
+
+Only the app's own interface is translated.
+Messages from the gateway, your servers and the logs stay in their original language, and so does this guide.
+Translations are not yet reviewed by native speakers, so some wording may read oddly.
 
 ## Closing and quitting
 

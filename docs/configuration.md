@@ -18,7 +18,7 @@ Saving always validates the file again.
 
 Use one configuration file, either `mcp.json` or `mcp.jsonc`.
 It lives in `~/Library/Application Support/MCP Gateway/`, and this location cannot be changed.
-The same folder holds `updates.json`, the automatic-update setting, and `seen-version.json`, the version whose release notes you closed.
+The same folder holds `updates.json`, the automatic-update setting, `seen-version.json`, the version whose release notes you closed, and `language.json`, the app language you chose in the sidebar.
 `mcp.json` must be strict JSON.
 `mcp.jsonc` also allows comments and trailing commas.
 If both files exist, the app reports an error.
