@@ -3,16 +3,28 @@ import { useState } from 'react';
 
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
 import { Input } from '@mcp-gateway/mainview/components/mac/input';
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from '@mcp-gateway/mainview/components/mac/native-select';
 import { Field, Toggle } from '@mcp-gateway/mainview/components/ui';
+import { useI18n } from '@mcp-gateway/mainview/i18n';
 import { generateToken } from '@mcp-gateway/mainview/lib/token';
+import {
+  type LanguagePreference,
+  languageName,
+  localeTag,
+  type MessageKey,
+  parseLanguagePreference,
+} from '@mcp-gateway/shared/i18n';
 import type { AppSnapshot } from '@mcp-gateway/shared/rpc';
 import type { GatewayConfig, GatewaySnapshot, NetworkKind } from '@mcp-gateway/shared/types';
 
-const NETWORK_LABELS: Record<NetworkKind, string> = {
-  loopback: 'this computer only',
-  lan: 'LAN',
-  tailscale: 'Tailscale',
-  tunnel: 'VPN tunnel',
+const NETWORK_LABELS: Record<NetworkKind, MessageKey> = {
+  loopback: 'settings.networkKind.loopback',
+  lan: 'settings.networkKind.lan',
+  tailscale: 'settings.networkKind.tailscale',
+  tunnel: 'settings.networkKind.tunnel',
 };
 
 /** Comma-separated field text as a list of ranges; an empty field removes the property. */
@@ -33,6 +45,7 @@ interface Settings {
   showToken: boolean;
   setShowToken: (show: boolean) => void;
   filename: string;
+  onLanguageChange: (preference: LanguagePreference) => void;
 }
 
 export const Settings = ({
@@ -44,7 +57,9 @@ export const Settings = ({
   showToken,
   setShowToken,
   filename,
+  onLanguageChange,
 }: Settings) => {
+  const { t } = useI18n();
   const setGateway = (patch: Partial<GatewayConfig['gateway']>) => {
     if (config) update({ ...config, gateway: { ...config.gateway, ...patch } });
   };
@@ -57,133 +72,160 @@ export const Settings = ({
       ? peersText
       : (peers?.join(', ') ?? '');
   return (
-    <section className="panel settings-panel">
-      <div className="section-heading">
-        <div>
-          <h2>Gateway preferences</h2>
-          <p>Changes take effect after saving the full {filename}</p>
-        </div>
-      </div>
-      {config ? (
-        <>
+    <>
+      {/* A choice of one is no choice; release builds show this once a second catalog exists. */}
+      {snapshot.language.available.length > 1 && (
+        <section className="panel settings-panel" aria-labelledby="language-heading">
+          <div className="section-heading">
+            <div>
+              <h2 id="language-heading">{t('settings.languageTitle')}</h2>
+              <p>{t('settings.languageIntro')}</p>
+            </div>
+          </div>
           <div className="form-grid">
-            <Field
-              label="Interface / address"
-              help="A LAN, Tailscale or WireGuard address on this Mac. Loopback is local only."
-            >
-              <Input
-                aria-label="Interface / address"
-                readOnly={configurationLocked}
-                list="interfaces"
-                value={config.gateway.host}
-                onChange={(event) => setGateway({ host: event.target.value })}
-              />
-              <datalist id="interfaces">
-                {gateway?.interfaces.map((item) => (
-                  <option key={`${item.name}-${item.address}`} value={item.address}>
-                    {item.name} · {NETWORK_LABELS[item.kind]}
-                  </option>
+            <Field label={t('settings.languageLabel')} help={t('settings.languageHelp')}>
+              <NativeSelect
+                value={snapshot.language.preference}
+                disabled={configurationLocked}
+                onChange={(event) => {
+                  const preference = parseLanguagePreference(
+                    event.target.value,
+                    snapshot.language.available,
+                  );
+                  if (preference) onLanguageChange(preference);
+                }}
+              >
+                <NativeSelectOption value="system">
+                  {t('settings.languageSystem', {
+                    language: languageName(snapshot.language.system),
+                  })}
+                </NativeSelectOption>
+                {snapshot.language.available.map((locale) => (
+                  <NativeSelectOption key={locale} value={locale} lang={localeTag(locale)}>
+                    {languageName(locale)}
+                  </NativeSelectOption>
                 ))}
-              </datalist>
-            </Field>
-            <Field label="Port">
-              <Input
-                type="number"
-                readOnly={configurationLocked}
-                min="1"
-                max="65535"
-                value={config.gateway.port === 0 ? '' : config.gateway.port}
-                // Keep an empty port editable; zero is explicitly rejected by native validation.
-                onChange={(event) =>
-                  setGateway({ port: event.target.value === '' ? 0 : event.target.valueAsNumber })
-                }
-              />
+              </NativeSelect>
             </Field>
           </div>
-          <Field
-            label="Allowed client ranges"
-            help="IPv4 ranges, comma separated, such as 100.64.0.0/10. Required for a 100.64.0.0/10 address. When set, only these clients are accepted."
-          >
-            <Input
-              autoComplete="off"
-              readOnly={configurationLocked}
-              spellCheck={false}
-              placeholder="Selected interface's subnet"
-              value={peersShown}
-              // Native validation checks every entry on save.
-              onChange={(event) => {
-                setPeersText(event.target.value);
-                setGateway({ allowedPeers: peerList(event.target.value) });
-              }}
-            />
-          </Field>
-          <Field
-            label="Global bearer token"
-            help="Used by servers without their own key. 32 to 512 printable ASCII characters without spaces. Client configurations include this secret."
-          >
-            <div className="token-input">
+        </section>
+      )}
+      <section className="panel settings-panel">
+        <div className="section-heading">
+          <div>
+            <h2>{t('settings.preferences')}</h2>
+            <p>{t('settings.preferencesIntro', { filename })}</p>
+          </div>
+        </div>
+        {config ? (
+          <>
+            <div className="form-grid">
+              <Field label={t('settings.address')} help={t('settings.addressHelp')}>
+                <Input
+                  aria-label={t('settings.address')}
+                  readOnly={configurationLocked}
+                  list="interfaces"
+                  value={config.gateway.host}
+                  onChange={(event) => setGateway({ host: event.target.value })}
+                />
+                <datalist id="interfaces">
+                  {gateway?.interfaces.map((item) => (
+                    <option key={`${item.name}-${item.address}`} value={item.address}>
+                      {item.name} · {t(NETWORK_LABELS[item.kind])}
+                    </option>
+                  ))}
+                </datalist>
+              </Field>
+              <Field label={t('settings.port')}>
+                <Input
+                  type="number"
+                  readOnly={configurationLocked}
+                  min="1"
+                  max="65535"
+                  value={config.gateway.port === 0 ? '' : config.gateway.port}
+                  // Keep an empty port editable; zero is explicitly rejected by native validation.
+                  onChange={(event) =>
+                    setGateway({ port: event.target.value === '' ? 0 : event.target.valueAsNumber })
+                  }
+                />
+              </Field>
+            </div>
+            <Field label={t('settings.peers')} help={t('settings.peersHelp')}>
               <Input
                 autoComplete="off"
                 readOnly={configurationLocked}
                 spellCheck={false}
-                type={showToken ? 'text' : 'password'}
-                value={config.gateway.token}
-                onChange={(event) => setGateway({ token: event.target.value })}
+                placeholder={t('settings.peersPlaceholder')}
+                value={peersShown}
+                // Native validation checks every entry on save.
+                onChange={(event) => {
+                  setPeersText(event.target.value);
+                  setGateway({ allowedPeers: peerList(event.target.value) });
+                }}
               />
-              <Button
-                variant="ghost"
-                size="icon-lg"
-                aria-label={showToken ? 'Hide bearer token' : 'Show bearer token'}
-                onClick={() => setShowToken(!showToken)}
-              >
-                {showToken ? <EyeOff /> : <Eye />}
-              </Button>
-            </div>
-          </Field>
-          <Button
-            size="lg"
-            disabled={configurationLocked}
-            onClick={() => setGateway({ token: generateToken() })}
-          >
-            Generate secure token
-          </Button>
-          <div className="startup-settings">
-            <Toggle
-              label="Launch app at login"
-              description="Opens in the background at launch. Open the window from the menu bar."
-              disabled={configurationLocked}
-              checked={config.gateway.launchAtLogin ?? false}
-              onChange={(value) => setGateway({ launchAtLogin: value })}
-            />
-            <div className="login-status">
-              <p className="login-state">
-                <span
-                  className={`led ${snapshot.login.supported && snapshot.login.enabled ? 'on' : ''}`}
+            </Field>
+            <Field label={t('settings.token')} help={t('settings.tokenHelp')}>
+              <div className="token-input">
+                <Input
+                  autoComplete="off"
+                  readOnly={configurationLocked}
+                  spellCheck={false}
+                  type={showToken ? 'text' : 'password'}
+                  value={config.gateway.token}
+                  onChange={(event) => setGateway({ token: event.target.value })}
                 />
-                macOS login item:{' '}
-                {snapshot.login.supported
-                  ? snapshot.login.enabled
-                    ? 'Enabled'
-                    : 'Disabled'
-                  : 'Unsupported'}
-              </p>
-              {snapshot.login.error && <p className="inline-error">{snapshot.login.error}</p>}
-              <small>
-                The setting above is a request; this is the registration macOS has in effect.
-              </small>
-            </div>
-            <Toggle
-              label="Start gateway when the app opens"
+                <Button
+                  variant="ghost"
+                  size="icon-lg"
+                  aria-label={showToken ? t('settings.hideToken') : t('settings.showToken')}
+                  onClick={() => setShowToken(!showToken)}
+                >
+                  {showToken ? <EyeOff /> : <Eye />}
+                </Button>
+              </div>
+            </Field>
+            <Button
+              size="lg"
               disabled={configurationLocked}
-              description="Begin listening automatically, independently of login startup."
-              checked={config.gateway.autoStart ?? false}
-              onChange={(value) => setGateway({ autoStart: value })}
-            />
-          </div>
-        </>
-      ) : (
-        <p>Structured preferences are paused until the configuration is repaired.</p>
-      )}
-    </section>
+              onClick={() => setGateway({ token: generateToken() })}
+            >
+              {t('settings.generateToken')}
+            </Button>
+            <div className="startup-settings">
+              <Toggle
+                label={t('settings.launchAtLogin')}
+                description={t('settings.launchAtLoginDescription')}
+                disabled={configurationLocked}
+                checked={config.gateway.launchAtLogin ?? false}
+                onChange={(value) => setGateway({ launchAtLogin: value })}
+              />
+              <div className="login-status">
+                <p className="login-state">
+                  <span
+                    className={`led ${snapshot.login.supported && snapshot.login.enabled ? 'on' : ''}`}
+                  />
+                  {!snapshot.login.supported
+                    ? t('settings.loginItemUnsupported')
+                    : snapshot.login.enabled
+                      ? t('settings.loginItemEnabled')
+                      : t('settings.loginItemDisabled')}
+                </p>
+                {snapshot.login.error && <p className="inline-error">{snapshot.login.error}</p>}
+                <small>{t('settings.loginItemNote')}</small>
+              </div>
+              <Toggle
+                label={t('settings.autoStart')}
+                disabled={configurationLocked}
+                description={t('settings.autoStartDescription')}
+                checked={config.gateway.autoStart ?? false}
+                onChange={(value) => setGateway({ autoStart: value })}
+              />
+            </div>
+          </>
+        ) : (
+          <p>{t('settings.paused')}</p>
+        )}
+      </section>
+    </>
   );
 };

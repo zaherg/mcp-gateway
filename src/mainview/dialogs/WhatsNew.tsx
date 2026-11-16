@@ -2,6 +2,7 @@ import type { ReactNode, RefObject } from 'react';
 
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
 import { Modal } from '@mcp-gateway/mainview/components/ui';
+import { useI18n } from '@mcp-gateway/mainview/i18n';
 import { changelogBlocks, changelogSection } from '@mcp-gateway/shared/changelog';
 // Bundled at build time, so the notes always belong to this build.
 import changelog from '../../../CHANGELOG.md?raw';
@@ -29,10 +30,11 @@ interface WhatsNew {
 }
 
 export const WhatsNew = ({ version, onClose, fallbackFocus }: WhatsNew) => {
+  const { t } = useI18n();
   const section = changelogSection(changelog, version);
   if (!section) return null;
   return (
-    <Modal title={`What's new in ${version}`} onClose={onClose} fallbackFocus={fallbackFocus}>
+    <Modal title={t('whatsNew.title', { version })} onClose={onClose} fallbackFocus={fallbackFocus}>
       <div className="whats-new">
         {changelogBlocks(section).map((block) =>
           block.kind === 'list' ? (
@@ -50,7 +52,7 @@ export const WhatsNew = ({ version, onClose, fallbackFocus }: WhatsNew) => {
       </div>
       <div className="dialog-actions">
         <Button variant="default" onClick={onClose}>
-          Done
+          {t('whatsNew.done')}
         </Button>
       </div>
     </Modal>

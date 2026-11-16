@@ -2,6 +2,7 @@ import type { RefObject } from 'react';
 
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
 import { Modal } from '@mcp-gateway/mainview/components/ui';
+import { useI18n } from '@mcp-gateway/mainview/i18n';
 import type { UpdateStatus } from '@mcp-gateway/shared/rpc';
 import type { GatewayConfig } from '@mcp-gateway/shared/types';
 
@@ -44,63 +45,55 @@ export const ConfirmDialogs = ({
   update,
   fallbackFocus,
 }: ConfirmDialogs) => {
+  const { t, rich } = useI18n();
   return (
     <>
       {confirmQuit && (
         <Modal
-          title="Quit MCP Gateway?"
+          title={t('confirm.quitTitle')}
           onClose={() => setConfirmQuit(false)}
           fallbackFocus={fallbackFocus}
         >
-          <p>Your unsaved changes will be discarded. Quit stops the gateway and its backends.</p>
+          <p>{t('confirm.quitBody')}</p>
           <div className="dialog-actions">
-            <Button onClick={() => setConfirmQuit(false)}>Cancel</Button>
+            <Button onClick={() => setConfirmQuit(false)}>{t('common.cancel')}</Button>
             <Button variant="destructive" disabled={quitting} onClick={() => void requestQuit()}>
-              Discard changes and quit
+              {t('confirm.quitAction')}
             </Button>
           </div>
         </Modal>
       )}
       {confirmUpdate && updateReady && (
         <Modal
-          title="Restart to update?"
+          title={t('confirm.updateTitle')}
           onClose={() => setConfirmUpdate(false)}
           fallbackFocus={fallbackFocus}
         >
-          <p>
-            Restart MCP Gateway to install version {updateState?.availableVersion}? Active MCP
-            connections will be interrupted while the gateway and backends stop before the installer
-            is armed.
-          </p>
-          <p>
-            {dirty
-              ? 'Your unsaved configuration changes will be discarded.'
-              : 'Your saved configuration remains unchanged.'}
-          </p>
+          <p>{t('confirm.updateBody', { version: updateState?.availableVersion ?? '' })}</p>
+          <p>{dirty ? t('confirm.updateDiscards') : t('confirm.updateKeeps')}</p>
           <div className="dialog-actions">
-            <Button onClick={() => setConfirmUpdate(false)}>Cancel</Button>
+            <Button onClick={() => setConfirmUpdate(false)}>{t('common.cancel')}</Button>
             <Button
               variant="destructive"
               disabled={quitting || updateRestarting}
               onClick={() => void requestUpdateRestart()}
             >
-              {dirty ? 'Discard draft and restart' : 'Restart to update'}
+              {dirty ? t('confirm.updateDiscardAction') : t('confirm.updateAction')}
             </Button>
           </div>
         </Modal>
       )}
       {deleting && (
         <Modal
-          title="Delete server?"
+          title={t('confirm.deleteTitle')}
           onClose={() => setDeleting(null)}
           fallbackFocus={fallbackFocus}
         >
           <p className="dialog-intro">
-            Remove <strong>{deleting}</strong> from the configuration? Its endpoint will stop when
-            you save. This does not delete backend data.
+            {rich('confirm.deleteBody', { name: <strong>{deleting}</strong> })}
           </p>
           <div className="dialog-actions">
-            <Button onClick={() => setDeleting(null)}>Cancel</Button>
+            <Button onClick={() => setDeleting(null)}>{t('common.cancel')}</Button>
             <Button
               variant="destructive"
               disabled={configurationLocked}
@@ -112,7 +105,7 @@ export const ConfirmDialogs = ({
                 setDeleting(null);
               }}
             >
-              Delete server
+              {t('confirm.deleteAction')}
             </Button>
           </div>
         </Modal>

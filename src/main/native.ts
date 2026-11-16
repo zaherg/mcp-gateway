@@ -144,6 +144,21 @@ export const openTrayIndicator = (
   };
 };
 
+// Bun's Intl follows LANG, which a Finder or login-item launch does not set; AppKit has the list.
+export const readPreferredLanguages = (path: string): string[] => {
+  const library = dlopen(path, {
+    mcp_preferred_languages: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
+  });
+  try {
+    const buffer = Buffer.alloc(4096);
+    const length = library.symbols.mcp_preferred_languages(buffer, buffer.length);
+    if (length < 0) throw new Error(`The preferred languages could not be read (${length}).`);
+    return buffer.toString('utf8', 0, length).split('\n').filter(Boolean);
+  } finally {
+    library.close();
+  }
+};
+
 type AppIdentifier = typeof PRODUCTION_IDENTIFIER | typeof TEST_IDENTIFIER;
 
 export const installedIdentifier = (resourcesFolder: string): AppIdentifier => {

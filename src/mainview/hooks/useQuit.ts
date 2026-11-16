@@ -1,6 +1,7 @@
 import { type RefObject, useCallback, useEffect, useRef, useState } from 'react';
 
 import type { Editor } from '@mcp-gateway/mainview/dialogs/ServerEditor';
+import { useI18n } from '@mcp-gateway/mainview/i18n';
 import type { AppClient, AppSnapshot, QuitStatus } from '@mcp-gateway/shared/rpc';
 
 interface QuitOptions {
@@ -34,6 +35,7 @@ export const useQuit = ({
   editor,
   deleting,
 }: QuitOptions) => {
+  const { t } = useI18n();
   const [quitStatus, setQuitStatus] = useState<QuitStatus>({
     attempt: 0,
     phase: 'idle',
@@ -115,11 +117,7 @@ export const useQuit = ({
   const requestQuit = async () => {
     if (quitRequestPending.current) return;
     setConfirmQuit(false);
-    await requestTerminal(
-      () => client.quit(),
-      'Quit requested. Waiting for gateway cleanup.',
-      'Could not request Quit. Check application status before retrying.',
-    );
+    await requestTerminal(() => client.quit(), t('quit.requested'), t('quit.requestFailed'));
   };
 
   const requestUpdateRestart = async () => {
@@ -129,8 +127,8 @@ export const useQuit = ({
     generation.current++;
     await requestTerminal(
       () => client.updatesRestart(),
-      'Restart requested. Waiting for gateway cleanup.',
-      'Could not request the update restart. Check application status before retrying.',
+      t('quit.restartRequested'),
+      t('quit.restartFailed'),
     );
   };
 
@@ -138,7 +136,7 @@ export const useQuit = ({
   interactiveQuit.current = () => {
     if (confirmQuit || quitting || quitRequestPending.current) return true;
     if (busy || (!snapshot && quitStatus.phase !== 'failed')) {
-      setError('Quit could not be requested while the window is busy. Try again when it is ready.');
+      setError(t('quit.busy'));
       return true;
     }
     setConfirmUpdate(false);

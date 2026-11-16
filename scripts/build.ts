@@ -41,6 +41,7 @@ await command(
     'ServiceManagement',
     '-framework',
     'AppKit',
+    'src/native/locale.m',
     'src/native/login.m',
     'src/native/signals.m',
     'src/native/tray.m',

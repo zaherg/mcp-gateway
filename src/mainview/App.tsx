@@ -19,6 +19,7 @@ import {
 import { WhatsNew } from '@mcp-gateway/mainview/dialogs/WhatsNew';
 import { useOperations } from '@mcp-gateway/mainview/hooks/useOperations';
 import { useQuit } from '@mcp-gateway/mainview/hooks/useQuit';
+import { useI18n } from '@mcp-gateway/mainview/i18n';
 import { Logs } from '@mcp-gateway/mainview/Logs';
 import { Overview } from '@mcp-gateway/mainview/views/Overview';
 import { RawConfig } from '@mcp-gateway/mainview/views/RawConfig';
@@ -26,6 +27,7 @@ import { Settings } from '@mcp-gateway/mainview/views/Settings';
 import { Updates } from '@mcp-gateway/mainview/views/Updates';
 import { changelogSection } from '@mcp-gateway/shared/changelog';
 import { editConfigDocument } from '@mcp-gateway/shared/config-document';
+import type { LanguagePreference } from '@mcp-gateway/shared/i18n';
 import type { AppClient, AppSnapshot, SocialLinkTarget } from '@mcp-gateway/shared/rpc';
 import { needsLoginRetry } from '@mcp-gateway/shared/rpc';
 import type { GatewayConfig } from '@mcp-gateway/shared/types';
@@ -71,6 +73,11 @@ export const App = ({ client }: App) => {
   const editingRef = useRef(false);
   editingRef.current = editor !== null || deleting !== null;
   const generation = useRef(0);
+  const { t, setLocale } = useI18n();
+  const snapshotLocale = snapshot?.language.locale;
+  useEffect(() => {
+    if (snapshotLocale) setLocale(snapshotLocale);
+  }, [snapshotLocale, setLocale]);
   const updateState = snapshot?.update;
   const updateRestarting = updateState?.phase === 'restarting';
   const dirty = doc?.dirty ?? false;
@@ -169,7 +176,7 @@ export const App = ({ client }: App) => {
       } catch {
         if (!cancelled && !pollFailed.current) {
           setErrorOccurrence(null);
-          setError('Could not read application status. The native connection may be unavailable.');
+          setError(t('app.statusUnavailable'));
         }
         pollFailed.current = true;
       } finally {
@@ -181,7 +188,7 @@ export const App = ({ client }: App) => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [client, quitRequestPending]);
+  }, [client, quitRequestPending, t]);
 
   const updateReady = updateState?.phase === 'ready';
   const whatsNewOpen = Boolean(
@@ -264,7 +271,7 @@ export const App = ({ client }: App) => {
     if (configurationLocked || !doc || text === undefined) return false;
     return run(
       () => client.saveConfig({ text, expectedRevision: doc.revision }),
-      'Configuration saved.',
+      t('app.configSaved'),
       true,
     );
   };
@@ -275,7 +282,7 @@ export const App = ({ client }: App) => {
       setErrorOccurrence(result.error.occurrenceId ?? null);
       setError(`${result.error.code}: ${result.error.message}`);
     } catch {
-      setError('The confirmation dialog could not be opened. The draft is preserved.');
+      setError(t('app.confirmUnavailable'));
     }
     return false;
   };
@@ -291,6 +298,10 @@ export const App = ({ client }: App) => {
   const revealConfig = () => {
     if (busy || configurationLocked) return;
     void run(() => client.revealConfig(), '');
+  };
+  const changeLanguage = (preference: LanguagePreference) => {
+    if (busy || configurationLocked) return;
+    void run(() => client.setLanguage({ preference }), '');
   };
   const changeEditor = (patch: Partial<Editor>) => {
     if (configurationLocked) return;
@@ -326,12 +337,12 @@ export const App = ({ client }: App) => {
     event.preventDefault();
     if (!editor || !config || configurationLocked) return;
     if (editor.name !== editor.original && Object.hasOwn(config.mcpServers, editor.name)) {
-      setEditorError('A server with this name already exists.');
+      setEditorError(t('app.serverExists'));
       return;
     }
     // An empty custom field is a mistake, not a request to inherit the global key.
     if (editor.token === '') {
-      setEditorError('Enter this server key, or select the global key.');
+      setEditorError(t('app.serverKeyEmpty'));
       return;
     }
     let args: string[] | undefined;
@@ -341,17 +352,14 @@ export const App = ({ client }: App) => {
       if (editor.type === 'stdio') {
         const parsedArgs = JSON.parse(editor.args || '[]');
         if (!Array.isArray(parsedArgs) || !parsedArgs.every((arg) => typeof arg === 'string'))
-          throw new Error('Arguments must be a JSON array of strings.');
+          throw new Error(t('app.argumentsInvalid'));
         args = parsedArgs;
-        env = parseStringMap(editor.env, 'Environment must be a JSON object with string values.');
+        env = parseStringMap(editor.env, t('app.environmentInvalid'));
       } else {
-        headers = parseStringMap(
-          editor.headers,
-          'Headers must be a JSON object with string values.',
-        );
+        headers = parseStringMap(editor.headers, t('app.headersInvalid'));
       }
     } catch (failure) {
-      setEditorError(failure instanceof Error ? failure.message : 'The server fields are invalid.');
+      setEditorError(failure instanceof Error ? failure.message : t('app.serverFieldsInvalid'));
       return;
     }
     // Spread last: these keys follow the transport fields in the saved file.
@@ -459,7 +467,7 @@ export const App = ({ client }: App) => {
           />
           {showUpdatesModal && updateState && (
             <Modal
-              title="Updates"
+              title={t('common.updates')}
               onClose={() => setUpdatesOpen(false)}
               fallbackFocus={fallbackFocus}
             >
@@ -528,8 +536,8 @@ export const App = ({ client }: App) => {
       ) : !snapshot || !doc ? (
         <section className="panel loading" aria-busy="true">
           <Activity size={22} />
-          <h2>Connecting to the application</h2>
-          <p>Waiting for the native application…</p>
+          <h2>{t('app.connecting')}</h2>
+          <p>{t('app.waiting')}</p>
         </section>
       ) : (
         <>
@@ -568,6 +576,7 @@ export const App = ({ client }: App) => {
                 showToken={showToken}
                 setShowToken={setShowToken}
                 filename={filename}
+                onLanguageChange={changeLanguage}
               />
             )}
             <RawConfig
@@ -592,9 +601,9 @@ export const App = ({ client }: App) => {
           <footer className="page-footer">
             <span>
               <span className={`led ${gateway?.running ? 'on' : ''}`} />
-              {gateway?.running ? 'Listener active' : 'No active listener'}
+              {gateway?.running ? t('app.listenerActive') : t('app.noListener')}
             </span>
-            <span>Closing this window keeps the gateway running. Use Quit to stop it.</span>
+            <span>{t('app.closeHint')}</span>
           </footer>
         </>
       )}

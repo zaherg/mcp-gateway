@@ -1,4 +1,5 @@
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
+import { useI18n } from '@mcp-gateway/mainview/i18n';
 import type { AppSnapshot } from '@mcp-gateway/shared/rpc';
 
 interface DraftBar {
@@ -18,25 +19,28 @@ export const DraftBar = ({
   save,
   discard,
 }: DraftBar) => {
+  const { t } = useI18n();
   if (!dirty && !retryLogin) return null;
   return (
     <div className="draft-bar">
       <span>
-        <strong>{dirty ? 'Unsaved changes' : 'Login registration unresolved'}</strong>
+        <strong>{dirty ? t('draft.unsaved') : t('draft.loginUnresolved')}</strong>
         <small>
           {dirty
-            ? 'Live endpoints still use the saved configuration.'
-            : `${snapshot.login.error ? `${snapshot.login.error} ` : ''}Save again to retry the requested login setting.`}
+            ? t('draft.liveEndpoints')
+            : snapshot.login.error
+              ? t('draft.loginRetryWithError', { error: snapshot.login.error })
+              : t('draft.loginRetry')}
         </small>
       </span>
       <div>
         {dirty && (
           <Button disabled={configurationLocked} onClick={() => void discard()}>
-            Discard
+            {t('draft.discard')}
           </Button>
         )}
         <Button variant="default" disabled={configurationLocked} onClick={() => void save()}>
-          {dirty ? 'Save changes' : 'Retry login registration'}
+          {dirty ? t('draft.save') : t('draft.retryLogin')}
         </Button>
       </div>
     </div>

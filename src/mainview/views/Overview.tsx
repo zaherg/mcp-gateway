@@ -2,6 +2,8 @@ import { CircleHelp, Code2, Copy, RefreshCw, Server, ShieldCheck, Trash2 } from 
 
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
 import { bearPreset, type Editor, emptyEditor } from '@mcp-gateway/mainview/dialogs/ServerEditor';
+import { useI18n } from '@mcp-gateway/mainview/i18n';
+import type { MessageKey } from '@mcp-gateway/shared/i18n';
 import type { AppClient, AppResult, AppSnapshot } from '@mcp-gateway/shared/rpc';
 import type { GatewayConfig, GatewaySnapshot } from '@mcp-gateway/shared/types';
 
@@ -13,11 +15,11 @@ type Run = (
 
 // The LED carries the state; the word names it.
 const SERVER_STATUS = {
-  mounted: { label: 'Mounted', led: 'on' },
-  error: { label: 'Error', led: 'error' },
-  disabled: { label: 'Disabled', led: '' },
-  stopped: { label: 'Stopped', led: '' },
-} as const;
+  mounted: { label: 'overview.status.mounted', led: 'on' },
+  error: { label: 'overview.status.error', led: 'error' },
+  disabled: { label: 'overview.status.disabled', led: '' },
+  stopped: { label: 'overview.status.stopped', led: '' },
+} as const satisfies Record<string, { label: MessageKey; led: string }>;
 
 interface Overview {
   gateway: GatewaySnapshot | undefined;
@@ -46,6 +48,7 @@ export const Overview = ({
   setEditor,
   setEditorError,
 }: Overview) => {
+  const { t } = useI18n();
   const serverCount = config ? Object.keys(config.mcpServers).length : 0;
   return (
     <>
@@ -53,17 +56,17 @@ export const Overview = ({
         <div className="section-heading">
           <div>
             <h2 id="servers-heading">
-              Servers
+              {t('overview.servers')}
               {config && <span className="count">{serverCount}</span>}
             </h2>
-            <p>A separate endpoint for each configured MCP server</p>
+            <p>{t('overview.serversIntro')}</p>
           </div>
           <Button
             variant="default"
             disabled={configurationLocked || !config}
             onClick={() => openEditor()}
           >
-            Add server
+            {t('overview.addServer')}
           </Button>
         </div>
         <div className="server-grid">
@@ -82,8 +85,8 @@ export const Overview = ({
                     <span className={`led ${state.led}`} />
                     <h3>{name}</h3>
                     <span className="card-meta">
-                      {http ? 'Streamable HTTP' : 'Local stdio'} ·{' '}
-                      <span className="card-status">{state.label}</span>
+                      {http ? t('common.streamableHttp') : t('overview.localStdio')} ·{' '}
+                      <span className="card-status">{t(state.label)}</span>
                     </span>
                   </div>
                   <div className="endpoint">
@@ -91,13 +94,10 @@ export const Overview = ({
                     <Button
                       variant="ghost"
                       size="icon-lg"
-                      aria-label={`Copy endpoint for ${name}`}
+                      aria-label={t('overview.copyEndpoint', { name })}
                       disabled={!live || dirty}
                       onClick={() =>
-                        void run(
-                          () => client.copyEndpoint({ name }),
-                          'Endpoint copied to clipboard.',
-                        )
+                        void run(() => client.copyEndpoint({ name }), t('overview.endpointCopied'))
                       }
                     >
                       <Copy />
@@ -114,7 +114,7 @@ export const Overview = ({
                       disabled={configurationLocked}
                       onClick={() => openEditor(name)}
                     >
-                      Edit server
+                      {t('common.editServer')}
                     </Button>
                     <Button
                       variant="ghost"
@@ -122,12 +122,12 @@ export const Overview = ({
                       disabled={configurationLocked || dirty || !!gateway?.configError}
                       onClick={() => void toggleEndpoint(name, !server.disabled)}
                     >
-                      {server.disabled ? 'Start' : 'Stop'}
+                      {server.disabled ? t('overview.start') : t('overview.stop')}
                     </Button>
                     <Button
                       variant="ghost"
                       size="icon-lg"
-                      aria-label={`Restart ${name}`}
+                      aria-label={t('overview.restart', { name })}
                       disabled={
                         configurationLocked ||
                         dirty ||
@@ -136,7 +136,10 @@ export const Overview = ({
                         !!gateway?.configError
                       }
                       onClick={() =>
-                        void run(() => client.restartServer({ name }), `${name} restarted.`)
+                        void run(
+                          () => client.restartServer({ name }),
+                          t('overview.restarted', { name }),
+                        )
                       }
                     >
                       <RefreshCw />
@@ -144,7 +147,7 @@ export const Overview = ({
                     <Button
                       variant="ghost"
                       size="icon-lg"
-                      aria-label={`Delete ${name}`}
+                      aria-label={t('overview.delete', { name })}
                       disabled={configurationLocked}
                       onClick={() => {
                         if (!configurationLocked) setDeleting(name);
@@ -160,12 +163,12 @@ export const Overview = ({
                     onClick={() =>
                       void run(
                         () => client.copyClientConfig({ name }),
-                        'Client configuration copied. It contains your bearer token; keep it private.',
+                        t('overview.clientConfigCopied'),
                       )
                     }
                   >
                     <Copy size={14} />
-                    Copy client configuration
+                    {t('overview.copyClientConfig')}
                   </button>
                 </article>
               );
@@ -174,11 +177,11 @@ export const Overview = ({
         {config && serverCount === 0 && (
           <div className="empty-state panel">
             <Server size={24} />
-            <h3>No servers configured</h3>
+            <h3>{t('overview.emptyTitle')}</h3>
             <p>
-              Add a local command or an existing HTTP server.
+              {t('overview.emptyLine1')}
               <br />
-              Each gets its own shareable MCP endpoint.
+              {t('overview.emptyLine2')}
             </p>
             <Button
               disabled={configurationLocked}
@@ -188,40 +191,28 @@ export const Overview = ({
                 setEditor({ ...emptyEditor(), ...bearPreset() });
               }}
             >
-              Use macOS Bear preset
+              {t('overview.bearPreset')}
             </Button>
-            <small>Optional, macOS only. Bear can expose all accessible notes and tools.</small>
+            <small>{t('overview.bearNote')}</small>
           </div>
         )}
         {!config && (
           <div className="panel empty-state">
             <Code2 size={24} />
-            <h3>Repair configuration to continue</h3>
-            <p>
-              No defaults have been substituted. Open Authoritative configuration in Settings to
-              repair your original configuration.
-            </p>
+            <h3>{t('overview.repairTitle')}</h3>
+            <p>{t('overview.repairBody')}</p>
           </div>
         )}
         <p className="fine-print">
-          <CircleHelp size={16} /> Mounted means the endpoint is served, not that the backend
-          handshake succeeded. Start and Stop save the server's enabled state; the gateway starts
-          separately.
+          <CircleHelp size={16} /> {t('overview.mountedNote')}
         </p>
       </section>
       <section className="network-note">
         <ShieldCheck size={16} />
         <div>
-          <h3>HTTP is not encrypted</h3>
-          <p>
-            The gateway sends the bearer token and tool data in plain HTTP. On a LAN, use only a
-            network you trust. On a Tailscale or WireGuard address, the tunnel carries the traffic,
-            and every device in the allowed client ranges can reach these endpoints.
-          </p>
-          <p>
-            Keep this computer awake for access: sleep takes the endpoints offline, and DHCP can
-            change a LAN address. Reachability from other devices is not verified here.
-          </p>
+          <h3>{t('overview.httpTitle')}</h3>
+          <p>{t('overview.httpBody')}</p>
+          <p>{t('overview.awakeBody')}</p>
         </div>
       </section>
     </>

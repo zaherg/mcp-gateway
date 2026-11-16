@@ -3,20 +3,22 @@ import { type ReactNode, type RefObject, useLayoutEffect, useRef } from 'react';
 
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
 import type { Editor } from '@mcp-gateway/mainview/dialogs/ServerEditor';
+import { useI18n } from '@mcp-gateway/mainview/i18n';
+import type { MessageKey } from '@mcp-gateway/shared/i18n';
 import type { AppSnapshot, QuitStatus, SocialLinkTarget } from '@mcp-gateway/shared/rpc';
 import type { NetworkKind } from '@mcp-gateway/shared/types';
 
 // Sidebar notice for the saved listener address: [title, detail].
-const NETWORK_NOTICES: Record<NetworkKind, readonly [string, string]> = {
-  loopback: ['This Mac only', 'Authenticated, local only'],
-  lan: ['LAN-only access', 'Authenticated, not encrypted'],
-  tailscale: ['Tailscale access', 'Authenticated, tunneled'],
-  tunnel: ['VPN tunnel access', 'Authenticated, tunneled'],
+const NETWORK_NOTICES: Record<NetworkKind, readonly [MessageKey, MessageKey]> = {
+  loopback: ['shell.network.loopback', 'shell.network.loopbackDetail'],
+  lan: ['shell.network.lan', 'shell.network.lanDetail'],
+  tailscale: ['shell.network.tailscale', 'shell.network.tunneledDetail'],
+  tunnel: ['shell.network.tunnel', 'shell.network.tunneledDetail'],
 };
-const NO_NETWORK_NOTICE = ['Network unavailable', 'Address is not assigned'] as const;
-const LOADING_NOTICE = ['Network', 'Reading configuration'] as const;
+const NO_NETWORK_NOTICE = ['shell.network.unavailable', 'shell.network.unavailableDetail'] as const;
+const LOADING_NOTICE = ['shell.network.loading', 'shell.network.loadingDetail'] as const;
 
-const networkNotice = (snapshot: AppSnapshot | null): readonly [string, string] => {
+const networkNotice = (snapshot: AppSnapshot | null): readonly [MessageKey, MessageKey] => {
   if (!snapshot) return LOADING_NOTICE;
   const network = snapshot.gateway.network;
   return network ? NETWORK_NOTICES[network] : NO_NETWORK_NOTICE;
@@ -61,6 +63,7 @@ export const Shell = ({
   children,
   dialogs,
 }: Shell) => {
+  const { t } = useI18n();
   const mainRef = useRef<HTMLElement>(null);
   const [networkTitle, networkDetail] = networkNotice(snapshot);
 
@@ -80,28 +83,31 @@ export const Shell = ({
           </span>
           <span>MCP Gateway</span>
         </div>
-        <nav aria-label="Main navigation" className="electrobun-webkit-app-region-no-drag">
+        <nav
+          aria-label={t('shell.mainNavigation')}
+          className="electrobun-webkit-app-region-no-drag"
+        >
           <button
             type="button"
             className={tab === 'overview' ? 'nav-item active' : 'nav-item'}
             ref={fallbackFocus}
             onClick={() => setTab('overview')}
           >
-            Overview
+            {t('shell.tab.overview')}
           </button>
           <button
             type="button"
             className={tab === 'settings' ? 'nav-item active' : 'nav-item'}
             onClick={() => setTab('settings')}
           >
-            Settings
+            {t('shell.tab.settings')}
           </button>
           <button
             type="button"
             className={tab === 'logs' ? 'nav-item active' : 'nav-item'}
             onClick={() => setTab('logs')}
           >
-            Logs
+            {t('shell.tab.logs')}
           </button>
         </nav>
         <div className="sidebar-bottom">
@@ -109,8 +115,8 @@ export const Shell = ({
           <div className="sidebar-footer">
             <span className={`led ${snapshot?.gateway.running ? 'on' : ''}`} />
             <span>
-              {networkTitle}
-              <small>{networkDetail}</small>
+              {t(networkTitle)}
+              <small>{t(networkDetail)}</small>
             </span>
           </div>
           {/* Brand marks: Simple Icons (https://simpleicons.org), CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). */}
@@ -118,15 +124,15 @@ export const Shell = ({
           <div
             className="sidebar-social-links electrobun-webkit-app-region-no-drag"
             role="group"
-            aria-label="Project links"
+            aria-label={t('shell.projectLinks')}
           >
             <Button
               type="button"
               variant="ghost"
               size="icon-xl"
               className="sidebar-social-link"
-              aria-label="Open user guide in default browser"
-              title="Open user guide in default browser"
+              aria-label={t('shell.link.docs')}
+              title={t('shell.link.docs')}
               disabled={socialLinksDisabled}
               onClick={() => onOpenSocialLink('docs')}
             >
@@ -137,8 +143,8 @@ export const Shell = ({
               variant="ghost"
               size="icon-xl"
               className="sidebar-social-link"
-              aria-label="Open GitHub repository in default browser"
-              title="Open GitHub repository in default browser"
+              aria-label={t('shell.link.github')}
+              title={t('shell.link.github')}
               disabled={socialLinksDisabled}
               onClick={() => onOpenSocialLink('github')}
             >
@@ -151,8 +157,8 @@ export const Shell = ({
               variant="ghost"
               size="icon-xl"
               className="sidebar-social-link"
-              aria-label="Open @zaherg on X in default browser"
-              title="Open @zaherg on X in default browser"
+              aria-label={t('shell.link.x')}
+              title={t('shell.link.x')}
               disabled={socialLinksDisabled}
               onClick={() => onOpenSocialLink('x')}
             >
@@ -168,17 +174,21 @@ export const Shell = ({
           <div>
             <h1>
               {tab === 'overview'
-                ? 'MCP server connections'
+                ? t('shell.title.overview')
                 : tab === 'logs'
-                  ? 'Diagnostic logs'
-                  : 'Gateway settings'}
+                  ? t('shell.title.logs')
+                  : t('shell.title.settings')}
             </h1>
             <p className="subtitle">
               {tab === 'overview'
-                ? 'One keyed endpoint per server, for devices on your network'
+                ? t('shell.subtitle.overview')
                 : tab === 'logs'
-                  ? 'Backend output, not redacted, kept in memory until you quit'
-                  : 'Listener, startup and the configuration file'}
+                  ? t('shell.subtitle.logs')
+                  : t(
+                      (snapshot?.language.available.length ?? 0) > 1
+                        ? 'shell.subtitle.settingsWithLanguage'
+                        : 'shell.subtitle.settings',
+                    )}
             </p>
           </div>
           <div className="page-actions">
@@ -195,10 +205,10 @@ export const Shell = ({
               onClick={() => interactiveQuit.current()}
             >
               {quitting
-                ? 'Quitting…'
+                ? t('shell.quitting')
                 : quitStatus.phase === 'failed'
-                  ? 'Retry Quit'
-                  : 'Quit MCP Gateway'}
+                  ? t('shell.retryQuit')
+                  : t('common.quitApp')}
             </Button>
           </div>
         </header>

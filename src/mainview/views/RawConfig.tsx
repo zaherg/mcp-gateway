@@ -5,6 +5,7 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from
 
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
 import type { Document } from '@mcp-gateway/mainview/dialogs/ServerEditor';
+import { useI18n } from '@mcp-gateway/mainview/i18n';
 import { jsonEditing } from '@mcp-gateway/mainview/lib/json-editing';
 import {
   CONFIG_TOO_LARGE,
@@ -14,6 +15,7 @@ import {
   MAX_CONFIG_BYTES,
   parseConfigTree,
 } from '@mcp-gateway/shared/config-document';
+import type { Translate } from '@mcp-gateway/shared/i18n';
 import type { AppClient } from '@mcp-gateway/shared/rpc';
 import type { GatewaySnapshot } from '@mcp-gateway/shared/types';
 
@@ -88,17 +90,21 @@ const feedbackOf = (issue: ConfigIssue | null, text: string): Feedback => {
   };
 };
 
-const feedbackText = (feedback: Feedback): string => {
+const feedbackText = (feedback: Feedback, t: Translate): string => {
   switch (feedback.kind) {
     case 'ok':
-      return 'Configuration fields checked.';
+      return t('raw.checked');
     case 'checking':
-      return 'Checking configuration...';
+      return t('raw.checking');
     case 'unavailable':
-      return 'Configuration check unavailable; Save still validates.';
+      return t('raw.checkUnavailable');
     case 'issue':
       return feedback.at
-        ? `${feedback.message} (line ${feedback.at.line}, column ${feedback.at.column})`
+        ? t('raw.issueAt', {
+            message: feedback.message,
+            line: feedback.at.line,
+            column: feedback.at.column,
+          })
         : feedback.message;
     default:
       return '';
@@ -145,6 +151,7 @@ export const RawConfig = ({
   setRawOpen,
   setNotice,
 }: RawConfig) => {
+  const { t } = useI18n();
   const previewOpen = visible && rawOpen;
   const fieldId = useId();
   const [feedback, setFeedback] = useState<Feedback>({ kind: 'idle' });
@@ -408,7 +415,7 @@ export const RawConfig = ({
       setFeedback({
         kind: 'issue',
         text: doc.text,
-        message: 'The configuration could not be formatted.',
+        message: t('raw.formatFailed'),
       });
       return;
     }
@@ -430,8 +437,8 @@ export const RawConfig = ({
         onClick={() => setRawOpen(!rawOpen)}
       >
         <span>
-          <strong>Authoritative configuration</strong>
-          <small>{filename} · advanced editing</small>
+          <strong>{t('raw.title')}</strong>
+          <small>{t('raw.subtitle', { filename })}</small>
         </span>
         <ChevronRight size={16} className="raw-chevron" aria-hidden="true" />
       </button>
@@ -439,12 +446,7 @@ export const RawConfig = ({
         <div className="raw-body">
           <p className="mono config-path">{gateway?.configPath}</p>
           <p>
-            Full file contents, including credentials. Invalid saves are rejected without discarding
-            your draft. Preserve a copy of your edits before reloading external changes.{' '}
-            {format === 'jsonc'
-              ? 'JSONC accepts // and /* */ comments and trailing commas.'
-              : 'Strict JSON: comments and trailing commas are not allowed.'}{' '}
-            Changing the filename requires reopening the app.
+            {t('raw.intro')} {format === 'jsonc' ? t('raw.jsonc') : t('raw.json')} {t('raw.rename')}
           </p>
           <div className="field">
             <span
@@ -464,22 +466,22 @@ export const RawConfig = ({
               }
               role="status"
             >
-              {feedbackText(current)}
+              {feedbackText(current, t)}
             </small>
           </div>
           <div className="raw-actions">
             <Button variant="secondary" disabled={configurationLocked} onClick={reveal}>
-              Show in Finder
+              {t('raw.showInFinder')}
             </Button>
             <Button variant="secondary" disabled={configurationLocked} onClick={formatDraft}>
-              Format
+              {t('raw.format')}
             </Button>
             <Button
               variant="secondary"
               disabled={configurationLocked || doc.text === gateway?.configText}
               onClick={() => void discard()}
             >
-              Reset
+              {t('raw.reset')}
             </Button>
             <Button
               variant="default"
@@ -487,7 +489,7 @@ export const RawConfig = ({
               disabled={configurationLocked || (!dirty && !retryLogin) || !saveReady}
               onClick={() => void save()}
             >
-              Save {filename}
+              {t('raw.save', { filename })}
             </Button>
           </div>
         </div>

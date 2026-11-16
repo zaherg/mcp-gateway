@@ -8,6 +8,7 @@ import {
   NativeSelectOption,
 } from '@mcp-gateway/mainview/components/mac/native-select';
 import { Alert } from '@mcp-gateway/mainview/components/ui';
+import { useI18n } from '@mcp-gateway/mainview/i18n';
 import type { AppClient } from '@mcp-gateway/shared/rpc';
 import { LOG_LEVELS, LOG_LIMITS, type LogEntry, type LogLevel } from '@mcp-gateway/shared/types';
 
@@ -49,6 +50,7 @@ interface Logs {
 }
 
 export const Logs = ({ client, servers }: Logs) => {
+  const { t } = useI18n();
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [level, setLevel] = useState<LogLevel | ''>('');
   const [server, setServer] = useState('');
@@ -100,8 +102,7 @@ export const Logs = ({ client, servers }: Logs) => {
         setError(null);
         timer = setTimeout(poll, page.hasMore ? 0 : 2000);
       } catch {
-        if (!cancelled && generation === requestGeneration.current)
-          setError('Could not read local logs. Reopen Logs to retry.');
+        if (!cancelled && generation === requestGeneration.current) setError(t('logs.readFailed'));
       }
     };
     if (!clearing) void poll();
@@ -125,7 +126,7 @@ export const Logs = ({ client, servers }: Logs) => {
       setGap(false);
       setEpoch((value) => value + 1);
     } catch {
-      setClearError('Could not clear local logs. Reopen Logs to retry.');
+      setClearError(t('logs.clearFailed'));
     } finally {
       setClearing(false);
     }
@@ -137,50 +138,50 @@ export const Logs = ({ client, servers }: Logs) => {
       entry.text.toLowerCase().includes(text.toLowerCase()),
   );
   return (
-    <section className="panel logs-panel" aria-label="Backend logs">
+    <section className="panel logs-panel" aria-label={t('logs.title')}>
       <div className="section-heading">
         <div>
-          <h2>Backend logs</h2>
-          <p>Full local diagnostics, kept only while the app runs</p>
+          <h2>{t('logs.title')}</h2>
+          <p>{t('logs.intro')}</p>
         </div>
         <Button onClick={() => void clear()} disabled={clearing}>
-          Clear logs
+          {t('logs.clear')}
         </Button>
       </div>
       <p className="log-warning">
-        <strong>Sensitive data.</strong> Logs can contain credentials, note content and other
-        private values. They stay in memory and are never written to disk, mirrored to the console
-        or served over the LAN.
+        <strong>{t('logs.sensitiveTitle')}</strong> {t('logs.sensitiveBody')}
       </p>
       <p className="fine-print">
-        Keeps the newest {LOG_LIMITS.entries} entries, {LOG_LIMITS.bytes / 1024 / 1024} MiB in
-        total, {LOG_LIMITS.entryBytes / 1024} KiB per entry. Oversized entries are marked truncated.
-        Clearing the log does not clear the failure behind it.
+        {t('logs.limits', {
+          entries: LOG_LIMITS.entries,
+          megabytes: LOG_LIMITS.bytes / 1024 / 1024,
+          kilobytes: LOG_LIMITS.entryBytes / 1024,
+        })}
       </p>
       <div className="log-filters">
         <Label className={FILTER}>
-          Level
+          {t('logs.level')}
           <NativeSelect
-            aria-label="Level"
+            aria-label={t('logs.level')}
             value={level}
             onChange={(event) =>
               setLevel(LOG_LEVELS.find((level) => level === event.target.value) ?? '')
             }
           >
-            <NativeSelectOption value="">All levels</NativeSelectOption>
+            <NativeSelectOption value="">{t('logs.allLevels')}</NativeSelectOption>
             {LOG_LEVELS.map((value) => (
               <NativeSelectOption key={value}>{value}</NativeSelectOption>
             ))}
           </NativeSelect>
         </Label>
         <Label className={FILTER}>
-          Server
+          {t('logs.server')}
           <NativeSelect
-            aria-label="Server"
+            aria-label={t('logs.server')}
             value={server}
             onChange={(event) => setServer(event.target.value)}
           >
-            <NativeSelectOption value="">All servers</NativeSelectOption>
+            <NativeSelectOption value="">{t('logs.allServers')}</NativeSelectOption>
             {Array.from(
               new Set([
                 ...servers,
@@ -194,9 +195,9 @@ export const Logs = ({ client, servers }: Logs) => {
           </NativeSelect>
         </Label>
         <Label className={FILTER}>
-          Search text
+          {t('logs.search')}
           <Input
-            aria-label="Search text"
+            aria-label={t('logs.search')}
             value={text}
             maxLength={LOG_LIMITS.queryTextCharacters}
             onChange={(event) => setText(event.target.value)}
@@ -205,28 +206,22 @@ export const Logs = ({ client, servers }: Logs) => {
       </div>
       {error && <Alert onDismiss={() => setError(null)}>{error}</Alert>}
       {clearError && <Alert onDismiss={() => setClearError(null)}>{clearError}</Alert>}
-      {gap && (
-        <p role="status">Some earlier entries were cleared or removed by retention limits.</p>
-      )}
+      {gap && <p role="status">{t('logs.gap')}</p>}
       {/* biome-ignore lint/a11y/noNoninteractiveTabindex: The bounded scroll region needs keyboard scrolling. */}
-      <section className="log-entries" tabIndex={0} aria-label="Diagnostic entries">
+      <section className="log-entries" tabIndex={0} aria-label={t('logs.entries')}>
         {filtered.length ? (
           filtered.map((entry) => (
             <article key={entry.id} className="log-entry">
               <div className="log-meta">
-                <time>{entry.time}</time> · #{entry.id} · {entry.server ?? 'App'} · {entry.level} ·{' '}
-                {entry.source}
-                {entry.truncated ? ' · truncated' : ''}
+                <time>{entry.time}</time> · #{entry.id} · {entry.server ?? t('logs.appSource')} ·{' '}
+                {entry.level} · {entry.source}
+                {entry.truncated ? ` · ${t('logs.truncated')}` : ''}
               </div>
               <pre>{entry.text}</pre>
             </article>
           ))
         ) : (
-          <p className="empty-state">
-            {entries.length
-              ? 'No entries match these filters.'
-              : 'No log entries yet. Backend activity appears here after client requests.'}
-          </p>
+          <p className="empty-state">{entries.length ? t('logs.noMatches') : t('logs.empty')}</p>
         )}
       </section>
     </section>

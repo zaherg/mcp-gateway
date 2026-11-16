@@ -9,6 +9,7 @@ import {
   NativeSelectOption,
 } from '@mcp-gateway/mainview/components/mac/native-select';
 import { Alert, CheckboxRow, Field, Modal } from '@mcp-gateway/mainview/components/ui';
+import { useI18n } from '@mcp-gateway/mainview/i18n';
 import { generateToken } from '@mcp-gateway/mainview/lib/token';
 import type { ConfigFormat } from '@mcp-gateway/shared/config-document';
 import { isRecord, parseConfigDocument } from '@mcp-gateway/shared/config-document';
@@ -128,25 +129,21 @@ export const ServerEditor = ({
   onSubmit,
   onDismissError,
 }: ServerEditor) => {
+  const { t } = useI18n();
   // Local reveal only; it resets whenever the dialog unmounts.
   const [showKey, setShowKey] = useState(false);
   return (
     <Modal
-      title={editor.original ? 'Edit server' : 'Add a server'}
+      title={editor.original ? t('common.editServer') : t('editor.addTitle')}
       onClose={onClose}
       fallbackFocus={fallbackFocus}
     >
       <form onSubmit={onSubmit}>
         <p className="dialog-intro">
-          {configurationLocked
-            ? 'Quit cleanup has started. This draft is read-only; select and copy fields before closing.'
-            : 'Connect a local tool or an existing MCP endpoint'}
+          {configurationLocked ? t('editor.lockedIntro') : t('editor.intro')}
         </p>
         {editorError && <Alert onDismiss={onDismissError}>{editorError}</Alert>}
-        <Field
-          label="Server name"
-          help="Used in /mcp/server-name. Letters, numbers, hyphens and underscores."
-        >
+        <Field label={t('editor.name')} help={t('editor.nameHelp', { path: '/mcp/server-name' })}>
           <Input
             required
             value={editor.name}
@@ -154,7 +151,7 @@ export const ServerEditor = ({
             onChange={(event) => onChange({ name: event.target.value })}
           />
         </Field>
-        <Field label="Transport">
+        <Field label={t('editor.transport')}>
           <NativeSelect
             value={editor.type}
             disabled={configurationLocked}
@@ -162,16 +159,13 @@ export const ServerEditor = ({
               onChange({ type: event.target.value === 'http' ? 'http' : 'stdio' })
             }
           >
-            <NativeSelectOption value="stdio">Local command (stdio)</NativeSelectOption>
-            <NativeSelectOption value="http">Streamable HTTP</NativeSelectOption>
+            <NativeSelectOption value="stdio">{t('editor.transportStdio')}</NativeSelectOption>
+            <NativeSelectOption value="http">{t('common.streamableHttp')}</NativeSelectOption>
           </NativeSelect>
         </Field>
         {editor.type === 'stdio' ? (
           <>
-            <Field
-              label="Command"
-              help="Executable path only. Arguments are passed separately, never through a shell."
-            >
+            <Field label={t('editor.command')} help={t('editor.commandHelp')}>
               <Input
                 required
                 value={editor.command}
@@ -180,7 +174,7 @@ export const ServerEditor = ({
                 onChange={(event) => onChange({ command: event.target.value })}
               />
             </Field>
-            <Field label="Arguments (JSON array)">
+            <Field label={t('editor.args')}>
               <JsonEditor
                 value={editor.args}
                 readOnly={configurationLocked}
@@ -188,14 +182,14 @@ export const ServerEditor = ({
               />
             </Field>
             <div className="form-grid">
-              <Field label="Environment (JSON object)">
+              <Field label={t('editor.env')}>
                 <JsonEditor
                   value={editor.env}
                   readOnly={configurationLocked}
                   onChange={(env) => onChange({ env })}
                 />
               </Field>
-              <Field label="Working directory" help="Optional absolute path.">
+              <Field label={t('editor.cwd')} help={t('editor.cwdHelp')}>
                 <Input
                   value={editor.cwd}
                   readOnly={configurationLocked}
@@ -209,14 +203,14 @@ export const ServerEditor = ({
                 disabled={configurationLocked}
                 onClick={() => onChange(bearPreset(editor.name))}
               >
-                Fill Bear preset
+                {t('editor.bearPreset')}
               </Button>
-              <small>Optional, macOS only. Bear exposes all accessible notes and tools.</small>
+              <small>{t('editor.bearNote')}</small>
             </div>
           </>
         ) : (
           <>
-            <Field label="Upstream URL" help="HTTP(S), without embedded credentials or fragments.">
+            <Field label={t('editor.url')} help={t('editor.urlHelp', { scheme: 'HTTP(S)' })}>
               <Input
                 required
                 value={editor.url}
@@ -226,8 +220,9 @@ export const ServerEditor = ({
               />
             </Field>
             <Field
-              label="Headers (JSON object)"
-              help="String values only. Prefer environment references such as ${API_TOKEN}."
+              label={t('editor.headers')}
+              // biome-ignore lint/suspicious/noTemplateCurlyInString: a literal environment reference.
+              help={t('editor.headersHelp', { example: '${API_TOKEN}' })}
             >
               <JsonEditor
                 value={editor.headers}
@@ -237,10 +232,7 @@ export const ServerEditor = ({
             </Field>
           </>
         )}
-        <Field
-          label="Authentication"
-          help="Servers without their own key use the global key from Settings."
-        >
+        <Field label={t('editor.auth')} help={t('editor.authHelp')}>
           <NativeSelect
             value={editor.token === undefined ? 'global' : 'custom'}
             disabled={configurationLocked}
@@ -248,15 +240,12 @@ export const ServerEditor = ({
               onChange({ token: event.target.value === 'custom' ? '' : undefined })
             }
           >
-            <NativeSelectOption value="global">Use global key</NativeSelectOption>
-            <NativeSelectOption value="custom">Use this server's key</NativeSelectOption>
+            <NativeSelectOption value="global">{t('editor.authGlobal')}</NativeSelectOption>
+            <NativeSelectOption value="custom">{t('editor.authCustom')}</NativeSelectOption>
           </NativeSelect>
         </Field>
         {editor.token !== undefined && (
-          <Field
-            label="Server key"
-            help="Only this key can access this server. The global key will not work."
-          >
+          <Field label={t('editor.key')} help={t('editor.keyHelp')}>
             <div className="token-input">
               <Input
                 autoComplete="off"
@@ -270,7 +259,7 @@ export const ServerEditor = ({
               <Button
                 variant="ghost"
                 size="icon-lg"
-                aria-label={showKey ? 'Hide server key' : 'Show server key'}
+                aria-label={showKey ? t('editor.hideKey') : t('editor.showKey')}
                 onClick={() => setShowKey(!showKey)}
               >
                 {showKey ? <EyeOff /> : <Eye />}
@@ -284,30 +273,28 @@ export const ServerEditor = ({
             disabled={configurationLocked}
             onClick={() => onChange({ token: generateToken() })}
           >
-            Generate secure key
+            {t('editor.generateKey')}
           </Button>
         )}
         <CheckboxRow
-          label="Allow session-based clients (MCP 2025-11-25 and earlier)"
+          label={t('editor.legacy')}
           checked={editor.legacyProtocol}
           disabled={configurationLocked}
           onChange={(legacyProtocol) => onChange({ legacyProtocol })}
         />
         <CheckboxRow
-          label="Disabled (do not mount this endpoint)"
+          label={t('editor.disabled')}
           checked={editor.disabled}
           disabled={configurationLocked}
           onChange={(disabled) => onChange({ disabled })}
         />
         <div className="dialog-actions">
-          <Button onClick={onClose}>Cancel</Button>
+          <Button onClick={onClose}>{t('common.cancel')}</Button>
           <Button type="submit" variant="default" disabled={configurationLocked}>
-            Apply to draft
+            {t('editor.apply')}
           </Button>
         </div>
-        <small className="dialog-footnote">
-          Review and save changes to update the running gateway.
-        </small>
+        <small className="dialog-footnote">{t('editor.footnote')}</small>
       </form>
     </Modal>
   );

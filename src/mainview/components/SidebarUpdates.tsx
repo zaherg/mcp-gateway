@@ -1,6 +1,8 @@
 import type { RefObject } from 'react';
 
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
+import { useI18n } from '@mcp-gateway/mainview/i18n';
+import type { Translate } from '@mcp-gateway/shared/i18n';
 import type { UpdateStatus } from '@mcp-gateway/shared/rpc';
 
 interface Presentation {
@@ -10,35 +12,38 @@ interface Presentation {
   announcement: string;
 }
 
-const phaseLabels = (update: UpdateStatus): readonly [string, string | null] => {
+const phaseLabels = (update: UpdateStatus, t: Translate): readonly [string, string | null] => {
   switch (update.phase) {
     case 'idle':
-      return ['Updates', null];
+      return [t('common.updates'), null];
     case 'checking':
-      return ['Checking for updates…', null];
+      return [t('sidebarUpdates.checking'), null];
     case 'available':
-      return ['Update available', update.availableVersion ?? 'Open update details'];
+      return [
+        t('sidebarUpdates.available'),
+        update.availableVersion ?? t('sidebarUpdates.openDetails'),
+      ];
     case 'downloading':
-      return ['Downloading update…', update.availableVersion];
+      return [t('sidebarUpdates.downloading'), update.availableVersion];
     case 'ready':
-      return ['Update ready', 'Restart to install'];
+      return [t('sidebarUpdates.ready'), t('sidebarUpdates.restartToInstall')];
     case 'restarting':
-      return ['Restarting…', null];
+      return [t('sidebarUpdates.restarting'), null];
     case 'error':
-      return ['Update needs attention', 'Open update details'];
+      return [t('sidebarUpdates.attention'), t('sidebarUpdates.openDetails')];
   }
 };
 
-const describeUpdate = (update: UpdateStatus): Presentation => {
-  const [title, detail] = phaseLabels(update);
+const describeUpdate = (update: UpdateStatus, t: Translate): Presentation => {
+  const [title, detail] = phaseLabels(update, t);
   const version = update.availableVersion;
   if (update.phase === 'idle') {
     const checked = Boolean(update.checkedAt);
     return {
       title,
       detail,
-      ariaLabel: checked ? 'Updates: up to date' : 'Updates: not checked yet',
-      announcement: checked ? 'Updates: up to date.' : '',
+      ariaLabel: checked ? t('sidebarUpdates.upToDateAria') : t('sidebarUpdates.notCheckedAria'),
+      announcement: checked ? t('sidebarUpdates.upToDateAnnounce') : '',
     };
   }
   if (update.phase === 'ready') {
@@ -46,18 +51,23 @@ const describeUpdate = (update: UpdateStatus): Presentation => {
       title,
       detail,
       ariaLabel: version
-        ? `Updates: Update ready, Restart to install (${version})`
-        : 'Updates: Update ready, Restart to install',
+        ? t('sidebarUpdates.readyAriaVersion', { version })
+        : t('sidebarUpdates.readyAria'),
       announcement: version
-        ? `Update ${version} ready. Restart to install.`
-        : 'Update ready. Restart to install.',
+        ? t('sidebarUpdates.readyAnnounceVersion', { version })
+        : t('sidebarUpdates.readyAnnounce'),
     };
   }
   return {
     title,
     detail,
-    ariaLabel: detail ? `Updates: ${title}, ${detail}` : `Updates: ${title}`,
-    announcement: detail && version ? `${title.replace('…', '')}: ${version}.` : title,
+    ariaLabel: detail
+      ? t('sidebarUpdates.ariaWithDetail', { title, detail })
+      : t('sidebarUpdates.aria', { title }),
+    announcement:
+      detail && version
+        ? t('sidebarUpdates.announceVersion', { title: title.replace('…', ''), version })
+        : title,
   };
 };
 
@@ -69,8 +79,9 @@ interface SidebarUpdates {
 }
 
 export const SidebarUpdates = ({ updateState, disabled, onOpen, triggerRef }: SidebarUpdates) => {
+  const { t } = useI18n();
   if (!updateState?.supported) return null;
-  const { title, detail, ariaLabel, announcement } = describeUpdate(updateState);
+  const { title, detail, ariaLabel, announcement } = describeUpdate(updateState, t);
   return (
     <div className="sidebar-updates electrobun-webkit-app-region-no-drag">
       <span className="sr-only" role="status">

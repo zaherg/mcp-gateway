@@ -1,4 +1,5 @@
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
+import { useI18n } from '@mcp-gateway/mainview/i18n';
 import type { AppClient, AppResult, AppSnapshot } from '@mcp-gateway/shared/rpc';
 import type { GatewaySnapshot } from '@mcp-gateway/shared/types';
 
@@ -25,6 +26,7 @@ export const GatewayToggle = ({
   run,
   client,
 }: GatewayToggle) => {
+  const { t } = useI18n();
   const running = gateway?.running ?? false;
   const blocked = !running && (dirty || !!gateway?.configError);
   // A disabled button gets no pointer events, so the reason sits on a wrapper.
@@ -32,12 +34,12 @@ export const GatewayToggle = ({
     configurationLocked || !blocked
       ? undefined
       : dirty
-        ? 'Save or discard the unsaved changes first.'
-        : 'Repair the configuration first.';
+        ? t('toggle.saveFirst')
+        : t('toggle.repairFirst');
   return (
     <>
       <span className="sr-only" role="status">
-        {running ? 'Gateway running' : 'Gateway stopped'}
+        {running ? t('common.gatewayRunning') : t('common.gatewayStopped')}
       </span>
       <span className="inline-flex" title={reason}>
         <Button
@@ -45,7 +47,7 @@ export const GatewayToggle = ({
           disabled={configurationLocked || blocked}
           onClick={() => void run(() => (running ? client.stop() : client.start()), '')}
         >
-          {running ? 'Stop gateway' : 'Start gateway'}
+          {running ? t('common.stopGateway') : t('common.startGateway')}
         </Button>
       </span>
     </>

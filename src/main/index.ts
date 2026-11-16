@@ -16,6 +16,7 @@ import { parseConfig } from '@mcp-gateway/core/config';
 import { McpGatewayController } from '@mcp-gateway/core/controller';
 import { GatewayError } from '@mcp-gateway/core/errors';
 import { AppUpdater, resolveUpdateSupport } from '@mcp-gateway/main/app-updater';
+import { LanguageStore } from '@mcp-gateway/main/language';
 import { InteractiveQuitGate, QuitCoordinator } from '@mcp-gateway/main/lifecycle';
 import {
   configurationDirectory,
@@ -24,11 +25,13 @@ import {
   openLoginManager,
   openMinimumWindowSize,
   openTrayIndicator,
+  readPreferredLanguages,
   restoreWindow,
 } from '@mcp-gateway/main/native';
 import { AppService } from '@mcp-gateway/main/service';
 import { WhatsNewStore } from '@mcp-gateway/main/whats-new';
 import { clampWindowSize, MIN_WINDOW_SIZE, WindowSizeStore } from '@mcp-gateway/main/window-size';
+import { availableLocales, resolveLocale } from '@mcp-gateway/shared/i18n';
 import type { AppRPC } from '@mcp-gateway/shared/rpc';
 
 const buildConfig = BuildConfig.getSync();
@@ -51,6 +54,18 @@ const windowSize = await WindowSizeStore.open(dataDirectory);
 // Opening the controller creates the folder on a first launch, so look before it does.
 const existingInstall = existsSync(dataDirectory);
 const controller = await McpGatewayController.open(join(dataDirectory, 'mcp.json'));
+let preferredLanguages: string[] = [];
+try {
+  preferredLanguages = readPreferredLanguages(nativeLibrary);
+} catch (error) {
+  // The default locale is a working fallback; the failure stays visible in Logs.
+  controller.recordLocalError(error);
+}
+const language = await LanguageStore.open(
+  dataDirectory,
+  resolveLocale(preferredLanguages),
+  availableLocales(isDevelopment),
+);
 const support = await resolveUpdateSupport();
 const whatsNew = await WhatsNewStore.open(dataDirectory, support.installedVersion, existingInstall);
 const TRAY_SIZE = 18;
@@ -97,37 +112,42 @@ const updateMenu = (): void => {
     }
   }
   const update = updater.status();
-  const state = `${snapshot.running}:${Boolean(snapshot.configError)}:${quitFailed}:${update.supported}:${update.phase}:${update.availableVersion ?? ''}`;
+  const t = language.translate;
+  const state = `${language.state.locale}:${snapshot.running}:${Boolean(snapshot.configError)}:${quitFailed}:${update.supported}:${update.phase}:${update.availableVersion ?? ''}`;
   if (state === menuState) return;
   menuState = state;
   const updateLabel =
     update.phase === 'ready'
-      ? `Update ready: ${update.availableVersion ?? 'review'}`
+      ? t('native.tray.updateReady', {
+          version: update.availableVersion ?? t('native.tray.review'),
+        })
       : update.phase === 'available'
-        ? `Update available: ${update.availableVersion ?? 'review'}`
-        : 'Check for Updates…';
+        ? t('native.tray.updateAvailable', {
+            version: update.availableVersion ?? t('native.tray.review'),
+          })
+        : t('native.menu.checkForUpdates');
   tray.setMenu([
     {
       type: 'normal',
       label: quitFailed
-        ? 'Cleanup failed: see settings'
+        ? t('native.tray.cleanupFailed')
         : snapshot.running
-          ? 'Gateway running'
-          : 'Gateway stopped',
+          ? t('common.gatewayRunning')
+          : t('common.gatewayStopped'),
       enabled: false,
     },
-    { type: 'normal', label: 'Open settings…', action: 'open' },
+    { type: 'normal', label: t('native.tray.open'), action: 'open' },
     ...(update.supported
       ? [{ type: 'normal' as const, label: updateLabel, action: 'updates' }]
       : []),
     {
       type: 'normal',
-      label: snapshot.running ? 'Stop gateway' : 'Start gateway',
+      label: snapshot.running ? t('common.stopGateway') : t('common.startGateway'),
       action: 'toggle',
       enabled: !snapshot.configError,
     },
     { type: 'divider' },
-    { type: 'normal', label: 'Quit MCP Gateway', action: 'quit' },
+    { type: 'normal', label: t('common.quitApp'), action: 'quit' },
   ]);
 };
 
@@ -286,12 +306,13 @@ const service = new AppService(
     showItemInFolder: Utils.showItemInFolder,
     openPath: Utils.openPath,
     confirmDiscard: async () => {
+      const t = language.translate;
       const { response } = await Utils.showMessageBox({
         type: 'question',
-        title: 'Discard unsaved changes?',
-        message: 'Discard all unsaved changes and load the latest configuration?',
-        detail: 'The saved configuration is not changed.',
-        buttons: ['Cancel', 'Discard'],
+        title: t('native.discard.title'),
+        message: t('native.discard.message'),
+        detail: t('native.discard.detail'),
+        buttons: [t('common.cancel'), t('native.discard.confirm')],
         defaultId: 0,
         cancelId: 0,
       });
@@ -299,6 +320,13 @@ const service = new AppService(
     },
     whatsNew: () => whatsNew.pending,
     dismissWhatsNew: () => whatsNew.dismiss(),
+    language: () => language.state,
+    setLanguage: async (preference) => {
+      await language.set(preference);
+      // The tray key includes the locale, so the tray rebuilds; the app menu is rebuilt here.
+      updateMenu();
+      setApplicationMenu();
+    },
   },
   updater,
 );
@@ -315,13 +343,13 @@ const interactiveQuit = new InteractiveQuitGate(
   (error) => {
     controller.recordLocalError(error);
     openWindow();
+    const t = language.translate;
     void Utils.showMessageBox({
       type: 'error',
-      title: 'Quit acknowledgement unavailable',
-      message: 'The application could not confirm whether the window received Quit.',
-      detail:
-        "Check the window's status before retrying. A missing acknowledgement does not authorize discarding drafts.",
-      buttons: ['OK'],
+      title: t('native.quitAck.title'),
+      message: t('native.quitAck.message'),
+      detail: t('native.quitAck.detail'),
+      buttons: [t('native.quitAck.ok')],
     }).catch((failure) => controller.recordLocalError(failure));
   },
   nativeQuitSignal,
@@ -382,54 +410,62 @@ const dispatch = async (event: unknown): Promise<void> => {
 tray.on('tray-clicked', (event) => {
   void dispatch(event).catch(() => console.error('Tray action failed.'));
 });
-ApplicationMenu.setApplicationMenu([
-  {
-    label: 'MCP Gateway',
-    submenu: [
-      { label: 'Settings…', action: 'open', accelerator: 'Cmd+,' },
-      ...(support.supported ? [{ label: 'Check for Updates…', action: 'updates' }] : []),
-      { type: 'divider' },
-      { label: 'Quit MCP Gateway', action: 'quit', accelerator: 'Cmd+Q' },
-    ],
-  },
-  {
-    label: 'File',
-    submenu: [{ label: 'Close Window', action: 'close-window', accelerator: 'Cmd+W' }],
-  },
-  {
-    label: 'Edit',
-    submenu: [
-      { role: 'undo' },
-      { role: 'redo' },
-      { type: 'divider' },
-      { role: 'cut' },
-      { role: 'copy' },
-      { role: 'paste' },
-      { role: 'selectAll' },
-    ],
-  },
-  ...(isDevelopment
-    ? [
-        {
-          label: 'Developer',
-          submenu: [
-            {
-              label: 'Open Developer Tools',
-              action: 'open-devtools',
-              accelerator: 'Cmd+Option+I',
-            },
-          ],
-        },
-      ]
-    : []),
-  {
-    label: 'Help',
-    submenu: [
-      { label: 'MCP Gateway User Guide', action: 'open-docs' },
-      { label: 'Show Configuration in Finder', action: 'reveal-config' },
-    ],
-  },
-]);
+const setApplicationMenu = (): void => {
+  const t = language.translate;
+  ApplicationMenu.setApplicationMenu([
+    {
+      label: 'MCP Gateway',
+      submenu: [
+        { label: t('native.menu.settings'), action: 'open', accelerator: 'Cmd+,' },
+        ...(support.supported
+          ? [{ label: t('native.menu.checkForUpdates'), action: 'updates' }]
+          : []),
+        { type: 'divider' },
+        { label: t('common.quitApp'), action: 'quit', accelerator: 'Cmd+Q' },
+      ],
+    },
+    {
+      label: t('native.menu.file'),
+      submenu: [
+        { label: t('native.menu.closeWindow'), action: 'close-window', accelerator: 'Cmd+W' },
+      ],
+    },
+    {
+      label: t('native.menu.edit'),
+      submenu: [
+        { role: 'undo', label: t('native.menu.undo') },
+        { role: 'redo', label: t('native.menu.redo') },
+        { type: 'divider' },
+        { role: 'cut', label: t('native.menu.cut') },
+        { role: 'copy', label: t('native.menu.copy') },
+        { role: 'paste', label: t('native.menu.paste') },
+        { role: 'selectAll', label: t('native.menu.selectAll') },
+      ],
+    },
+    ...(isDevelopment
+      ? [
+          {
+            label: t('native.menu.developer'),
+            submenu: [
+              {
+                label: t('native.menu.devTools'),
+                action: 'open-devtools',
+                accelerator: 'Cmd+Option+I',
+              },
+            ],
+          },
+        ]
+      : []),
+    {
+      label: t('native.menu.help'),
+      submenu: [
+        { label: t('native.menu.guide'), action: 'open-docs' },
+        { label: t('native.menu.revealConfig'), action: 'reveal-config' },
+      ],
+    },
+  ]);
+};
+setApplicationMenu();
 ApplicationMenu.on('application-menu-clicked', (event) => {
   void dispatch(event).catch(() => console.error('Menu action failed.'));
 });

@@ -15,6 +15,11 @@ import { anyNumber } from '@mcp-gateway/core/schema';
 import { createSerialQueue } from '@mcp-gateway/core/serial-queue';
 import type { UpdateRuntime } from '@mcp-gateway/main/app-updater';
 import {
+  type LanguagePreference,
+  type LanguageState,
+  parseLanguagePreference,
+} from '@mcp-gateway/shared/i18n';
+import {
   type AppResult,
   type AppSnapshot,
   type LoginStatus,
@@ -47,6 +52,7 @@ const SaveRequest = z.strictObject({ text: z.string(), expectedRevision: z.strin
 const PreviewRequest = z.strictObject({ text: z.string() });
 const AutomaticRequest = z.strictObject({ automatic: z.boolean() });
 const SocialLinkRequest = z.strictObject({ target: z.enum(SOCIAL_LINK_TARGETS) });
+const LanguageRequest = z.strictObject({ preference: z.string() });
 
 const decode = <A>(schema: z.ZodType<A>, input: unknown): A => {
   const result = schema.safeParse(input);
@@ -84,6 +90,8 @@ interface DesktopActions {
   confirmDiscard: () => Promise<boolean>;
   whatsNew: () => string | null;
   dismissWhatsNew: () => Promise<void>;
+  language: () => LanguageState;
+  setLanguage: (preference: LanguagePreference) => Promise<void>;
 }
 
 /** Runtime-validated local RPC boundary. No exception may echo a raw request. */
@@ -108,6 +116,7 @@ export class AppService {
       login: this.loginStatus,
       update: this.updates.status(),
       whatsNew: this.desktop.whatsNew(),
+      language: this.desktop.language(),
     };
   }
 
@@ -352,6 +361,20 @@ export class AppService {
       this.run(async () => {
         const { automatic } = decode(AutomaticRequest, input);
         return this.updates.setAutomatic(automatic);
+      }),
+    setLanguage: (input: unknown) =>
+      this.run(async () => {
+        const { preference: requested } = decode(LanguageRequest, input);
+        if (
+          this.desktop.quitStatus().phase !== 'idle' ||
+          this.updates.status().phase === 'restarting'
+        )
+          throw new RequestError('Quit cleanup has started. The language was not changed.');
+        // Only the locales this build offers; the pseudo-locale exists in development builds only.
+        const preference = parseLanguagePreference(requested, this.desktop.language().available);
+        if (!preference) throw new RequestError('The selected language is not available.');
+        await this.desktop.setLanguage(preference);
+        return this.snapshot();
       }),
     updatesRestart: (input?: unknown) =>
       this.run(async () => {

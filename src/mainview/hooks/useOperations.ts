@@ -1,6 +1,7 @@
 import type { Dispatch, RefObject, SetStateAction } from 'react';
 
 import type { Document } from '@mcp-gateway/mainview/dialogs/ServerEditor';
+import { useI18n } from '@mcp-gateway/mainview/i18n';
 import type { AppResult, AppSnapshot, UpdateStatus } from '@mcp-gateway/shared/rpc';
 
 interface OperationsOptions {
@@ -28,6 +29,7 @@ export const useOperations = ({
   setSnapshot,
   setDoc,
 }: OperationsOptions) => {
+  const { t } = useI18n();
   const run = async (
     operation: () => Promise<AppResult<AppSnapshot | null>>,
     message: string,
@@ -44,9 +46,8 @@ export const useOperations = ({
       if (terminalGeneration !== quitGeneration.current) return false;
       if (!result.ok) {
         setErrorOccurrence(result.error.occurrenceId ?? null);
-        setError(
-          `${result.error.code}: ${result.error.message}${saved ? ' Your draft is preserved. Review external changes before retrying.' : ''}`,
-        );
+        const failure = `${result.error.code}: ${result.error.message}`;
+        setError(saved ? t('operations.saveFailed', { error: failure }) : failure);
         return false;
       }
       if (result.value) {
@@ -61,10 +62,7 @@ export const useOperations = ({
       setNotice(message);
       return true;
     } catch {
-      if (terminalGeneration === quitGeneration.current)
-        setError(
-          'The native operation failed. Your draft is preserved. Check application status before retrying.',
-        );
+      if (terminalGeneration === quitGeneration.current) setError(t('operations.nativeFailed'));
       return false;
     } finally {
       if (terminalGeneration === quitGeneration.current) generation.current++;
@@ -93,8 +91,7 @@ export const useOperations = ({
       setNotice(message);
       return true;
     } catch {
-      if (terminalGeneration === quitGeneration.current)
-        setError('The update operation failed. Check application status before retrying.');
+      if (terminalGeneration === quitGeneration.current) setError(t('operations.updateFailed'));
       return false;
     } finally {
       setUpdateBusy(false);

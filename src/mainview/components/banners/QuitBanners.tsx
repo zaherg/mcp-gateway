@@ -1,4 +1,5 @@
 import { Alert } from '@mcp-gateway/mainview/components/ui';
+import { useI18n } from '@mcp-gateway/mainview/i18n';
 import type { QuitStatus } from '@mcp-gateway/shared/rpc';
 
 interface QuitBanners {
@@ -24,6 +25,7 @@ export const QuitBanners = ({
   dismissed,
   dismiss,
 }: QuitBanners) => {
+  const { t } = useI18n();
   // These conditions are independent: several messages can show at once.
   return (
     <>
@@ -34,17 +36,13 @@ export const QuitBanners = ({
         )}
       {shutdownStarted && (
         <p role="status">
-          Configuration is read-only because{' '}
-          {updateRestarting ? 'an update restart has started' : 'Quit cleanup has started'}. Drafts
-          can still be selected and copied, and Logs remain available.
+          {t(updateRestarting ? 'banners.readOnlyUpdate' : 'banners.readOnlyQuit')}
         </p>
       )}
       {!quitStatusKnown && !requestingQuit && (
-        <p role="status">Configuration is read-only until Quit status is confirmed.</p>
+        <p role="status">{t('banners.readOnlyUnconfirmed')}</p>
       )}
-      {quitReadError && (
-        <p role="status">Could not read Quit status. Cleanup completion is unknown.</p>
-      )}
+      {quitReadError && <p role="status">{t('banners.quitStatusUnknown')}</p>}
     </>
   );
 };

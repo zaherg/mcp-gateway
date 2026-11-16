@@ -1,4 +1,5 @@
 import { Alert } from '@mcp-gateway/mainview/components/ui';
+import { useI18n } from '@mcp-gateway/mainview/i18n';
 import type { LoginStatus } from '@mcp-gateway/shared/rpc';
 
 interface LoginStartupBanner {
@@ -16,6 +17,7 @@ export const LoginStartupBanner = ({
   dismissed,
   dismiss,
 }: LoginStartupBanner) => {
+  const { t } = useI18n();
   // The Settings draft bar already shows this error next to its retry action.
   if (
     loginInDraftBar ||
@@ -26,7 +28,7 @@ export const LoginStartupBanner = ({
     return null;
   return (
     <Alert kind="warning" onDismiss={() => dismiss(`login-${login.occurrenceId}`)}>
-      Login startup: {login.error}
+      {t('banners.loginStartup', { message: login.error })}
     </Alert>
   );
 };

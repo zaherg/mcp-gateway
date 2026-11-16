@@ -18,6 +18,7 @@ import { Input } from '@mcp-gateway/mainview/components/mac/input';
 import { Label } from '@mcp-gateway/mainview/components/mac/label';
 import { NativeSelect } from '@mcp-gateway/mainview/components/mac/native-select';
 import { Switch } from '@mcp-gateway/mainview/components/mac/switch';
+import { useI18n } from '@mcp-gateway/mainview/i18n';
 
 const ALERT_VARIANT = { error: 'destructive', warning: 'warning', success: 'default' } as const;
 
@@ -35,13 +36,8 @@ interface Field {
   children: ReactNode;
 }
 
-export const Alert = ({
-  children,
-  kind = 'error',
-  onDismiss,
-  label = 'Dismiss error',
-  role,
-}: Alert) => {
+export const Alert = ({ children, kind = 'error', onDismiss, label, role }: Alert) => {
+  const { t } = useI18n();
   return (
     <MacAlert
       variant={ALERT_VARIANT[kind]}
@@ -49,7 +45,12 @@ export const Alert = ({
       className="flex items-center gap-2.5 text-mac-label"
     >
       <span className="min-w-0 flex-1 wrap-anywhere">{children}</span>
-      <Button variant="ghost" size="icon" aria-label={label} onClick={onDismiss}>
+      <Button
+        variant="ghost"
+        size="icon"
+        aria-label={label ?? t('common.dismissError')}
+        onClick={onDismiss}
+      >
         <X />
       </Button>
     </MacAlert>
@@ -146,6 +147,7 @@ interface Modal {
 }
 
 export const Modal = ({ title, children, onClose, fallbackFocus }: Modal) => {
+  const { t } = useI18n();
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   useEffect(() => {
@@ -170,7 +172,12 @@ export const Modal = ({ title, children, onClose, fallbackFocus }: Modal) => {
     >
       <div className="dialog-heading">
         <h2 id={titleId}>{title}</h2>
-        <Button variant="ghost" size="icon-lg" aria-label="Close dialog" onClick={onClose}>
+        <Button
+          variant="ghost"
+          size="icon-lg"
+          aria-label={t('common.closeDialog')}
+          onClick={onClose}
+        >
           <X />
         </Button>
       </div>

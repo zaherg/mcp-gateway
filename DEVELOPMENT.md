@@ -83,6 +83,28 @@ It skips generated outputs, dependencies, private environment files and vendored
 If one linter fails, the others still run, as long as the tools installed correctly.
 The workflow only reports findings; it changes no files and runs no test suites.
 
+## Translations
+
+Interface text lives in `src/shared/locales/<language>_<REGION>.json`, one file per locale, such as `en_US.json`.
+The region is part of the name because wording differs between countries; `de_DE` and `de_AT` would be separate files.
+`en_US.json` is the source: every other file must have exactly its keys, and `bun run typecheck` fails when a key is missing.
+Keep each `{placeholder}` unchanged; the app puts names, versions and paths there.
+Write plain text only, without HTML or Markdown.
+`language.name` is the locale's name in its own language, such as `English (United States)`.
+
+To add a locale:
+
+1. Copy `src/shared/locales/en_US.json` to the new file and translate every value.
+2. In `src/shared/i18n.ts`, import the file and add its code to `CATALOG_LOCALES` and `CATALOGS`.
+3. Run `bun run typecheck` and `bun run lint`.
+
+The app picks the first macOS language that matches a locale, by language and region and then by language alone, and falls back to `en_US`.
+Settings shows a language picker once more than one locale exists; the choice is stored in `language.json` next to `mcp.json`.
+Development builds add the generated pseudo-locale `en_XA` to the picker.
+It accents and brackets every catalog string, so plain English on screen is text that bypasses the catalog.
+Messages from the gateway, servers and logs are not translated.
+Right-to-left languages are not supported yet.
+
 ## Source conventions
 
 Write ordinary functions as named `const` arrow functions, including React components, hooks and scripts.

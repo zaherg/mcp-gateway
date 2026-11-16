@@ -3,37 +3,42 @@ import { CircleHelp } from 'lucide-react';
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
 import { Alert, Toggle } from '@mcp-gateway/mainview/components/ui';
 import type { Editor } from '@mcp-gateway/mainview/dialogs/ServerEditor';
+import { useI18n } from '@mcp-gateway/mainview/i18n';
+import type { Translate } from '@mcp-gateway/shared/i18n';
 import type { AppClient, AppResult, QuitStatus, UpdateStatus } from '@mcp-gateway/shared/rpc';
 
-const updateCheckedLabel = (value: string | null): string => {
-  if (!value) return 'Not checked yet';
+// The clock format follows the macOS region, not the interface language, as it did before.
+const updateCheckedLabel = (value: string | null, t: Translate): string => {
+  if (!value) return t('updates.notChecked');
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return 'Last check time is unavailable.';
-  return `Last checked ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  if (Number.isNaN(date.getTime())) return t('updates.checkTimeUnavailable');
+  return t('updates.lastChecked', {
+    time: date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+  });
 };
 
-const updateStatusText = (update: UpdateStatus): string => {
+const updateStatusText = (update: UpdateStatus, t: Translate): string => {
   switch (update.phase) {
     case 'checking':
-      return 'Checking the fixed GitHub stable feed…';
+      return t('updates.status.checking');
     case 'downloading':
       return update.availableVersion
-        ? `Downloading and verifying version ${update.availableVersion}…`
-        : 'Downloading and verifying the selected update…';
+        ? t('updates.status.downloadingVersion', { version: update.availableVersion })
+        : t('updates.status.downloading');
     case 'available':
       return update.availableVersion
-        ? `Version ${update.availableVersion} is available.`
-        : 'An update is available.';
+        ? t('updates.status.availableVersion', { version: update.availableVersion })
+        : t('updates.status.available');
     case 'ready':
       return update.availableVersion
-        ? `Version ${update.availableVersion} is verified and ready to install.`
-        : 'The update is verified and ready to install.';
+        ? t('updates.status.readyVersion', { version: update.availableVersion })
+        : t('updates.status.ready');
     case 'restarting':
-      return 'Restarting to apply the verified update.';
+      return t('updates.status.restarting');
     case 'error':
-      return update.error ?? 'The update operation failed.';
+      return update.error ?? t('common.updateOperationFailed');
     case 'idle':
-      return update.checkedAt ? 'You are up to date.' : 'No update check has run yet.';
+      return update.checkedAt ? t('updates.status.upToDate') : t('updates.status.neverChecked');
   }
 };
 
@@ -71,6 +76,7 @@ export const Updates = ({
   client,
   onRequestRestart,
 }: Updates) => {
+  const { t } = useI18n();
   const updateReady = updateState.phase === 'ready';
   const inProgress = updateState.phase === 'checking' || updateState.phase === 'downloading';
   const toggleDisabled =
@@ -85,28 +91,24 @@ export const Updates = ({
     quitStatus.phase === 'ready';
   return (
     <div className="updates-content">
-      <p className="dialog-intro">
-        Signed macOS arm64 builds only, from the fixed GitHub release feed
-      </p>
+      <p className="dialog-intro">{t('updates.intro')}</p>
       {error && <Alert onDismiss={onDismissError}>{error}</Alert>}
       {!updateState.supported ? (
-        <p className="update-unavailable">
-          This build does not support updates and never contacts the update feed.
-        </p>
+        <p className="update-unavailable">{t('updates.unsupported')}</p>
       ) : (
         <>
           <div className="update-summary">
             <div>
-              <span className="update-label">Installed</span>
-              <strong>{updateState.installedVersion ?? 'Unknown'}</strong>
+              <span className="update-label">{t('updates.installed')}</span>
+              <strong>{updateState.installedVersion ?? t('updates.unknown')}</strong>
             </div>
             <div>
-              <span className="update-label">Status</span>
-              <strong role="status">{updateStatusText(updateState)}</strong>
+              <span className="update-label">{t('updates.statusLabel')}</span>
+              <strong role="status">{updateStatusText(updateState, t)}</strong>
             </div>
             {updateState.availableVersion && (
               <div>
-                <span className="update-label">Available</span>
+                <span className="update-label">{t('updates.availableLabel')}</span>
                 <strong>{updateState.availableVersion}</strong>
               </div>
             )}
@@ -115,57 +117,60 @@ export const Updates = ({
             <div
               className="update-progress"
               role="progressbar"
-              aria-label="Update progress"
-              aria-valuetext={updateStatusText(updateState)}
+              aria-label={t('updates.progress')}
+              aria-valuetext={updateStatusText(updateState, t)}
               aria-busy="true"
             >
               <span />
             </div>
           )}
-          <p className="fine-print">{updateCheckedLabel(updateState.checkedAt)}</p>
+          <p className="fine-print">{updateCheckedLabel(updateState.checkedAt, t)}</p>
           <Toggle
-            label="Automatically check and download updates"
-            description="After launch, then daily. A newer stable version downloads on its own; installing waits for your confirmation."
+            label={t('updates.automatic')}
+            description={t('updates.automaticDescription')}
             disabled={toggleDisabled}
             checked={updateState.automaticUpdates}
             onChange={(value) =>
               void runUpdate(
                 () => client.updatesSetAutomatic({ automatic: value }),
-                value ? 'Automatic update checks enabled.' : 'Automatic update checks disabled.',
+                value ? t('updates.automaticEnabled') : t('updates.automaticDisabled'),
               )
             }
           />
           <div className="update-actions">
             <Button
               disabled={actionsDisabled}
-              onClick={() => void runUpdate(() => client.updatesCheck(), 'Update check completed.')}
+              onClick={() =>
+                void runUpdate(() => client.updatesCheck(), t('updates.checkCompleted'))
+              }
             >
-              {updateState.phase === 'checking' ? 'Checking…' : 'Check for Updates'}
+              {updateState.phase === 'checking' ? t('updates.checkingButton') : t('updates.check')}
             </Button>
             {updateState.availableVersion && !updateReady && (
               <Button
                 disabled={actionsDisabled}
                 onClick={() =>
-                  void runUpdate(() => client.updatesDownload(), 'The update download has started.')
+                  void runUpdate(() => client.updatesDownload(), t('updates.downloadStarted'))
                 }
               >
-                {updateState.phase === 'downloading' ? 'Downloading…' : 'Download Update'}
+                {updateState.phase === 'downloading'
+                  ? t('updates.downloadingButton')
+                  : t('updates.download')}
               </Button>
             )}
             {updateReady && (
               <Button variant="default" disabled={restartDisabled} onClick={onRequestRestart}>
-                Restart to Update
+                {t('updates.restart')}
               </Button>
             )}
           </div>
           {(editor || deleting) && updateReady && (
             <p className="fine-print" role="status">
-              Close the open server dialog before restarting.
+              {t('updates.closeDialogFirst')}
             </p>
           )}
           <p className="fine-print">
-            <CircleHelp size={16} /> A download installs only when the app restarts. Restarting
-            interrupts active MCP connections and does not carry logs or unsaved drafts over.
+            <CircleHelp size={16} /> {t('updates.restartNote')}
           </p>
         </>
       )}

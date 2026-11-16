@@ -1,4 +1,5 @@
 import type { ConfigIssue } from '@mcp-gateway/shared/config-document';
+import type { LanguagePreference, LanguageState } from '@mcp-gateway/shared/i18n';
 import type { GatewaySnapshot, LogPage, LogQuery } from '@mcp-gateway/shared/types';
 
 export interface LoginStatus {
@@ -46,6 +47,7 @@ export interface AppSnapshot {
   update: UpdateStatus;
   /** The installed version while its release notes are waiting to be shown, else null. */
   whatsNew: string | null;
+  language: LanguageState;
 }
 
 export const SOCIAL_LINK_TARGETS = ['docs', 'github', 'x'] as const;
@@ -88,6 +90,10 @@ export type AppRPC = {
       updatesSetAutomatic: {
         params: { automatic: boolean };
         response: AppResult<UpdateStatus>;
+      };
+      setLanguage: {
+        params: { preference: LanguagePreference };
+        response: AppResult<AppSnapshot>;
       };
       updatesRestart: {
         params: undefined;

@@ -1,4 +1,5 @@
 import { Alert } from '@mcp-gateway/mainview/components/ui';
+import { useI18n } from '@mcp-gateway/mainview/i18n';
 import type { VisibleError } from '@mcp-gateway/shared/types';
 
 interface GatewayErrorBanners {
@@ -22,6 +23,7 @@ export const GatewayErrorBanners = ({
   dismissed,
   dismiss,
 }: GatewayErrorBanners) => {
+  const { t } = useI18n();
   // A local error with the same occurrence already reports this failure.
   const reportedLocally = (occurrenceId: string) =>
     hasLocalError && errorOccurrence === occurrenceId;
@@ -31,11 +33,10 @@ export const GatewayErrorBanners = ({
         !reportedLocally(configError.occurrenceId) &&
         !dismissed.has(`config-${configError.occurrenceId}`) && (
           <Alert onDismiss={() => dismiss(`config-${configError.occurrenceId}`)}>
-            Configuration unavailable: {configError.message} Open Authoritative configuration in
-            Settings to repair the file.{' '}
+            {t('banners.configUnavailable', { message: configError.message })}{' '}
             {hasRetainedConfig && !configurationLocked
-              ? 'The retained draft remains editable. Review external changes before saving.'
-              : 'Structured editing is paused.'}
+              ? t('banners.retainedDraft')
+              : t('banners.editingPaused')}
           </Alert>
         )}
       {operationalError &&

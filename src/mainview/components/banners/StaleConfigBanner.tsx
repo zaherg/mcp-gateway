@@ -1,4 +1,5 @@
 import { Alert } from '@mcp-gateway/mainview/components/ui';
+import { useI18n } from '@mcp-gateway/mainview/i18n';
 
 interface StaleConfigBanner {
   stale: boolean;
@@ -8,13 +9,12 @@ interface StaleConfigBanner {
 }
 
 export const StaleConfigBanner = ({ stale, revision, dismissed, dismiss }: StaleConfigBanner) => {
+  const { t } = useI18n();
   // App retains acknowledgements under this same key; without a snapshot it is `stale-undefined`.
   if (!stale || dismissed.has(`stale-${revision}`)) return null;
   return (
     <Alert kind="warning" role="status" onDismiss={() => dismiss(`stale-${revision}`)}>
-      The configuration changed outside this window. Your draft and its original revision are
-      preserved. A stale save will be refused. Copy your changes from Authoritative configuration in
-      Settings before reloading.
+      {t('banners.stale')}
     </Alert>
   );
 };
