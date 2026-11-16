@@ -609,6 +609,16 @@ main {
   color: var(--mac-label);
   background: transparent;
 }
+/* The server dialog's JSON fields: a few lines tall, never shorter than the former textarea,
+   with the text size and weight of the dialog's other inputs. */
+.raw-code-editor.json-field {
+  height: 96px;
+  min-height: 72px;
+}
+.raw-code-editor.json-field .cm-editor {
+  font-size: var(--text-mac-body);
+  font-weight: 500;
+}
 .raw-code-editor .cm-editor.cm-focused {
   outline: none;
 }

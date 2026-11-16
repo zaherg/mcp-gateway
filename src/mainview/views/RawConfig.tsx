@@ -1,19 +1,11 @@
-import { history, historyKeymap, standardKeymap } from '@codemirror/commands';
-import {
-  bracketMatching,
-  indentUnit,
-  StreamLanguage,
-  syntaxHighlighting,
-} from '@codemirror/language';
-import { json } from '@codemirror/legacy-modes/mode/javascript';
 import { Compartment, EditorState, type Extension } from '@codemirror/state';
-import { EditorView, keymap, lineNumbers } from '@codemirror/view';
-import { classHighlighter, tags } from '@lezer/highlight';
+import { EditorView, lineNumbers } from '@codemirror/view';
 import { ChevronRight } from 'lucide-react';
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
 import type { Document } from '@mcp-gateway/mainview/dialogs/ServerEditor';
+import { jsonEditing } from '@mcp-gateway/mainview/lib/json-editing';
 import {
   CONFIG_TOO_LARGE,
   type ConfigFormat,
@@ -53,23 +45,7 @@ interface EditTarget {
   setNotice: (notice: string) => void;
 }
 
-// The stream mode highlights and indents JSONC; parseConfigTree and native Save stay authoritative.
-const configLanguage = StreamLanguage.define({
-  ...json,
-  // Resolve the legacy alias inside combined "string property" tokens.
-  tokenTable: { property: tags.propertyName },
-});
-
-const staticExtensions: Extension[] = [
-  configLanguage,
-  syntaxHighlighting(classHighlighter),
-  lineNumbers(),
-  bracketMatching(),
-  indentUnit.of('  '),
-  EditorState.tabSize.of(2),
-  history(),
-  keymap.of([...standardKeymap, ...historyKeymap]),
-];
+const staticExtensions: Extension[] = [...jsonEditing, lineNumbers()];
 
 // Uniform endings survive edits; a mixed-ending draft normalizes to LF on its first real edit.
 const lineSeparatorOf = (text: string): string | null => {

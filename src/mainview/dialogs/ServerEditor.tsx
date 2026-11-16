@@ -1,13 +1,13 @@
 import { Eye, EyeOff } from 'lucide-react';
 import { type FormEvent, type RefObject, useState } from 'react';
 
+import { JsonEditor } from '@mcp-gateway/mainview/components/JsonEditor';
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
 import { Input } from '@mcp-gateway/mainview/components/mac/input';
 import {
   NativeSelect,
   NativeSelectOption,
 } from '@mcp-gateway/mainview/components/mac/native-select';
-import { Textarea } from '@mcp-gateway/mainview/components/mac/textarea';
 import { Alert, CheckboxRow, Field, Modal } from '@mcp-gateway/mainview/components/ui';
 import { generateToken } from '@mcp-gateway/mainview/lib/token';
 import type { ConfigFormat } from '@mcp-gateway/shared/config-document';
@@ -181,20 +181,18 @@ export const ServerEditor = ({
               />
             </Field>
             <Field label="Arguments (JSON array)">
-              <Textarea
-                spellCheck={false}
+              <JsonEditor
                 value={editor.args}
                 readOnly={configurationLocked}
-                onChange={(event) => onChange({ args: event.target.value })}
+                onChange={(args) => onChange({ args })}
               />
             </Field>
             <div className="form-grid">
               <Field label="Environment (JSON object)">
-                <Textarea
-                  spellCheck={false}
+                <JsonEditor
                   value={editor.env}
                   readOnly={configurationLocked}
-                  onChange={(event) => onChange({ env: event.target.value })}
+                  onChange={(env) => onChange({ env })}
                 />
               </Field>
               <Field label="Working directory" help="Optional absolute path.">
@@ -231,11 +229,10 @@ export const ServerEditor = ({
               label="Headers (JSON object)"
               help="String values only. Prefer environment references such as ${API_TOKEN}."
             >
-              <Textarea
-                spellCheck={false}
+              <JsonEditor
                 value={editor.headers}
                 readOnly={configurationLocked}
-                onChange={(event) => onChange({ headers: event.target.value })}
+                onChange={(headers) => onChange({ headers })}
               />
             </Field>
           </>

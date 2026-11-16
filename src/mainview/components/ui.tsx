@@ -10,6 +10,7 @@ import {
   useRef,
 } from 'react';
 
+import { JsonEditor } from '@mcp-gateway/mainview/components/JsonEditor';
 import { Alert as MacAlert } from '@mcp-gateway/mainview/components/mac/alert';
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
 import { Checkbox } from '@mcp-gateway/mainview/components/mac/checkbox';
@@ -17,7 +18,6 @@ import { Input } from '@mcp-gateway/mainview/components/mac/input';
 import { Label } from '@mcp-gateway/mainview/components/mac/label';
 import { NativeSelect } from '@mcp-gateway/mainview/components/mac/native-select';
 import { Switch } from '@mcp-gateway/mainview/components/mac/switch';
-import { Textarea } from '@mcp-gateway/mainview/components/mac/textarea';
 
 const ALERT_VARIANT = { error: 'destructive', warning: 'warning', success: 'default' } as const;
 
@@ -56,8 +56,8 @@ export const Alert = ({
   );
 };
 
-// Controls a Field can label: the macOS components that render an input, a select or a textarea.
-const FIELD_CONTROLS: unknown[] = [Input, NativeSelect, Textarea];
+// Controls a Field can label: the macOS input and select, and the JSON editor.
+const FIELD_CONTROLS: unknown[] = [Input, NativeSelect, JsonEditor];
 
 export const Field = ({ label, help, children }: Field) => {
   const id = useId();
@@ -71,9 +71,14 @@ export const Field = ({ label, help, children }: Field) => {
       ? cloneElement(node, { children: Children.map(node.props.children, associate) })
       : node;
   };
+  // htmlFor focuses inputs and selects natively, but not the JSON editor's contenteditable.
+  const focusUnlabelable = () => {
+    const control = document.getElementById(id);
+    if (control && !('labels' in control)) control.focus();
+  };
   return (
     <div className="field">
-      <Label htmlFor={id} className="font-semibold">
+      <Label htmlFor={id} id={`${id}-label`} className="font-semibold" onClick={focusUnlabelable}>
         {label}
       </Label>
       {Children.map(children, associate)}

@@ -15,6 +15,9 @@ The server dialog asks for:
 - **Authentication**: **Use global key** or **Use this server's key**.
 - **Allow session-based clients (MCP 2025-11-25 and earlier)** and **Disabled (do not mount this endpoint)**.
 
+The JSON fields use the same editor as **Authoritative configuration**: they color the JSON, match brackets and keep their own undo history.
+The dialog checks them when you choose **Apply to draft**.
+
 **Cancel** closes the dialog without changing the draft.
 **Apply to draft** keeps the edit in the draft; **Save changes** in the draft bar applies it.
 
