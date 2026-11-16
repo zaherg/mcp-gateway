@@ -283,6 +283,8 @@ const service = new AppService(
     },
     quitStatus: () => quit.status(),
     openExternal: Utils.openExternal,
+    showItemInFolder: Utils.showItemInFolder,
+    openPath: Utils.openPath,
     confirmDiscard: async () => {
       const { response } = await Utils.showMessageBox({
         type: 'question',
@@ -367,6 +369,11 @@ const dispatch = async (event: unknown): Promise<void> => {
       if (!result.ok) controller.recordLocalError(`${result.error.code}: ${result.error.message}`);
       break;
     }
+    case 'reveal-config': {
+      const result = await service.handlers.revealConfig();
+      if (!result.ok) controller.recordLocalError(`${result.error.code}: ${result.error.message}`);
+      break;
+    }
     case 'quit':
       Utils.quit();
       break;
@@ -417,7 +424,10 @@ ApplicationMenu.setApplicationMenu([
     : []),
   {
     label: 'Help',
-    submenu: [{ label: 'MCP Gateway User Guide', action: 'open-docs' }],
+    submenu: [
+      { label: 'MCP Gateway User Guide', action: 'open-docs' },
+      { label: 'Show Configuration in Finder', action: 'reveal-config' },
+    ],
   },
 ]);
 ApplicationMenu.on('application-menu-clicked', (event) => {

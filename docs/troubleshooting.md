@@ -62,6 +62,7 @@ A configuration error shows "Repair the configuration first."
 
 A configuration error pauses structured editing and shows a banner.
 Open **Authoritative configuration** in **Settings** to repair the file; your original text stays available there.
+To repair it in another editor, choose **Show in Finder** in that section, or **Help > Show Configuration in Finder**.
 
 Common causes:
 

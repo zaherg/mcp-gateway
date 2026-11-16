@@ -5,6 +5,7 @@
 Most settings are structured fields: the gateway preferences in **Settings**, and the server dialog on **Overview**.
 **Authoritative configuration**, a collapsible section in **Settings**, shows the file path and the full contents, including credentials.
 Use it to edit the file directly, or to repair one that structured editing cannot load.
+**Show in Finder** in that section selects the file in Finder, so you can open it in another editor; if the file is missing, it opens the folder instead.
 The section below describes the file itself.
 
 ## The configuration file
@@ -23,6 +24,9 @@ The same folder holds `updates.json`, the automatic-update setting, and `seen-ve
 If both files exist, the app reports an error.
 To rename the file, quit the app first, then reopen it.
 The files must be readable only by you, and symlinks are refused.
+The app reloads the file when another app saves it.
+Save or discard unsaved changes in the app first; otherwise its next save is refused as stale.
+If the app reports that the configuration must be an owner-only regular file after an outside edit, run `chmod 600` on the file.
 
 After a crash, an `mcp.json.lock` file may remain next to the configuration.
 Quit every running copy of the app and make sure nothing else is writing the file.

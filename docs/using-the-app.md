@@ -27,7 +27,7 @@ The update item reads "Check for Updates…", "Update available: <version>" or "
 
 The app menu has **Settings…** (`Cmd+,`), **Check for Updates…** when the app supports updates, and **Quit MCP Gateway** (`Cmd+Q`).
 The File menu has **Close Window** (`Cmd+W`).
-The Help menu has **MCP Gateway User Guide**, which opens this guide in your default browser.
+The Help menu has **MCP Gateway User Guide**, which opens this guide in your default browser, and **Show Configuration in Finder**, which selects the configuration file in Finder.
 
 ## Closing and quitting
 

@@ -145,6 +145,7 @@ interface RawConfig {
   retryLogin: boolean;
   save: () => Promise<boolean>;
   discard: () => Promise<void>;
+  reveal: () => void;
   rawOpen: boolean;
   setRawOpen: (open: boolean) => void;
   setNotice: (notice: string) => void;
@@ -163,6 +164,7 @@ export const RawConfig = ({
   retryLogin,
   save,
   discard,
+  reveal,
   rawOpen,
   setRawOpen,
   setNotice,
@@ -490,6 +492,9 @@ export const RawConfig = ({
             </small>
           </div>
           <div className="raw-actions">
+            <Button variant="secondary" disabled={configurationLocked} onClick={reveal}>
+              Show in Finder
+            </Button>
             <Button variant="secondary" disabled={configurationLocked} onClick={formatDraft}>
               Format
             </Button>

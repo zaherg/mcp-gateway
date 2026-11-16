@@ -1,3 +1,6 @@
+import { lstat } from 'node:fs/promises';
+import { dirname } from 'node:path';
+
 import * as z from 'zod/v4';
 
 import {
@@ -62,6 +65,9 @@ const serverName = (input: unknown): string => {
   return name;
 };
 
+const missingFile = (error: unknown): boolean =>
+  error instanceof Error && 'code' in error && error.code === 'ENOENT';
+
 // The fixed destinations are native-owned so the renderer cannot pass a URL.
 const SOCIAL_LINKS: Record<SocialLinkTarget, string> = {
   docs: 'https://github.com/zaherg/mcp-gateway/blob/main/docs/README.md',
@@ -73,6 +79,8 @@ interface DesktopActions {
   requestQuit: () => QuitStatus;
   quitStatus: () => QuitStatus;
   openExternal: (url: string) => boolean;
+  showItemInFolder: (path: string) => void;
+  openPath: (path: string) => boolean;
   confirmDiscard: () => Promise<boolean>;
   whatsNew: () => string | null;
   dismissWhatsNew: () => Promise<void>;
@@ -298,6 +306,29 @@ export class AppService {
           throw new RequestError('Quit cleanup has started. The link was not opened.');
         if (!this.desktop.openExternal(SOCIAL_LINKS[target]))
           throw new RequestError('The link could not be opened in your default browser.');
+        return null;
+      }),
+    revealConfig: (input?: unknown) =>
+      // Read-only and needed during repair: never wait behind a configuration operation.
+      this.lifecycle(async () => {
+        empty(input);
+        if (
+          this.desktop.quitStatus().phase !== 'idle' ||
+          this.updates.status().phase === 'restarting'
+        )
+          throw new RequestError('Quit cleanup has started. Finder was not opened.');
+        // The path is owned by main; the renderer never supplies one.
+        const path = this.controller.snapshot().configPath;
+        try {
+          await lstat(path);
+        } catch (error) {
+          if (!missingFile(error)) throw error;
+          // A renamed or deleted file: show its folder instead of doing nothing.
+          if (!this.desktop.openPath(dirname(path)))
+            throw new RequestError('The configuration folder could not be opened in Finder.');
+          return null;
+        }
+        this.desktop.showItemInFolder(path);
         return null;
       }),
     dismissWhatsNew: (input?: unknown) =>

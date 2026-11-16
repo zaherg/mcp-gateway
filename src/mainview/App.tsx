@@ -288,6 +288,10 @@ export const App = ({ client }: App) => {
     if (busy || configurationLocked) return;
     void run(() => client.openSocialLink({ target }), '');
   };
+  const revealConfig = () => {
+    if (busy || configurationLocked) return;
+    void run(() => client.revealConfig(), '');
+  };
   const changeEditor = (patch: Partial<Editor>) => {
     if (configurationLocked) return;
     setEditor((previous) => (previous ? { ...previous, ...patch } : null));
@@ -579,6 +583,7 @@ export const App = ({ client }: App) => {
               retryLogin={showLoginRetry}
               save={save}
               discard={discard}
+              reveal={revealConfig}
               rawOpen={rawOpen}
               setRawOpen={setRawOpen}
               setNotice={setNotice}
