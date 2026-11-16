@@ -1,5 +1,5 @@
 import { Annotation, Compartment, EditorState, type Extension } from '@codemirror/state';
-import { EditorView } from '@codemirror/view';
+import { EditorView, lineNumbers } from '@codemirror/view';
 import { useLayoutEffect, useRef } from 'react';
 
 import { jsonEditing } from '@mcp-gateway/mainview/lib/json-editing';
@@ -55,6 +55,7 @@ export const JsonEditor = ({
       doc: live.current.value,
       extensions: [
         ...jsonEditing,
+        lineNumbers(),
         // Filled by the behavior effect below, in the same commit and before paint.
         compartment.of([]),
         EditorView.updateListener.of((update) => {

@@ -370,7 +370,7 @@ export class AppService {
           this.updates.status().phase === 'restarting'
         )
           throw new RequestError('Quit cleanup has started. The language was not changed.');
-        // Only the locales this build offers; the pseudo-locale exists in development builds only.
+        // Only the locales this build offers.
         const preference = parseLanguagePreference(requested, this.desktop.language().available);
         if (!preference) throw new RequestError('The selected language is not available.');
         await this.desktop.setLanguage(preference);

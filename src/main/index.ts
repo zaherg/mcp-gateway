@@ -31,7 +31,7 @@ import {
 import { AppService } from '@mcp-gateway/main/service';
 import { WhatsNewStore } from '@mcp-gateway/main/whats-new';
 import { clampWindowSize, MIN_WINDOW_SIZE, WindowSizeStore } from '@mcp-gateway/main/window-size';
-import { availableLocales, resolveLocale } from '@mcp-gateway/shared/i18n';
+import { CATALOG_LOCALES, resolveLocale } from '@mcp-gateway/shared/i18n';
 import type { AppRPC } from '@mcp-gateway/shared/rpc';
 
 const buildConfig = BuildConfig.getSync();
@@ -61,11 +61,9 @@ try {
   // The default locale is a working fallback; the failure stays visible in Logs.
   controller.recordLocalError(error);
 }
-const language = await LanguageStore.open(
-  dataDirectory,
-  resolveLocale(preferredLanguages),
-  availableLocales(isDevelopment),
-);
+const language = await LanguageStore.open(dataDirectory, resolveLocale(preferredLanguages), [
+  ...CATALOG_LOCALES,
+]);
 const support = await resolveUpdateSupport();
 const whatsNew = await WhatsNewStore.open(dataDirectory, support.installedVersion, existingInstall);
 const TRAY_SIZE = 18;

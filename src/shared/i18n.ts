@@ -12,9 +12,7 @@ export const DEFAULT_LOCALE: CatalogLocale = 'en_US';
 // Typing every catalog as `Catalog` makes a key missing from a translation a typecheck error.
 const CATALOGS: Record<CatalogLocale, Catalog> = { en_US: enUS };
 
-/** Development-only locale generated from `en_US`; text that bypasses the catalog stands out. */
-export const PSEUDO_LOCALE = 'en_XA';
-export type Locale = CatalogLocale | typeof PSEUDO_LOCALE;
+export type Locale = CatalogLocale;
 export type LanguagePreference = 'system' | Locale;
 
 /** The saved choice, the locale in use, the locale macOS asks for, and the locales offered. */
@@ -24,9 +22,6 @@ export interface LanguageState {
   system: CatalogLocale;
   available: Locale[];
 }
-
-export const availableLocales = (development: boolean): Locale[] =>
-  development ? [...CATALOG_LOCALES, PSEUDO_LOCALE] : [...CATALOG_LOCALES];
 
 /** The BCP 47 form (`en-US`) that HTML `lang` and `Intl` expect. */
 export const localeTag = (locale: Locale): string => locale.replace('_', '-');
@@ -70,42 +65,12 @@ export const languageState = (
 });
 
 const PLACEHOLDER = /\{(\w+)\}/g;
-const TEMPLATE_PARTS = /(\{\w+\})/;
-const ACCENTED: Readonly<Record<string, string>> = {
-  a: 'á',
-  e: 'é',
-  i: 'í',
-  o: 'ó',
-  u: 'ú',
-  y: 'ý',
-  n: 'ñ',
-  c: 'ç',
-  A: 'Á',
-  E: 'É',
-  I: 'Í',
-  O: 'Ó',
-  U: 'Ú',
-  Y: 'Ý',
-  N: 'Ñ',
-  C: 'Ç',
-};
-
-// Placeholders stay intact; only the text around them is accented, and the whole is bracketed.
-const pseudoTemplate = (template: string): string =>
-  `[${template
-    .split(TEMPLATE_PARTS)
-    .map((part, index) =>
-      index % 2 === 1 ? part : part.replace(/[aeiouyncAEIOUYNC]/g, (letter) => ACCENTED[letter]),
-    )
-    .join('')}]`;
 
 /** The raw catalog text, for callers that substitute React elements. */
-export const messageTemplate = (locale: Locale, key: MessageKey): string =>
-  locale === PSEUDO_LOCALE ? pseudoTemplate(CATALOGS[DEFAULT_LOCALE][key]) : CATALOGS[locale][key];
+export const messageTemplate = (locale: Locale, key: MessageKey): string => CATALOGS[locale][key];
 
-/** A locale's own name, from its catalog; the pseudo-locale has a fixed developer name. */
-export const languageName = (locale: Locale): string =>
-  locale === PSEUDO_LOCALE ? 'Pseudo: accented (en_XA)' : messageTemplate(locale, 'language.name');
+/** A locale's own name, from its catalog. */
+export const languageName = (locale: Locale): string => messageTemplate(locale, 'language.name');
 
 export type MessageValues = Readonly<Record<string, string | number>>;
 export type Translate = (key: MessageKey, values?: MessageValues) => string;

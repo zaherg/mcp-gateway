@@ -20,7 +20,7 @@ The draft bar also shows "Login registration unresolved" with **Retry login regi
 
 ## The menu-bar icon
 
-The icon menu shows a status line, **Open settings…**, an update item when the app supports updates, **Start gateway** or **Stop gateway**, and **Quit MCP Gateway**.
+The icon menu shows a status line, **Open app…**, an update item when the app supports updates, **Start gateway** or **Stop gateway**, and **Quit MCP Gateway**.
 The status line reads "Gateway running", "Gateway stopped" or "Cleanup failed: see settings".
 The update item reads "Check for Updates…", "Update available: <version>" or "Update ready: <version>".
 **Start gateway** and **Stop gateway** are disabled while the configuration has an error.

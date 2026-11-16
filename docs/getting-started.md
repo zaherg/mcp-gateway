@@ -16,7 +16,7 @@
    A window opens, and an icon appears in the menu bar.
 
 The window has three tabs: **Overview**, **Settings** and **Logs**.
-After you close the window, choose **Open settings…** from the menu-bar icon, or open the app again, to bring it back.
+After you close the window, choose **Open app…** from the menu-bar icon, or open the app again, to bring it back.
 
 ## Add your first server
 

@@ -182,6 +182,19 @@ nav {
   border-color: transparent;
   box-shadow: none;
 }
+.sidebar-language {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 16px;
+  border-top: 1px solid var(--mac-separator);
+}
+.sidebar-language label {
+  padding: 0 4px;
+  color: var(--mac-label-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
 .sidebar-bottom {
   margin-top: auto;
   padding-top: 16px;

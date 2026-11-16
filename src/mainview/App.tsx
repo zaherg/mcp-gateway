@@ -412,6 +412,8 @@ export const App = ({ client }: App) => {
       interactiveQuit={interactiveQuit}
       onOpenSocialLink={openSocialLink}
       socialLinksDisabled={busy || configurationLocked}
+      onLanguageChange={changeLanguage}
+      languageDisabled={busy || configurationLocked}
       sidebarUpdates={
         <SidebarUpdates
           updateState={updateState}
@@ -576,7 +578,6 @@ export const App = ({ client }: App) => {
                 showToken={showToken}
                 setShowToken={setShowToken}
                 filename={filename}
-                onLanguageChange={changeLanguage}
               />
             )}
             <RawConfig

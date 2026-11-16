@@ -99,9 +99,7 @@ To add a locale:
 3. Run `bun run typecheck` and `bun run lint`.
 
 The app picks the first macOS language that matches a locale, by language and region and then by language alone, and falls back to `en_US`.
-Settings shows a language picker once more than one locale exists; the choice is stored in `language.json` next to `mcp.json`.
-Development builds add the generated pseudo-locale `en_XA` to the picker.
-It accents and brackets every catalog string, so plain English on screen is text that bypasses the catalog.
+Settings shows a language picker; the choice is stored in `language.json` next to `mcp.json`.
 Messages from the gateway, servers and logs are not translated.
 Right-to-left languages are not supported yet.
 

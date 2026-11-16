@@ -2,9 +2,19 @@ import { BookOpen, Network } from 'lucide-react';
 import { type ReactNode, type RefObject, useLayoutEffect, useRef } from 'react';
 
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from '@mcp-gateway/mainview/components/mac/native-select';
 import type { Editor } from '@mcp-gateway/mainview/dialogs/ServerEditor';
 import { useI18n } from '@mcp-gateway/mainview/i18n';
-import type { MessageKey } from '@mcp-gateway/shared/i18n';
+import {
+  type LanguagePreference,
+  languageName,
+  localeTag,
+  type MessageKey,
+  parseLanguagePreference,
+} from '@mcp-gateway/shared/i18n';
 import type { AppSnapshot, QuitStatus, SocialLinkTarget } from '@mcp-gateway/shared/rpc';
 import type { NetworkKind } from '@mcp-gateway/shared/types';
 
@@ -39,6 +49,8 @@ interface Shell {
   fallbackFocus: RefObject<HTMLButtonElement | null>;
   onOpenSocialLink: (target: SocialLinkTarget) => void;
   socialLinksDisabled: boolean;
+  onLanguageChange: (preference: LanguagePreference) => void;
+  languageDisabled: boolean;
   sidebarUpdates: ReactNode;
   gatewayToggle: ReactNode;
   children: ReactNode;
@@ -58,6 +70,8 @@ export const Shell = ({
   fallbackFocus,
   onOpenSocialLink,
   socialLinksDisabled,
+  onLanguageChange,
+  languageDisabled,
   sidebarUpdates,
   gatewayToggle,
   children,
@@ -110,6 +124,33 @@ export const Shell = ({
             {t('shell.tab.logs')}
           </button>
         </nav>
+        {snapshot && (
+          <div
+            className="sidebar-language electrobun-webkit-app-region-no-drag"
+            title={t('shell.languageHelp')}
+          >
+            <label htmlFor="sidebar-language">{t('shell.languageLabel')}</label>
+            <NativeSelect
+              id="sidebar-language"
+              value={snapshot.language.preference}
+              disabled={languageDisabled}
+              onChange={(event) => {
+                const preference = parseLanguagePreference(
+                  event.target.value,
+                  snapshot.language.available,
+                );
+                if (preference) onLanguageChange(preference);
+              }}
+            >
+              <NativeSelectOption value="system">{t('shell.languageSystem')}</NativeSelectOption>
+              {snapshot.language.available.map((locale) => (
+                <NativeSelectOption key={locale} value={locale} lang={localeTag(locale)}>
+                  {languageName(locale)}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+          </div>
+        )}
         <div className="sidebar-bottom">
           {sidebarUpdates}
           <div className="sidebar-footer">
@@ -184,11 +225,7 @@ export const Shell = ({
                 ? t('shell.subtitle.overview')
                 : tab === 'logs'
                   ? t('shell.subtitle.logs')
-                  : t(
-                      (snapshot?.language.available.length ?? 0) > 1
-                        ? 'shell.subtitle.settingsWithLanguage'
-                        : 'shell.subtitle.settings',
-                    )}
+                  : t('shell.subtitle.settings')}
             </p>
           </div>
           <div className="page-actions">

@@ -39,7 +39,9 @@
     "shell.subtitle.overview": "One keyed endpoint per server, for devices on your network",
     "shell.subtitle.logs": "Backend output, not redacted, kept in memory until you quit",
     "shell.subtitle.settings": "Listener, startup and the configuration file",
-    "shell.subtitle.settingsWithLanguage": "Language, listener, startup and the configuration file",
+    "shell.languageLabel": "Language",
+    "shell.languageSystem": "System default",
+    "shell.languageHelp": "Applies to this window, the menu bar and the app menu. Messages from the gateway, servers and logs stay in their original language.",
     "shell.quitting": "Quitting…",
     "shell.retryQuit": "Retry Quit",
 
@@ -190,11 +192,6 @@
     "overview.httpBody": "The gateway sends the bearer token and tool data in plain HTTP. On a LAN, use only a network you trust. On a Tailscale or WireGuard address, the tunnel carries the traffic, and every device in the allowed client ranges can reach these endpoints.",
     "overview.awakeBody": "Keep this computer awake for access: sleep takes the endpoints offline, and DHCP can change a LAN address. Reachability from other devices is not verified here.",
 
-    "settings.languageTitle": "Language",
-    "settings.languageIntro": "Applies right away to this window, the menu bar and the app menu",
-    "settings.languageLabel": "App language",
-    "settings.languageSystem": "System default ({language})",
-    "settings.languageHelp": "Messages from the gateway, servers and logs stay in their original language.",
     "settings.networkKind.loopback": "this computer only",
     "settings.networkKind.lan": "LAN",
     "settings.networkKind.tailscale": "Tailscale",
@@ -292,7 +289,7 @@
     "raw.showInFinder": "Show in Finder",
 
     "native.tray.cleanupFailed": "Cleanup failed: see settings",
-    "native.tray.open": "Open settings…",
+    "native.tray.open": "Open app…",
     "native.tray.updateReady": "Update ready: {version}",
     "native.tray.updateAvailable": "Update available: {version}",
     "native.tray.review": "review",
