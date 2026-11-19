@@ -26,6 +26,7 @@ import type {
   GatewayOperation,
   GatewaySnapshot,
   LogQuery,
+  ServerCheckResult,
   VisibleError,
 } from '@mcp-gateway/shared/types';
 
@@ -328,6 +329,20 @@ export class McpGatewayController implements GatewayController {
       }
       return this.snapshot();
     });
+  }
+
+  // Not queued: Stop, a reload or a save must not wait behind a slow backend. Stop and
+  // reconciliation reach the test through the ingress, which aborts it.
+  async testServer(name: string, expectedRevision: string): Promise<ServerCheckResult> {
+    this.ensureOpen();
+    this.requireWatchHealthy();
+    if (expectedRevision !== this.document.revision)
+      throw failure('StaleRevision', 'The configuration changed. Test again after it reloads.');
+    if (this.configError)
+      throw failure('InvalidConfig', 'Repair the configuration before testing a server.');
+    if (!this.ingress?.running)
+      throw failure('Closed', 'Start the gateway before testing a server.');
+    return this.ingress.testServer(name);
   }
 
   saveConfig(

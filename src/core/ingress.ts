@@ -25,9 +25,11 @@ import {
   type SelfProxyOptions,
   selectInterface,
 } from '@mcp-gateway/core/network';
+import { checkEndpoint } from '@mcp-gateway/core/test-server';
 import type {
   GatewayConfig,
   InterfaceChoice,
+  ServerCheckResult,
   ServerSnapshot,
   VisibleError,
 } from '@mcp-gateway/shared/types';
@@ -68,6 +70,8 @@ export class GatewayIngress {
   private closePromise: Promise<void> | undefined;
   private listenerStopped: Promise<void> | undefined;
   private monitor: ReturnType<typeof setInterval> | undefined;
+  // One manual server test at a time; removing its endpoint or closing the listener aborts it.
+  private check: { name: string; stop: AbortController } | undefined;
 
   private constructor(
     private config: GatewayConfig,
@@ -231,7 +235,30 @@ export class GatewayIngress {
     await this.reconcile(this.config, control);
   }
 
+  async testServer(name: string): Promise<ServerCheckResult> {
+    const server = Object.hasOwn(this.config.mcpServers, name)
+      ? this.config.mcpServers[name]
+      : undefined;
+    const endpoint = this.endpoints.get(name);
+    if (!server || !endpoint || !this.running || !this.serves(name, endpoint))
+      throw failure('BackendFailure', 'Start the gateway and this server, then test again.');
+    if (this.check) throw failure('BackendFailure', 'Another server test is running.');
+    const check = { name, stop: new AbortController() };
+    this.check = check;
+    try {
+      return await checkEndpoint({
+        url: new URL(`${this.address}/mcp/${name}`),
+        token: effectiveServerToken(this.config.gateway, server),
+        server,
+        stopped: check.stop.signal,
+      });
+    } finally {
+      if (this.check === check) this.check = undefined;
+    }
+  }
+
   private async remove(name: string): Promise<void> {
+    if (this.check?.name === name) this.check.stop.abort();
     const endpoint = this.endpoints.get(name);
     if (endpoint) {
       this.endpoints.delete(name);
@@ -415,6 +442,7 @@ export class GatewayIngress {
 
   private async closeOwned(): Promise<void> {
     this.closed = true;
+    this.check?.stop.abort();
     if (this.monitor) clearInterval(this.monitor);
     this.listenerStopped ??= new Promise<void>((resolve) => {
       if (!this.server.listening) {

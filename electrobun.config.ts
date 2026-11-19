@@ -17,7 +17,7 @@ export default {
     mainProcess: 'bun',
     bun: {
       entrypoint: 'src/main/index.ts',
-      external: ['supergateway', 'supergateway/*', 'jsonc-parser'],
+      external: ['supergateway', 'supergateway/*', 'jsonc-parser', '@modelcontextprotocol/client'],
     },
     copy: {
       'dist/index.html': 'views/mainview/index.html',

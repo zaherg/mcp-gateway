@@ -119,6 +119,11 @@ export interface GatewaySnapshot {
   operationalError: VisibleError | null;
 }
 
+/** One completed handshake through a running endpoint; nothing else is reported. */
+export interface ServerCheckResult {
+  protocolVersion: string;
+}
+
 /** Cancellation ownership captured when an operation was requested. */
 export interface GatewayOperation {
   readonly signal: AbortSignal;
@@ -134,6 +139,8 @@ export interface GatewayController {
   start(operation?: GatewayOperation): Promise<GatewaySnapshot>;
   stop(): Promise<GatewaySnapshot>;
   restartServer(name: string, operation?: GatewayOperation): Promise<GatewaySnapshot>;
+  /** One MCP handshake through the saved, mounted endpoint, as a client would send it. */
+  testServer(name: string, expectedRevision: string): Promise<ServerCheckResult>;
   saveConfig(
     text: string,
     expectedRevision: string,

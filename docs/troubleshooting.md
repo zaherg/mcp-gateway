@@ -47,6 +47,28 @@ An app opened from Finder or at login does not get the `PATH` from your shell.
 Use an absolute path in **Command**, and extend `PATH` in **Environment (JSON object)** when the command starts another program.
 See [Commands that work in Terminal but not in the app](servers.md#commands-that-work-in-terminal-but-not-in-the-app).
 
+## A server test fails
+
+**Test connection** on a server card names what to check:
+
+- "The gateway could not find the program in Command."
+  The app cannot find the executable, usually because **Command** holds a bare name such as `php`.
+  Run `command -v php` in Terminal, with your program's name, and enter the printed path in **Command**.
+  Keep the script and its options in **Arguments**.
+- "The server stopped before it answered."
+  The program started but exited.
+  If **Command** starts another program, add that program's folder to `PATH` in **Environment (JSON object)**, for example `"PATH": "/folder/of/the/program:${PATH}"`.
+  Otherwise read the server's last entries in **Logs**.
+- "The server does not support MCP 2026-07-28."
+  Turn on **Allow session-based clients**, save and test again.
+- "The gateway refused this Mac" or "The gateway refused the test".
+  The gateway's own rules refused the request; see [Status codes](#status-codes).
+
+For example, a Laravel Herd MCP entry whose **Command** is `php` passes in Terminal but fails in the app, because the app does not get your shell's `PATH`.
+Enter the full path that `command -v php` prints, save and test again.
+
+A failed test also marks the card with the gateway's own error, which stays until you save a change to that server or restart it.
+
 ## A referenced environment variable is not defined
 
 The configuration uses `${NAME}` for a variable that the app's environment does not define.

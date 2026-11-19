@@ -1,4 +1,5 @@
 import { CircleHelp, Code2, Copy, RefreshCw, Server, ShieldCheck, Trash2 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
 import { bearPreset, type Editor, emptyEditor } from '@mcp-gateway/mainview/dialogs/ServerEditor';
@@ -35,6 +36,14 @@ interface Overview {
   setEditorError: (error: string | null) => void;
 }
 
+/** The latest manual test, tied to the saved revision it ran against. */
+interface ServerTest {
+  name: string;
+  revision: string;
+  state: 'testing' | 'passed' | 'failed' | 'cancelled';
+  message: string;
+}
+
 export const Overview = ({
   gateway,
   config,
@@ -50,6 +59,51 @@ export const Overview = ({
 }: Overview) => {
   const { t } = useI18n();
   const serverCount = config ? Object.keys(config.mcpServers).length : 0;
+  const [test, setTest] = useState<ServerTest | null>(null);
+  // A reply that arrives after a newer test or after leaving Overview is dropped.
+  const testGeneration = useRef(0);
+  useEffect(
+    () => () => {
+      testGeneration.current++;
+    },
+    [],
+  );
+  const revision = gateway?.revision;
+  const testing = test?.state === 'testing';
+  const testedStatus = gateway?.servers.find((item) => item.name === test?.name)?.status;
+  // A pass or failure describes the mount it ran against, so it ends when the gateway stops
+  // or the server unmounts. A cancellation stays: it explains why the test stopped.
+  const outdated =
+    (test?.state === 'passed' || test?.state === 'failed') &&
+    !(gateway?.running && testedStatus === 'mounted');
+  useEffect(() => {
+    if (outdated) setTest(null);
+  }, [outdated]);
+  const testServer = async (name: string) => {
+    if (!revision || testing) return;
+    const generation = ++testGeneration.current;
+    setTest({ name, revision, state: 'testing', message: t('overview.testing') });
+    let next: ServerTest;
+    try {
+      const result = await client.testServer({ name, expectedRevision: revision });
+      next = result.ok
+        ? {
+            name,
+            revision,
+            state: 'passed',
+            message: t('overview.testPassed', { version: result.value.protocolVersion }),
+          }
+        : {
+            name,
+            revision,
+            state: result.error.code === 'Cancelled' ? 'cancelled' : 'failed',
+            message: result.error.message,
+          };
+    } catch {
+      next = { name, revision, state: 'failed', message: t('overview.testUnavailable') };
+    }
+    if (generation === testGeneration.current) setTest(next);
+  };
   return (
     <>
       <section aria-labelledby="servers-heading">
@@ -76,6 +130,23 @@ export const Overview = ({
               const status = live?.status ?? (server.disabled ? 'disabled' : 'stopped');
               const state = SERVER_STATUS[status];
               const http = 'url' in server;
+              // A result for an older revision no longer describes this entry.
+              const shown =
+                !outdated && test?.name === name && test.revision === revision ? test : null;
+              const testBlocked = dirty
+                ? t('toggle.saveFirst')
+                : gateway?.configError
+                  ? t('toggle.repairFirst')
+                  : !gateway?.running
+                    ? t('overview.testStartGateway')
+                    : status !== 'mounted'
+                      ? t('overview.testNotMounted')
+                      : test?.state === 'testing' && test.name !== name
+                        ? t('overview.testBusy')
+                        : undefined;
+              // Visible text, not a tooltip, so keyboard and VoiceOver users get the reason too.
+              const testReason = configurationLocked ? undefined : testBlocked;
+              const testReasonId = `test-reason-${name}`;
               return (
                 <article
                   className={status === 'error' ? 'server-card panel error' : 'server-card panel'}
@@ -135,12 +206,15 @@ export const Overview = ({
                         server.disabled ||
                         !!gateway?.configError
                       }
-                      onClick={() =>
+                      onClick={() => {
+                        // A restart remounts the server, so an earlier result no longer
+                        // describes it. A running test reports its own cancellation.
+                        if (!testing && test?.name === name) setTest(null);
                         void run(
                           () => client.restartServer({ name }),
                           t('overview.restarted', { name }),
-                        )
-                      }
+                        );
+                      }}
                     >
                       <RefreshCw />
                     </Button>
@@ -155,6 +229,37 @@ export const Overview = ({
                     >
                       <Trash2 />
                     </Button>
+                  </div>
+                  <div className="mb-3 flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="lg"
+                      aria-label={t('overview.testConnectionFor', { name })}
+                      aria-describedby={testReason ? testReasonId : undefined}
+                      disabled={configurationLocked || testBlocked !== undefined || testing}
+                      onClick={() => void testServer(name)}
+                    >
+                      {t('overview.testConnection')}
+                    </Button>
+                    <p
+                      role="status"
+                      className={
+                        shown?.state === 'failed'
+                          ? 'm-0 min-w-0 text-[12px] text-mac-red-ink'
+                          : 'm-0 min-w-0 text-[12px] text-mac-label-secondary'
+                      }
+                    >
+                      {shown?.message}
+                    </p>
+                    {/* Not a live region: a stopped gateway would announce it on every card. */}
+                    {testReason && (
+                      <p
+                        id={testReasonId}
+                        className="m-0 min-w-0 text-[12px] text-mac-label-secondary"
+                      >
+                        {testReason}
+                      </p>
+                    )}
                   </div>
                   <button
                     type="button"

@@ -60,6 +60,14 @@ Each session runs its own backend process or upstream session, and sessions are 
 
 Each card shows the server status: **Mounted**, **Error**, **Disabled** or **Stopped**.
 **Mounted** means the endpoint is served, not that the backend handshake succeeded.
+**Test connection** checks the handshake: it sends the request a client would send to the server's endpoint, with the endpoint's key, and shows the result on the card.
+The test needs saved changes, a running gateway and a started server.
+With **Allow session-based clients** on, it tests the session-based protocol that most desktop clients use.
+It starts the command, or contacts the HTTP upstream, but calls no tool and changes no setting.
+One test runs at a time, and it stops after 30 seconds.
+When the button is unavailable, the text next to it says why.
+The result stays on the card until the configuration changes, the gateway stops or the server restarts.
+A passing test does not show that other devices can reach the gateway; see [Remote access](remote-access.md).
 **Error** means the gateway could not mount the server; the card shows the error message, and **Logs** has the backend's output.
 **Start** and **Stop** save the server's enabled state; the gateway starts separately.
 Use the restart button to restart one server.

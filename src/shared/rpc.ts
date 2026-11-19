@@ -1,6 +1,11 @@
 import type { ConfigIssue } from '@mcp-gateway/shared/config-document';
 import type { LanguagePreference, LanguageState } from '@mcp-gateway/shared/i18n';
-import type { GatewaySnapshot, LogPage, LogQuery } from '@mcp-gateway/shared/types';
+import type {
+  GatewaySnapshot,
+  LogPage,
+  LogQuery,
+  ServerCheckResult,
+} from '@mcp-gateway/shared/types';
 
 export interface LoginStatus {
   occurrenceId?: string;
@@ -74,6 +79,10 @@ export type AppRPC = {
       start: { params: undefined; response: AppResult<AppSnapshot> };
       stop: { params: undefined; response: AppResult<AppSnapshot> };
       restartServer: { params: { name: string }; response: AppResult<AppSnapshot> };
+      testServer: {
+        params: { name: string; expectedRevision: string };
+        response: AppResult<ServerCheckResult>;
+      };
       saveConfig: {
         params: { text: string; expectedRevision: string };
         response: AppResult<AppSnapshot>;

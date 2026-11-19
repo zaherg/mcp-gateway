@@ -48,6 +48,7 @@ interface ReplyFailure {
 let requestSequence = 0;
 const LogRequest = z.strictObject({ after: anyNumber });
 const NameRequest = z.strictObject({ name: z.string() });
+const TestRequest = z.strictObject({ name: z.string(), expectedRevision: z.string() });
 const SaveRequest = z.strictObject({ text: z.string(), expectedRevision: z.string() });
 const PreviewRequest = z.strictObject({ text: z.string() });
 const AutomaticRequest = z.strictObject({ automatic: z.boolean() });
@@ -213,6 +214,19 @@ export class AppService {
         return this.snapshot();
       });
     },
+    testServer: (input: unknown) =>
+      // Not queued: Stop and Quit must not wait behind a slow backend; Stop aborts the test.
+      this.lifecycle(async () => {
+        const { name, expectedRevision } = decode(TestRequest, input);
+        if (!SAFE_NAME.test(name) || !/^[a-f0-9]{64}$/.test(expectedRevision))
+          throw new RequestError('Select a configured server.');
+        if (
+          this.desktop.quitStatus().phase !== 'idle' ||
+          this.updates.status().phase === 'restarting'
+        )
+          throw new RequestError('Quit cleanup has started. The server was not tested.');
+        return this.controller.testServer(name, expectedRevision);
+      }),
     saveConfig: (input: unknown) => {
       const operation = this.controller.operation();
       return this.run(async () => {

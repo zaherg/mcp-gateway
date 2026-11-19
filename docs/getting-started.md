@@ -50,6 +50,13 @@ Choose **Start gateway** in the page heading, or use the menu-bar icon.
 The page footer reads "Listener active" once the gateway is listening.
 Each enabled server shows **Mounted**; [Managing servers](servers.md#managing-servers) explains what the status covers.
 
+## Test the server
+
+Choose **Test connection** on the server card.
+The gateway starts the server, or contacts its HTTP upstream, and waits for the MCP handshake a client would send.
+A result such as "Server answered through the gateway (MCP 2026-07-28)." means the server works through its endpoint on this Mac.
+If the test fails, the card says what to change; [A server test fails](troubleshooting.md#a-server-test-fails) has examples.
+
 ## Connect a client
 
 Choose **Copy client configuration** on a server card, then paste the JSON into your client.
