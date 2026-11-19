@@ -170,6 +170,13 @@ export const Settings = ({
               checked={config.gateway.autoStart ?? false}
               onChange={(value) => setGateway({ autoStart: value })}
             />
+            <Toggle
+              label={t('settings.keepAwake')}
+              description={t('settings.keepAwakeDescription')}
+              disabled={configurationLocked}
+              checked={config.gateway.keepAwake ?? false}
+              onChange={(value) => setGateway({ keepAwake: value || undefined })}
+            />
           </div>
         </>
       ) : (

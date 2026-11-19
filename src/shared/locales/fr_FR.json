@@ -198,7 +198,7 @@
     "overview.mountedNote": "Monté signifie que le point de terminaison est servi, pas que la prise de contact avec le backend a réussi. Démarrer et Arrêter enregistrent l’état activé du serveur ; la passerelle démarre séparément.",
     "overview.httpTitle": "Le HTTP n’est pas chiffré",
     "overview.httpBody": "La passerelle envoie le jeton Bearer et les données des outils en HTTP simple. Sur un réseau local, utilisez uniquement un réseau de confiance. Sur une adresse Tailscale ou WireGuard, le tunnel transporte le trafic, et tout appareil des plages de clients autorisées peut atteindre ces points de terminaison.",
-    "overview.awakeBody": "Gardez cet ordinateur éveillé pour l’accès : la mise en veille met les points de terminaison hors ligne, et le DHCP peut changer une adresse de réseau local. L’accessibilité depuis d’autres appareils n’est pas vérifiée ici.",
+    "overview.awakeBody": "En veille, les points de terminaison sont inaccessibles. Les réglages permettent de garder le Mac éveillé tant que la passerelle fonctionne. Le DHCP peut changer son adresse sur le réseau local. L’app ne vérifie pas l’accès depuis les autres appareils.",
 
     "settings.networkKind.loopback": "cet ordinateur uniquement",
     "settings.networkKind.lan": "réseau local",
@@ -225,6 +225,8 @@
     "settings.loginItemNote": "Le réglage ci-dessus est une demande ; ceci est l’enregistrement effectivement en vigueur dans macOS.",
     "settings.autoStart": "Démarrer la passerelle à l’ouverture de l’app",
     "settings.autoStartDescription": "Commence l’écoute automatiquement, indépendamment du démarrage à l’ouverture de session.",
+    "settings.keepAwake": "Garder le Mac éveillé tant que la passerelle fonctionne",
+    "settings.keepAwakeDescription": "L’écran peut toujours se mettre en veille. Garder le Mac éveillé réduit son autonomie.",
     "settings.paused": "Les préférences structurées sont suspendues jusqu’à la réparation de la configuration.",
 
     "editor.addTitle": "Ajouter un serveur",

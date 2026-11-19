@@ -91,6 +91,22 @@ export const openLoginManager = (path: string) => {
   };
 };
 
+export const preventIdleSleep = (path: string): (() => void) => {
+  const library = dlopen(path, {
+    mcp_begin_idle_sleep_assertion: { args: [], returns: FFIType.ptr },
+    mcp_end_idle_sleep_assertion: { args: [FFIType.ptr], returns: FFIType.void },
+  });
+  const activity = library.symbols.mcp_begin_idle_sleep_assertion();
+  if (!activity) {
+    library.close();
+    throw new Error('macOS did not grant the idle sleep assertion.');
+  }
+  return () => {
+    library.symbols.mcp_end_idle_sleep_assertion(activity);
+    library.close();
+  };
+};
+
 export const observeNativeQuitSignals = (path: string): (() => boolean) => {
   const library = dlopen(path, {
     mcp_quit_signal_install: { args: [], returns: FFIType.i32 },

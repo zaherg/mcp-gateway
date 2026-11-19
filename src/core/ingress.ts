@@ -52,6 +52,8 @@ interface Endpoint {
 }
 const digest = (text: string) => createHash('sha256').update(text).digest();
 
+export type PreventIdleSleep = () => () => void;
+
 export class GatewayIngress {
   private readonly server: Server;
   private readonly sockets = new Set<Socket>();
@@ -69,6 +71,7 @@ export class GatewayIngress {
   private closed = false;
   private closePromise: Promise<void> | undefined;
   private listenerStopped: Promise<void> | undefined;
+  private releaseSleepAssertion?: () => void;
   private monitor: ReturnType<typeof setInterval> | undefined;
   // One manual server test at a time; removing its endpoint or closing the listener aborts it.
   private check: { name: string; stop: AbortController } | undefined;
@@ -78,6 +81,7 @@ export class GatewayIngress {
     private readonly report: (error: VisibleError) => void,
     private readonly logs: LogBuffer,
     private readonly onInterfaceLost?: (ingress: GatewayIngress) => void,
+    private readonly preventIdleSleep?: PreventIdleSleep,
   ) {
     this.selected = selectInterface(config.gateway.host);
     this.server = createServer(
@@ -109,9 +113,10 @@ export class GatewayIngress {
     logs = new LogBuffer(),
     control?: SelfProxyOptions,
     onInterfaceLost?: (ingress: GatewayIngress) => void,
+    preventIdleSleep?: PreventIdleSleep,
   ): Promise<GatewayIngress> {
     await rejectSelfProxy(config, control);
-    const ingress = new GatewayIngress(config, report, logs, onInterfaceLost);
+    const ingress = new GatewayIngress(config, report, logs, onInterfaceLost, preventIdleSleep);
     try {
       await ingress.reconcile(config, control);
       await new Promise<void>((resolve, reject) => {
@@ -128,6 +133,7 @@ export class GatewayIngress {
           resolve();
         });
       });
+      ingress.syncSleepAssertion();
       // DHCP/interface removal must fail closed even without a config edit.
       ingress.monitor = setInterval(() => {
         try {
@@ -186,10 +192,30 @@ export class GatewayIngress {
     void this.close().catch((error) => this.report(visible(error)));
   }
 
+  private syncSleepAssertion(): void {
+    try {
+      if (this.running && this.config.gateway.keepAwake) {
+        if (!this.preventIdleSleep) throw new Error('Idle sleep control is unavailable.');
+        this.releaseSleepAssertion ??= this.preventIdleSleep();
+      } else {
+        // Clear first: a release that throws must never end the same native token twice.
+        const release = this.releaseSleepAssertion;
+        this.releaseSleepAssertion = undefined;
+        release?.();
+      }
+    } catch (error) {
+      this.logs.append({ server: null, level: 'warn', source: 'controller' }, [
+        'Could not update idle sleep prevention:',
+        error,
+      ]);
+    }
+  }
+
   async reconcile(config: GatewayConfig, control?: SelfProxyOptions): Promise<void> {
     await rejectSelfProxy(config, control);
     if (this.closed) throw failure('Closed', 'The listener is closed.');
     this.config = config;
+    this.syncSleepAssertion();
     await Promise.all([...this.closingMounts.keys()].map((name) => this.remove(name)));
     for (const name of this.backendErrors.keys()) {
       if (!Object.hasOwn(config.mcpServers, name)) this.backendErrors.delete(name);
@@ -442,6 +468,7 @@ export class GatewayIngress {
 
   private async closeOwned(): Promise<void> {
     this.closed = true;
+    this.syncSleepAssertion();
     this.check?.stop.abort();
     if (this.monitor) clearInterval(this.monitor);
     this.listenerStopped ??= new Promise<void>((resolve) => {

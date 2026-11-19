@@ -43,6 +43,7 @@ await command(
     'AppKit',
     'src/native/locale.m',
     'src/native/login.m',
+    'src/native/power.m',
     'src/native/signals.m',
     'src/native/tray.m',
     'src/native/window.m',

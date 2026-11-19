@@ -56,6 +56,7 @@ const ConfigSchema = z.strictObject({
     token: z.string(),
     autoStart: z.boolean().exactOptional(),
     launchAtLogin: z.boolean().exactOptional(),
+    keepAwake: z.boolean().exactOptional(),
     allowedPeers: z.array(z.string()).exactOptional(),
   }),
   mcpServers: ownRecord(z.union([StdioSchema, HttpSchema])),

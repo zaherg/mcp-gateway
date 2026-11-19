@@ -20,8 +20,11 @@ When that happens, requests get `503` until you pick the new address; a DHCP res
 
 ## Keeping the endpoints reachable
 
-Sleep takes the endpoints offline, and the app does not prevent sleep.
-`caffeinate -i` in Terminal prevents idle sleep for as long as it runs.
+Sleep takes the endpoints offline.
+In **Settings**, turn on **Keep the Mac awake while the gateway runs** and choose **Save changes** to prevent idle sleep.
+The setting is off by default and can shorten battery life.
+Closing the window leaves it in effect; stopping the gateway or quitting the app releases it.
+The display can still sleep, and the Mac can still sleep if you choose Sleep or close the lid.
 Reachability from other devices is not verified by the app.
 
 ## Tailscale and WireGuard

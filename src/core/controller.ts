@@ -9,7 +9,7 @@ import {
   parseConfig,
 } from '@mcp-gateway/core/config';
 import { failure, GatewayError, visible } from '@mcp-gateway/core/errors';
-import { GatewayIngress } from '@mcp-gateway/core/ingress';
+import { GatewayIngress, type PreventIdleSleep } from '@mcp-gateway/core/ingress';
 import { LogBuffer } from '@mcp-gateway/core/logs';
 import {
   interfaceChoices,
@@ -67,12 +67,18 @@ export class McpGatewayController implements GatewayController {
   private closeWatcher: (() => void) | undefined;
   private interfaceRecovery: ReturnType<typeof setInterval> | undefined;
 
-  private constructor(configPath: string) {
+  private constructor(
+    configPath: string,
+    private readonly preventIdleSleep?: PreventIdleSleep,
+  ) {
     this.store = new ConfigStore(configPath);
   }
 
-  static async open(configPath: string): Promise<McpGatewayController> {
-    const controller = new McpGatewayController(configPath);
+  static async open(
+    configPath: string,
+    preventIdleSleep?: PreventIdleSleep,
+  ): Promise<McpGatewayController> {
+    const controller = new McpGatewayController(configPath, preventIdleSleep);
     await controller.serial(async () => {
       const control = controller.control(controller.validationLifetime());
       try {
@@ -215,6 +221,7 @@ export class McpGatewayController implements GatewayController {
         this.logs,
         control,
         this.awaitInterface,
+        this.preventIdleSleep,
       ).catch((error) => {
         throw error instanceof GatewayError
           ? error

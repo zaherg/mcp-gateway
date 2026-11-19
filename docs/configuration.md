@@ -48,6 +48,10 @@ Then delete the lock and try again.
 ```
 
 `gateway` accepts `host`, `port`, `token`, `autoStart`, `launchAtLogin` and `allowedPeers`.
+It also accepts `keepAwake`.
+Set `keepAwake` to `true` to prevent idle system sleep while the listener runs, or omit it to leave sleep unchanged.
+You can change it without restarting the gateway.
+Remove `keepAwake` before opening the file in an older release; older schemas reject the field even when it is `false`.
 The host must be a private IPv4, `100.64.0.0/10` or loopback address that this Mac has right now.
 `allowedPeers` is an optional list of 1 to 16 IPv4 ranges, such as `["100.64.0.0/10"]`.
 When it is set, the gateway accepts clients in those ranges and on this Mac, instead of clients in the selected interface's subnet.

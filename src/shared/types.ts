@@ -38,6 +38,7 @@ export interface GatewayConfig {
     token: string;
     autoStart?: boolean;
     launchAtLogin?: boolean;
+    keepAwake?: boolean;
     /** IPv4 client ranges that replace the selected interface's netmask check. */
     allowedPeers?: string[];
   };

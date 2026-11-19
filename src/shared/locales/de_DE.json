@@ -198,7 +198,7 @@
     "overview.mountedNote": "Eingebunden bedeutet, dass der Endpunkt bereitgestellt wird, nicht dass der Handshake mit dem Backend erfolgreich war. Starten und Stoppen speichern den Aktiviert-Status des Servers; das Gateway startet separat.",
     "overview.httpTitle": "HTTP ist nicht verschlüsselt",
     "overview.httpBody": "Das Gateway sendet das Bearer-Token und Werkzeugdaten über unverschlüsseltes HTTP. Verwenden Sie in einem LAN nur ein vertrauenswürdiges Netzwerk. Bei einer Tailscale- oder WireGuard-Adresse transportiert der Tunnel den Datenverkehr, und jedes Gerät in den erlaubten Client-Bereichen kann diese Endpunkte erreichen.",
-    "overview.awakeBody": "Halten Sie diesen Computer für den Zugriff wach: Der Ruhezustand nimmt die Endpunkte offline, und DHCP kann eine LAN-Adresse ändern. Die Erreichbarkeit von anderen Geräten wird hier nicht geprüft.",
+    "overview.awakeBody": "Im Ruhezustand sind die Endpunkte nicht erreichbar. In den Einstellungen können Sie den Mac wach halten, solange das Gateway läuft. DHCP kann seine LAN-Adresse ändern. Die App prüft den Zugriff von anderen Geräten nicht.",
 
     "settings.networkKind.loopback": "nur dieser Computer",
     "settings.networkKind.lan": "LAN",
@@ -225,6 +225,8 @@
     "settings.loginItemNote": "Die obige Einstellung ist eine Anforderung; dies ist die Registrierung, die macOS tatsächlich anwendet.",
     "settings.autoStart": "Gateway starten, wenn die App geöffnet wird",
     "settings.autoStartDescription": "Beginnt automatisch mit dem Lauschen, unabhängig vom Start bei der Anmeldung.",
+    "settings.keepAwake": "Mac wach halten, solange das Gateway läuft",
+    "settings.keepAwakeDescription": "Der Bildschirm kann sich weiterhin ausschalten. Ohne Ruhezustand hält der Akku weniger lange.",
     "settings.paused": "Strukturierte Voreinstellungen sind pausiert, bis die Konfiguration repariert ist.",
 
     "editor.addTitle": "Server hinzufügen",

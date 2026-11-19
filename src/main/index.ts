@@ -25,6 +25,7 @@ import {
   openLoginManager,
   openMinimumWindowSize,
   openTrayIndicator,
+  preventIdleSleep,
   readPreferredLanguages,
   restoreWindow,
 } from '@mcp-gateway/main/native';
@@ -53,7 +54,9 @@ const setMinimumWindowSize = openMinimumWindowSize(nativeLibrary);
 const windowSize = await WindowSizeStore.open(dataDirectory);
 // Opening the controller creates the folder on a first launch, so look before it does.
 const existingInstall = existsSync(dataDirectory);
-const controller = await McpGatewayController.open(join(dataDirectory, 'mcp.json'));
+const controller = await McpGatewayController.open(join(dataDirectory, 'mcp.json'), () =>
+  preventIdleSleep(nativeLibrary),
+);
 let preferredLanguages: string[] = [];
 try {
   preferredLanguages = readPreferredLanguages(nativeLibrary);

@@ -198,7 +198,7 @@
     "overview.mountedNote": "Sunuluyor, uç noktanın sunulduğu anlamına gelir; arka uç el sıkışmasının başarılı olduğu anlamına gelmez. Başlat ve Durdur, sunucunun etkin durumunu kaydeder; ağ geçidi ayrıca başlar.",
     "overview.httpTitle": "HTTP şifrelenmemiştir",
     "overview.httpBody": "Ağ geçidi, Bearer belirtecini ve araç verilerini düz HTTP ile gönderir. Bir LAN’da yalnızca güvendiğiniz bir ağı kullanın. Tailscale veya WireGuard adresinde trafiği tünel taşır ve izin verilen istemci aralıklarındaki her cihaz bu uç noktalara erişebilir.",
-    "overview.awakeBody": "Erişim için bu bilgisayarı uyanık tutun: uyku uç noktaları çevrimdışı yapar ve DHCP bir LAN adresini değiştirebilir. Diğer cihazlardan erişilebilirlik burada doğrulanmaz.",
+    "overview.awakeBody": "Mac uykuya geçtiğinde uç noktalar çevrimdışı olur. Ağ geçidi çalışırken Mac’i uyanık tutmak için Ayarlar’ı kullanabilirsiniz. DHCP, Mac’in yerel ağ adresini değiştirebilir. Uygulama diğer cihazlardan erişimi denetlemez.",
 
     "settings.networkKind.loopback": "yalnızca bu bilgisayar",
     "settings.networkKind.lan": "LAN",
@@ -225,6 +225,8 @@
     "settings.loginItemNote": "Yukarıdaki ayar bir istektir; bu ise macOS’in fiilen uyguladığı kayıttır.",
     "settings.autoStart": "Uygulama açıldığında ağ geçidini başlat",
     "settings.autoStartDescription": "Oturum açılışında başlatmadan bağımsız olarak otomatik dinlemeye başlar.",
+    "settings.keepAwake": "Ağ geçidi çalışırken Mac’i uyanık tut",
+    "settings.keepAwakeDescription": "Ekran yine de uykuya geçebilir. Mac’i uyanık tutmak pilin daha hızlı tükenmesine neden olur.",
     "settings.paused": "Yapılandırma onarılana kadar yapılandırılmış tercihler duraklatıldı.",
 
     "editor.addTitle": "Sunucu ekle",

@@ -198,7 +198,7 @@
     "overview.mountedNote": "Mounted means the endpoint is served, not that the backend handshake succeeded. Start and Stop save the server's enabled state; the gateway starts separately.",
     "overview.httpTitle": "HTTP is not encrypted",
     "overview.httpBody": "The gateway sends the bearer token and tool data in plain HTTP. On a LAN, use only a network you trust. On a Tailscale or WireGuard address, the tunnel carries the traffic, and every device in the allowed client ranges can reach these endpoints.",
-    "overview.awakeBody": "Keep this computer awake for access: sleep takes the endpoints offline, and DHCP can change a LAN address. Reachability from other devices is not verified here.",
+    "overview.awakeBody": "Sleep takes endpoints offline. You can keep this Mac awake in Settings. DHCP can change its LAN address. The app does not check access from other devices.",
 
     "settings.networkKind.loopback": "this computer only",
     "settings.networkKind.lan": "LAN",
@@ -225,6 +225,8 @@
     "settings.loginItemNote": "The setting above is a request; this is the registration macOS has in effect.",
     "settings.autoStart": "Start gateway when the app opens",
     "settings.autoStartDescription": "Begin listening automatically, independently of login startup.",
+    "settings.keepAwake": "Keep the Mac awake while the gateway runs",
+    "settings.keepAwakeDescription": "The display can still sleep. Keeping the Mac awake uses more battery.",
     "settings.paused": "Structured preferences are paused until the configuration is repaired.",
 
     "editor.addTitle": "Add a server",
