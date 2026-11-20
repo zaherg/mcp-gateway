@@ -150,10 +150,7 @@ const signedBuild = async () => {
 if (plan.signed) await signedBuild();
 else if (plan.mode === 'dev') {
   // Ctrl+C reaches every process in the terminal's group, so no signal handling is needed.
-  const server = await createServer({
-    clearScreen: false,
-    define: { 'import.meta.env.VITE_APP_NAME': JSON.stringify(identity.name) },
-  });
+  const server = await createServer({ clearScreen: false });
   try {
     await server.listen();
     server.printUrls();

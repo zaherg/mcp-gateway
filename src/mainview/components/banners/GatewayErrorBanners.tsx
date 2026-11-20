@@ -27,16 +27,22 @@ export const GatewayErrorBanners = ({
   // A local error with the same occurrence already reports this failure.
   const reportedLocally = (occurrenceId: string) =>
     hasLocalError && errorOccurrence === occurrenceId;
+  const configText = (error: VisibleError) => {
+    // No file exists after a first-run Keychain failure, so only its own remedy applies.
+    if (error.code === 'KeySetupFailed') return error.message;
+    const editing =
+      hasRetainedConfig && !configurationLocked
+        ? t('banners.retainedDraft')
+        : t('banners.editingPaused');
+    return `${t('banners.configUnavailable', { message: error.message })} ${editing}`;
+  };
   return (
     <>
       {configError &&
         !reportedLocally(configError.occurrenceId) &&
         !dismissed.has(`config-${configError.occurrenceId}`) && (
           <Alert onDismiss={() => dismiss(`config-${configError.occurrenceId}`)}>
-            {t('banners.configUnavailable', { message: configError.message })}{' '}
-            {hasRetainedConfig && !configurationLocked
-              ? t('banners.retainedDraft')
-              : t('banners.editingPaused')}
+            {configText(configError)}
           </Alert>
         )}
       {operationalError &&

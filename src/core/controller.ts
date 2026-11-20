@@ -102,8 +102,9 @@ export class McpGatewayController implements GatewayController {
 
   static async open(
     configPath: string,
-    preventIdleSleep?: PreventIdleSleep,
-    keys?: KeyStore,
+    preventIdleSleep: PreventIdleSleep | undefined,
+    keys: KeyStore | undefined,
+    port: number,
   ): Promise<McpGatewayController> {
     const controller = new McpGatewayController(configPath, preventIdleSleep, keys);
     await controller.serial(async () => {
@@ -111,10 +112,12 @@ export class McpGatewayController implements GatewayController {
       try {
         controller.document = await controller.store.initialize(async () => {
           const token = randomBytes(32).toString('hex');
-          if (!keys) return { token };
+          if (!keys) return { port, token };
           try {
-            return { tokenRef: await createKeyRef(keys, token) };
-          } catch {
+            return { port, tokenRef: await createKeyRef(keys, token) };
+          } catch (error) {
+            // Keep the store or read-back reason in Logs; the visible error gives the remedy.
+            controller.logs.append({ server: null, level: 'error', source: 'controller' }, [error]);
             throw failure(
               'KeySetupFailed',
               'The first gateway key could not be stored in Keychain. Unlock Keychain, allow access, and reopen the app.',
@@ -427,6 +430,8 @@ export class McpGatewayController implements GatewayController {
     return this.serial(async () => {
       const control = this.control(signal);
       this.ensureOpen();
+      // No file exists yet; a failed save would replace the setup remedy with a generic error.
+      if (this.configError?.code === 'KeySetupFailed') throw new GatewayError(this.configError);
       const next = await this.validate(await this.parse(text), control);
       const document = await this.store.save(text, expectedRevision).catch(async (error) => {
         await this.refresh(control);

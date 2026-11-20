@@ -324,6 +324,7 @@ export const App = ({ client }: App) => {
         }),
       t('keys.moved'),
       true,
+      false,
     );
   };
   const changeLanguage = (preference: LanguagePreference) => {

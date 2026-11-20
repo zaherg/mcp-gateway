@@ -79,6 +79,8 @@ See [Environment variables](configuration.md#environment-variables) for where th
 The signed app did not create `mcp.json` because it could not store and verify the initial global key.
 Unlock the login Keychain and reopen the app, allowing access if macOS asks.
 The app does not fall back to a plaintext key.
+A failed attempt can leave an unused item under the `MCP Gateway APP` service, for example when you answer the macOS dialog after the app stopped waiting.
+Items whose account matches no `tokenRef` in `mcp.json` are unused; remove them in Keychain Access if you want.
 
 ## A Keychain key could not be read
 

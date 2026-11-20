@@ -35,7 +35,7 @@ import { AppService } from '@mcp-gateway/main/service';
 import { WhatsNewStore } from '@mcp-gateway/main/whats-new';
 import { clampWindowSize, MIN_WINDOW_SIZE, WindowSizeStore } from '@mcp-gateway/main/window-size';
 import { CATALOG_LOCALES, resolveLocale } from '@mcp-gateway/shared/i18n';
-import { appNameFor } from '@mcp-gateway/shared/identity';
+import { appNameFor, TEST_IDENTIFIER } from '@mcp-gateway/shared/identity';
 import type { AppRPC } from '@mcp-gateway/shared/rpc';
 
 const buildConfig = BuildConfig.getSync();
@@ -61,6 +61,8 @@ const controller = await McpGatewayController.open(
   () => preventIdleSleep(nativeLibrary),
   // Unsigned development builds share the real configuration folder but never touch Keychain.
   isDevelopment ? undefined : openKeychain(identifier),
+  // A different first-run port lets the Dev app run beside the production app.
+  identifier === TEST_IDENTIFIER ? 8766 : 8765,
 );
 const keyReminder = await KeyReminderStore.open(dataDirectory, existingInstall);
 let preferredLanguages: string[] = [];
@@ -155,7 +157,7 @@ const updateMenu = (): void => {
       enabled: !snapshot.configError || snapshot.configError.code === 'KeyUnavailable',
     },
     { type: 'divider' },
-    { type: 'normal', label: t('common.quitApp'), action: 'quit' },
+    { type: 'normal', label: t('common.quitApp', { app: appName }), action: 'quit' },
   ]);
 };
 
@@ -431,7 +433,7 @@ const setApplicationMenu = (): void => {
           ? [{ label: t('native.menu.checkForUpdates'), action: 'updates' }]
           : []),
         { type: 'divider' },
-        { label: t('common.quitApp'), action: 'quit', accelerator: 'Cmd+Q' },
+        { label: t('common.quitApp', { app: appName }), action: 'quit', accelerator: 'Cmd+Q' },
       ],
     },
     {

@@ -316,7 +316,8 @@ export const Overview = ({
             <small>{t('overview.bearNote')}</small>
           </div>
         )}
-        {!config && (
+        {/* A first-run Keychain failure has no file to repair; its banner gives the remedy. */}
+        {!config && gateway?.configError?.code !== 'KeySetupFailed' && (
           <div className="panel empty-state">
             <Code2 size={24} />
             <h3>{t('overview.repairTitle')}</h3>

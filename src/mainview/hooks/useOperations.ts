@@ -34,6 +34,8 @@ export const useOperations = ({
     operation: () => Promise<AppResult<AppSnapshot | null>>,
     message: string,
     saved = false,
+    // A key move needs a clean form, so its failure has no draft to mention.
+    draft = saved,
   ) => {
     const terminalGeneration = quitGeneration.current;
     setBusy(true);
@@ -47,7 +49,7 @@ export const useOperations = ({
       if (!result.ok) {
         setErrorOccurrence(result.error.occurrenceId ?? null);
         const failure = `${result.error.code}: ${result.error.message}`;
-        setError(saved ? t('operations.saveFailed', { error: failure }) : failure);
+        setError(draft ? t('operations.saveFailed', { error: failure }) : failure);
         return false;
       }
       if (result.value) {

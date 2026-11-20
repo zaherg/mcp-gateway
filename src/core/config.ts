@@ -456,13 +456,12 @@ export const serverFingerprint = (server: StdioServerConfig | HttpServerConfig):
   );
 };
 
-const newConfigText = (key: KeySlot): string => {
+const newConfigText = (gateway: KeySlot & { port: number }): string => {
   return `${JSON.stringify(
     {
       gateway: {
         host: '127.0.0.1',
-        port: 8765,
-        ...key,
+        ...gateway,
         autoStart: false,
         launchAtLogin: false,
       },
@@ -752,7 +751,7 @@ export class ConfigStore {
     if (failed) throw failed.error;
   }
 
-  initialize(createKey: () => Promise<KeySlot>): Promise<ConfigDocument> {
+  initialize(createGateway: () => Promise<KeySlot & { port: number }>): Promise<ConfigDocument> {
     if (this.initialized || this.selectionRefused) return this.read();
     return guarded(async () => {
       // Inspect each ancestor before creating owner-only directories; recursive
@@ -767,11 +766,11 @@ export class ConfigStore {
         }
         this.selectedPath = jsonc ? this.jsoncPath : this.jsonPath;
         if (!json && !jsonc) {
-          const key = await createKey();
+          const gateway = await createGateway();
           // The parent or alternate filename may have changed while the key was being created.
           await safeParent(this.path);
           await this.checkSelection();
-          await this.replace(newConfigText(key), true);
+          await this.replace(newConfigText(gateway), true);
         }
         this.initialized = true;
       });

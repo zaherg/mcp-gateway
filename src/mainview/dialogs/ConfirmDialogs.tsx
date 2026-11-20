@@ -50,7 +50,7 @@ export const ConfirmDialogs = ({
     <>
       {confirmQuit && (
         <Modal
-          title={t('confirm.quitTitle')}
+          title={t('confirm.quitTitle', { app: document.title })}
           onClose={() => setConfirmQuit(false)}
           fallbackFocus={fallbackFocus}
         >
@@ -69,7 +69,12 @@ export const ConfirmDialogs = ({
           onClose={() => setConfirmUpdate(false)}
           fallbackFocus={fallbackFocus}
         >
-          <p>{t('confirm.updateBody', { version: updateState?.availableVersion ?? '' })}</p>
+          <p>
+            {t('confirm.updateBody', {
+              app: document.title,
+              version: updateState?.availableVersion ?? '',
+            })}
+          </p>
           <p>{dirty ? t('confirm.updateDiscards') : t('confirm.updateKeeps')}</p>
           <div className="dialog-actions">
             <Button onClick={() => setConfirmUpdate(false)}>{t('common.cancel')}</Button>

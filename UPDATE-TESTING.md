@@ -41,6 +41,9 @@ The feed is built into the app and cannot change while the app runs.
 Test builds keep the identifier `dev.srvr.mcpgateway.test` and the stable channel.
 They are signed with the Developer ID but not notarized.
 They store their configuration in `~/Library/Application Support/MCP Gateway Test/`, apart from the production `MCP Gateway` folder.
+A new Dev configuration uses port 8766 instead of 8765, so both apps can run at once with their first-run settings.
+A test app installed before the rename still updates to a Dev build, but keeps its `MCP Gateway.app` folder name.
+Delete such a copy and install `MCP Gateway Dev.app` from a new DMG, so it cannot clash with the production app in Applications.
 They need the signing identity in Keychain, but no Apple notarization credentials.
 They say nothing about how Gatekeeper treats downloaded or quarantined apps.
 

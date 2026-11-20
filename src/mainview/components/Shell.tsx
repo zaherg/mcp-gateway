@@ -95,7 +95,7 @@ export const Shell = ({
           <span className="brand-mark">
             <Network size={18} />
           </span>
-          <span>{import.meta.env.VITE_APP_NAME ?? 'MCP Gateway'}</span>
+          <span>{document.title}</span>
         </div>
         <nav
           aria-label={t('shell.mainNavigation')}
@@ -245,7 +245,7 @@ export const Shell = ({
                 ? t('shell.quitting')
                 : quitStatus.phase === 'failed'
                   ? t('shell.retryQuit')
-                  : t('common.quitApp')}
+                  : t('common.quitApp', { app: document.title })}
             </Button>
           </div>
         </header>
