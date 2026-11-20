@@ -1,7 +1,7 @@
 import { lstat, readdir } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 
-import { PRODUCTION_IDENTIFIER, TEST_IDENTIFIER } from '@mcp-gateway/shared/identity';
+import { appNameFor, PRODUCTION_IDENTIFIER, TEST_IDENTIFIER } from '@mcp-gateway/shared/identity';
 
 export { PRODUCTION_IDENTIFIER, TEST_IDENTIFIER };
 
@@ -42,9 +42,11 @@ export const validateFeedUrl = (value: string | undefined): string => {
 export const buildIdentity = (environment: NodeJS.ProcessEnv = process.env) => {
   const kind = environment.MCP_GATEWAY_BUILD_KIND ?? 'production';
   if (kind !== 'production' && kind !== 'test') throw new Error('Invalid build kind.');
+  const identifier = kind === 'test' ? TEST_IDENTIFIER : PRODUCTION_IDENTIFIER;
   return {
     kind,
-    identifier: kind === 'test' ? TEST_IDENTIFIER : PRODUCTION_IDENTIFIER,
+    identifier,
+    name: appNameFor(identifier),
     feed: kind === 'test' ? validateFeedUrl(environment.MCP_GATEWAY_TEST_FEED) : PRODUCTION_FEED,
     notarize: kind === 'production',
   };

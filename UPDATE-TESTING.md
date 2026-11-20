@@ -37,7 +37,8 @@ It never creates a bucket or changes a policy.
 
 The feed is built into the app and cannot change while the app runs.
 `bun run release` ignores the test feed, even if a test build-kind variable is inherited, and always uses GitHub.
-Test builds use the identifier `dev.srvr.mcpgateway.test` and keep the stable channel.
+`bun run release:test` builds `MCP Gateway Dev.app` in `macos-arm64-MCPGatewayDev.dmg` so it can sit alongside `MCP Gateway.app`.
+Test builds keep the identifier `dev.srvr.mcpgateway.test` and the stable channel.
 They are signed with the Developer ID but not notarized.
 They store their configuration in `~/Library/Application Support/MCP Gateway Test/`, apart from the production `MCP Gateway` folder.
 They need the signing identity in Keychain, but no Apple notarization credentials.
@@ -52,7 +53,7 @@ Start a throwaway `bash -eu` from the repository root, run every block of this s
 Never paste the blocks into a login shell, because a failed command or the port check would close that shell.
 Variables such as `ROOT`, `A_ARTIFACTS`, `B_ARTIFACTS` and `RUN` exist only in that shell.
 If the shell closes, start the section again and set `RUN` by hand to the existing run folder.
-A pair you already verified with these versions, identifier and feed can be reused instead of rebuilt.
+Use two builds named `MCP Gateway Dev.app` for this rehearsal; candidates built before the rename use different bundle and archive names.
 
 ```sh
 ROOT="$PWD"
@@ -149,13 +150,13 @@ if lsof -nP -iTCP:18770 -sTCP:LISTEN >/dev/null; then exit 1; fi
 bun -e 'const dir = process.env.RUN + "/home/Library/Application Support/MCP Gateway Test"; const config = { gateway: { host: "127.0.0.1", port: 18770, token: crypto.randomUUID().replaceAll("-", ""), autoStart: true, launchAtLogin: false }, mcpServers: {} }; await Bun.write(dir + "/mcp.json", JSON.stringify(config, null, 2) + "\n");'
 chmod 600 "$RUN/home/Library/Application Support/MCP Gateway Test/mcp.json"
 shasum -a 256 "$RUN/home/Library/Application Support/MCP Gateway Test/mcp.json" > "$RUN/synthetic-config.before.sha256"
-tar -xf "$A_ARTIFACTS/stable-macos-arm64-MCPGateway.app.tar.zst" -C "$RUN/install"
-codesign --verify --deep --strict "$RUN/install/MCP Gateway.app"
+tar -xf "$A_ARTIFACTS/stable-macos-arm64-MCPGatewayDev.app.tar.zst" -C "$RUN/install"
+codesign --verify --deep --strict "$RUN/install/MCP Gateway Dev.app"
 (
   cd "$RUN/install"
   exec env -i PATH="$PATH" HOME="$RUN/home" PWD="$RUN/install" \
     TMPDIR="$RUN/home/tmp/" USER="$(id -un)" LOGNAME="$(id -un)" \
-    "$RUN/install/MCP Gateway.app/Contents/MacOS/launcher"
+    "$RUN/install/MCP Gateway Dev.app/Contents/MacOS/launcher"
 ) > "$RUN/app.log" 2>&1 &
 printf '%s\n' "$!" > "$RUN/initial-launcher.pid"
 ```
@@ -168,8 +169,8 @@ Then choose Restart to Update again, confirm, and wait for the new window.
 The installed metadata must show B, its signature must pass, and both configuration checks must still match:
 
 ```sh
-bun -e 'const p = process.env.RUN + "/install/MCP Gateway.app/Contents/Resources/version.json"; const v = await Bun.file(p).json(); console.log(JSON.stringify({version:v.version, identifier:v.identifier, channel:v.channel, feed:v.baseUrl}));'
-codesign --verify --deep --strict "$RUN/install/MCP Gateway.app"
+bun -e 'const p = process.env.RUN + "/install/MCP Gateway Dev.app/Contents/Resources/version.json"; const v = await Bun.file(p).json(); console.log(JSON.stringify({version:v.version, identifier:v.identifier, channel:v.channel, feed:v.baseUrl}));'
+codesign --verify --deep --strict "$RUN/install/MCP Gateway Dev.app"
 shasum -a 256 -c "$RUN/synthetic-config.before.sha256"
 shasum -a 256 -c "$RUN/real-config.before.sha256"
 ```

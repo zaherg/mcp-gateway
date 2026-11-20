@@ -95,7 +95,7 @@ export const Shell = ({
           <span className="brand-mark">
             <Network size={18} />
           </span>
-          <span>MCP Gateway</span>
+          <span>{import.meta.env.VITE_APP_NAME ?? 'MCP Gateway'}</span>
         </div>
         <nav
           aria-label={t('shell.mainNavigation')}

@@ -14,7 +14,7 @@ import {
 } from './build-config';
 import { withDmgMount } from './release-dmg';
 import { compareBundleInventories, inventoryBundle, inventoryDigest } from './release-inventory';
-import { hashFile, readUpdateArtifacts, UPDATE_FILES } from './update-artifacts';
+import { hashFile, readUpdateArtifacts, releaseFiles } from './update-artifacts';
 
 const options = parseArgs({
   args: process.argv.slice(2),
@@ -41,11 +41,11 @@ const artifacts = resolve(root, environment.MCP_GATEWAY_ARTIFACTS_DIR);
 const verificationOutput = resolve(
   process.env.MCP_GATEWAY_VERIFICATION_OUTPUT ?? join(artifacts, 'release-verification.json'),
 );
+const { bundle, dmg: DMG_FILE, updates: UPDATE_FILES } = releaseFiles(IDENTIFIER);
 const wrapper = resolve(
   options.positionals[0] ??
-    join(root, environment.MCP_GATEWAY_BUILD_ROOT, 'stable-macos-arm64/MCP Gateway.app'),
+    join(root, environment.MCP_GATEWAY_BUILD_ROOT, 'stable-macos-arm64', bundle),
 );
-const DMG_FILE = 'macos-arm64-MCPGateway.dmg';
 const CHANNEL = 'stable';
 const dmg = join(artifacts, DMG_FILE);
 const manifestPath = join(artifacts, UPDATE_FILES.manifest);
@@ -205,8 +205,9 @@ try {
     join(root, '.cache'),
     async (dmgMount) => {
       const dmgApps = (await readdir(dmgMount)).filter((name) => name.endsWith('.app'));
-      if (dmgApps.length !== 1) throw new Error('DMG must contain exactly one application bundle.');
-      const dmgApp = join(dmgMount, dmgApps[0] as string);
+      if (dmgApps.length !== 1 || dmgApps[0] !== bundle)
+        throw new Error(`DMG must contain ${bundle} as its only application bundle.`);
+      const dmgApp = join(dmgMount, bundle);
       // The DMG app has no Gatekeeper check on purpose; the extracted payload gets one below.
       await verifySignature('DMG app', dmgApp);
       await verifyTicket('DMG app', dmgApp);
@@ -258,7 +259,7 @@ try {
   // The wrapper replaces itself on first launch; execute a separate signed payload
   // for local verification without changing the deliverable or using Launch Services.
   await check('extract signed payload', ['/usr/bin/tar', '-xf', archive, '-C', destination]);
-  const payload = join(destination, 'MCP Gateway.app');
+  const payload = join(destination, bundle);
   evidence.payloadPath = payload;
   await verifySignature('payload', payload);
   await verifyTicket('payload', payload);

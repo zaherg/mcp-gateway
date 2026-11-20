@@ -5,13 +5,22 @@ import { join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { createZstdDecompress } from 'node:zlib';
 
+import { appNameFor } from '@mcp-gateway/shared/identity';
 import { STABLE_VERSION_PATTERN } from './build-config';
 
-export const UPDATE_FILES = {
-  manifest: 'stable-macos-arm64-update.json',
-  integrity: 'stable-macos-arm64-update-v2.json',
-  archive: 'stable-macos-arm64-MCPGateway.app.tar.zst',
-} as const;
+export const releaseFiles = (identifier: string) => {
+  const name = appNameFor(identifier);
+  const stem = name.replaceAll(' ', '');
+  return {
+    bundle: `${name}.app`,
+    dmg: `macos-arm64-${stem}.dmg`,
+    updates: {
+      manifest: 'stable-macos-arm64-update.json',
+      integrity: 'stable-macos-arm64-update-v2.json',
+      archive: `stable-macos-arm64-${stem}.app.tar.zst`,
+    },
+  };
+};
 const MAX_ARCHIVE_BYTES = 512 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 64 * 1024;
 
@@ -33,6 +42,7 @@ const record = (value: unknown): Record<string, unknown> => {
 };
 
 const parseManifest = (text: string, identifier: string, version?: string): UpdateManifest => {
+  const { updates } = releaseFiles(identifier);
   let value: unknown;
   try {
     value = JSON.parse(text);
@@ -52,7 +62,7 @@ const parseManifest = (text: string, identifier: string, version?: string): Upda
     !/^[a-z0-9]{1,13}$/.test(manifest.hash) ||
     manifest.platform !== 'macos' ||
     manifest.arch !== 'arm64' ||
-    artifact.file !== UPDATE_FILES.archive
+    artifact.file !== updates.archive
   )
     throw new Error('Update manifest does not match the app identity, version, or artifact name.');
   return {
@@ -64,7 +74,7 @@ const parseManifest = (text: string, identifier: string, version?: string): Upda
     platform: 'macos',
     arch: 'arm64',
     artifact: {
-      file: UPDATE_FILES.archive,
+      file: updates.archive,
       ...(typeof artifact.tarSha256 === 'string' ? { tarSha256: artifact.tarSha256 } : {}),
       ...(typeof artifact.tarSize === 'number' ? { tarSize: artifact.tarSize } : {}),
     },
@@ -85,19 +95,20 @@ export const readUpdateArtifacts = async (
   expected: { identifier: string; version?: string },
   signal?: AbortSignal,
 ) => {
-  for (const file of Object.values(UPDATE_FILES)) {
+  const { updates } = releaseFiles(expected.identifier);
+  for (const file of Object.values(updates)) {
     const info = await lstat(join(directory, file));
-    const limit = file === UPDATE_FILES.archive ? MAX_ARCHIVE_BYTES : MAX_MANIFEST_BYTES;
+    const limit = file === updates.archive ? MAX_ARCHIVE_BYTES : MAX_MANIFEST_BYTES;
     if (info.isSymbolicLink() || !info.isFile() || info.size <= 0 || info.size > limit)
       throw new Error('Update artifact is missing, unsafe, or exceeds its size limit.');
   }
   const manifest = parseManifest(
-    await readFile(join(directory, UPDATE_FILES.manifest), 'utf8'),
+    await readFile(join(directory, updates.manifest), 'utf8'),
     expected.identifier,
     expected.version,
   );
   const integrity = parseManifest(
-    await readFile(join(directory, UPDATE_FILES.integrity), 'utf8'),
+    await readFile(join(directory, updates.integrity), 'utf8'),
     expected.identifier,
     expected.version,
   );
@@ -124,7 +135,7 @@ export const readUpdateArtifacts = async (
   const digest = createHash('sha256');
   let size = 0;
   await pipeline(
-    createReadStream(join(directory, UPDATE_FILES.archive)),
+    createReadStream(join(directory, updates.archive)),
     createZstdDecompress(),
     async (chunks) => {
       for await (const chunk of chunks) {

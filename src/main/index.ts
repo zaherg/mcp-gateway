@@ -35,6 +35,7 @@ import { AppService } from '@mcp-gateway/main/service';
 import { WhatsNewStore } from '@mcp-gateway/main/whats-new';
 import { clampWindowSize, MIN_WINDOW_SIZE, WindowSizeStore } from '@mcp-gateway/main/window-size';
 import { CATALOG_LOCALES, resolveLocale } from '@mcp-gateway/shared/i18n';
+import { appNameFor } from '@mcp-gateway/shared/identity';
 import type { AppRPC } from '@mcp-gateway/shared/rpc';
 
 const buildConfig = BuildConfig.getSync();
@@ -46,6 +47,7 @@ const viewUrl =
     ? developmentServerUrl
     : 'views://mainview/index.html';
 const identifier = installedIdentifier(PATHS.RESOURCES_FOLDER);
+const appName = appNameFor(identifier);
 const dataDirectory = configurationDirectory(Utils.paths.config, identifier);
 const nativeLibrary = join(PATHS.RESOURCES_FOLDER, 'app/native/login.dylib');
 const nativeQuitSignal = observeNativeQuitSignals(nativeLibrary);
@@ -214,7 +216,7 @@ const openWindow = (): void => {
   requestInteractiveRendererQuit = () =>
     rpc.request.interactiveQuit(undefined, { maxRequestTime: 5_000 });
   const created = new BrowserWindow({
-    title: 'MCP Gateway',
+    title: appName,
     url: viewUrl,
     rpc,
     frame: initialWindowSize(),
@@ -422,7 +424,7 @@ const setApplicationMenu = (): void => {
   const t = language.translate;
   ApplicationMenu.setApplicationMenu([
     {
-      label: 'MCP Gateway',
+      label: appName,
       submenu: [
         { label: t('native.menu.settings'), action: 'open', accelerator: 'Cmd+,' },
         ...(support.supported

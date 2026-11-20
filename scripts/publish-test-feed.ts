@@ -7,7 +7,9 @@ import { parseArgs } from 'node:util';
 
 import { createCommandRunner } from '@mcp-gateway/core/process';
 import { TEST_IDENTIFIER, validateFeedUrl } from './build-config';
-import { hashFile, readUpdateArtifacts, UPDATE_FILES } from './update-artifacts';
+import { hashFile, readUpdateArtifacts, releaseFiles } from './update-artifacts';
+
+const { bundle, updates: UPDATE_FILES } = releaseFiles(TEST_IDENTIFIER);
 
 // Names the child processes need. Everything else, notably notarization credentials, stays out.
 const CHILD_ENVIRONMENT_NAMES = new Set([
@@ -187,7 +189,7 @@ const publish = async () => {
     const archive = join(staging, UPDATE_FILES.archive);
     const extracted = await run(
       '/usr/bin/tar',
-      ['-xOf', archive, 'MCP Gateway.app/Contents/Resources/version.json'],
+      ['-xOf', archive, `${bundle}/Contents/Resources/version.json`],
       60_000,
       cancellation.signal,
     );

@@ -85,7 +85,10 @@ await command(
   ],
   environment,
 );
-await command([process.execPath, 'run', 'ui:build'], environment);
+await command([process.execPath, 'run', 'ui:build'], {
+  ...environment,
+  VITE_APP_NAME: identity.name,
+});
 
 const signedBuild = async () => {
   const required = ['APPLE_ID', 'APPLE_TEAM_ID', 'APPLE_APP_PASSWORD'] as const;
@@ -147,7 +150,10 @@ const signedBuild = async () => {
 if (plan.signed) await signedBuild();
 else if (plan.mode === 'dev') {
   // Ctrl+C reaches every process in the terminal's group, so no signal handling is needed.
-  const server = await createServer({ clearScreen: false });
+  const server = await createServer({
+    clearScreen: false,
+    define: { 'import.meta.env.VITE_APP_NAME': JSON.stringify(identity.name) },
+  });
   try {
     await server.listen();
     server.printUrls();

@@ -103,11 +103,12 @@ After the move, each slot holds `tokenRef` instead of `token`, for example:
 
 A slot holds either `token` or `tokenRef`, never both.
 The app writes `tokenRef` values itself; it creates and replaces Keychain items but never deletes one.
-The item is stored under the service `MCP Gateway` (or `MCP Gateway Test` for test builds), with the `tokenRef` value as the account.
+In Keychain Access, look for the service `MCP Gateway APP` (`MCP Gateway APP Test` for signed test builds) and match the **Account** to the `tokenRef` UUID.
+Items created before the rename stay under `MCP Gateway` or `MCP Gateway Test` and remain readable there.
 If storing or reading back a key fails, or the file changed in the meantime, the file is left unchanged and any item already created stays unused in Keychain; remove it in Keychain Access if you want.
 
 The move cannot be undone in the app.
-To go back by hand, open Keychain Access, find the item for service `MCP Gateway` whose account is the `tokenRef` value, copy its password, and replace `"tokenRef": "…"` with `"token": "<the copied key>"` in the file.
+To go back by hand, find the matching service and account in Keychain Access, copy the item's password, and replace `"tokenRef": "…"` with `"token": "<the copied key>"` in the file.
 To replace a stored key instead, choose **Generate secure token** in Settings or **Generate secure key** in the server dialog, then save; this writes a new literal key that you can move again.
 
 Limits:

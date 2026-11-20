@@ -3,8 +3,8 @@ import { join, resolve } from 'node:path';
 
 import { changelogSection } from '@mcp-gateway/shared/changelog';
 import packageInfo from '../package.json';
-import { PRODUCTION_FEED, releaseOutputEnvironment } from './build-config';
-import { hashFile, UPDATE_FILES } from './update-artifacts';
+import { PRODUCTION_FEED, PRODUCTION_IDENTIFIER, releaseOutputEnvironment } from './build-config';
+import { hashFile, releaseFiles } from './update-artifacts';
 
 // Builds, verifies, checksums and publishes the version in package.json, in that order.
 // Every step refuses to continue once an earlier one has failed or left the tree dirty.
@@ -14,7 +14,7 @@ const tag = packageInfo.version;
 const environment = releaseOutputEnvironment(tag, process.env);
 const artifacts = resolve(root, environment.MCP_GATEWAY_ARTIFACTS_DIR);
 const CHECKSUMS = 'SHA256SUMS';
-const DMG = 'macos-arm64-MCPGateway.dmg';
+const { dmg: DMG, updates: UPDATE_FILES } = releaseFiles(PRODUCTION_IDENTIFIER);
 // The integrity manifest goes first, so a feed still serving an older release is named as such.
 const RELEASE_ASSETS = [UPDATE_FILES.integrity, UPDATE_FILES.manifest, UPDATE_FILES.archive, DMG];
 const PUBLISHED_ASSETS = [...RELEASE_ASSETS, CHECKSUMS];

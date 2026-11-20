@@ -7,7 +7,7 @@ const identity = buildIdentity();
 
 export default {
   app: {
-    name: 'MCP Gateway',
+    name: identity.name,
     identifier: identity.identifier,
     version: packageInfo.version,
   },

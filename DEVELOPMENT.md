@@ -29,7 +29,8 @@ Build a development package:
 bun run build
 ```
 
-Unless `MCP_GATEWAY_BUILD_ROOT` is set, the development app is `build/dev-macos-arm64/MCP Gateway-dev.app`.
+Unless `MCP_GATEWAY_BUILD_ROOT` is set, the unsigned development app is `build/dev-macos-arm64/MCP Gateway-dev.app`.
+For the signed `MCP Gateway Dev.app` build with Keychain support, see [Testing updates](UPDATE-TESTING.md#build-and-verify-two-versions).
 `bun run build` and release builds load the bundled files and need no development server.
 A running app can read or change its configuration; see [Configuration](docs/configuration.md).
 
