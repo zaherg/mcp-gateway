@@ -8,7 +8,7 @@ import { useI18n } from '@mcp-gateway/mainview/i18n';
 import { generateToken } from '@mcp-gateway/mainview/lib/token';
 import type { MessageKey } from '@mcp-gateway/shared/i18n';
 import type { AppSnapshot } from '@mcp-gateway/shared/rpc';
-import type { GatewayConfig, GatewaySnapshot, NetworkKind } from '@mcp-gateway/shared/types';
+import type { ConfigFile, GatewaySnapshot, NetworkKind } from '@mcp-gateway/shared/types';
 
 const NETWORK_LABELS: Record<NetworkKind, MessageKey> = {
   loopback: 'settings.networkKind.loopback',
@@ -27,14 +27,15 @@ const peerList = (text: string): string[] | undefined => {
 };
 
 interface Settings {
-  config: GatewayConfig | null;
+  config: ConfigFile | null;
   gateway: GatewaySnapshot | undefined;
   snapshot: AppSnapshot;
   configurationLocked: boolean;
-  update: (config: GatewayConfig) => void;
+  update: (config: ConfigFile) => void;
   showToken: boolean;
   setShowToken: (show: boolean) => void;
   filename: string;
+  onMoveKeys: () => void;
 }
 
 export const Settings = ({
@@ -46,9 +47,11 @@ export const Settings = ({
   showToken,
   setShowToken,
   filename,
+  onMoveKeys,
 }: Settings) => {
   const { t } = useI18n();
-  const setGateway = (patch: Partial<GatewayConfig['gateway']>) => {
+  const movable = gateway?.keyMigration;
+  const setGateway = (patch: Partial<ConfigFile['gateway']>) => {
     if (config) update({ ...config, gateway: { ...config.gateway, ...patch } });
   };
   const [peersText, setPeersText] = useState('');
@@ -115,32 +118,45 @@ export const Settings = ({
             />
           </Field>
           <Field label={t('settings.token')} help={t('settings.tokenHelp')}>
-            <div className="token-input">
-              <Input
-                autoComplete="off"
-                readOnly={configurationLocked}
-                spellCheck={false}
-                type={showToken ? 'text' : 'password'}
-                value={config.gateway.token}
-                onChange={(event) => setGateway({ token: event.target.value })}
-              />
-              <Button
-                variant="ghost"
-                size="icon-lg"
-                aria-label={showToken ? t('settings.hideToken') : t('settings.showToken')}
-                onClick={() => setShowToken(!showToken)}
-              >
-                {showToken ? <EyeOff /> : <Eye />}
-              </Button>
-            </div>
+            {config.gateway.tokenRef !== undefined ? (
+              <p className="m-0 text-[13px]">{t('keys.stored')}</p>
+            ) : (
+              <div className="token-input">
+                <Input
+                  autoComplete="off"
+                  readOnly={configurationLocked}
+                  spellCheck={false}
+                  type={showToken ? 'text' : 'password'}
+                  value={config.gateway.token ?? ''}
+                  onChange={(event) => setGateway({ token: event.target.value })}
+                />
+                <Button
+                  variant="ghost"
+                  size="icon-lg"
+                  aria-label={showToken ? t('settings.hideToken') : t('settings.showToken')}
+                  onClick={() => setShowToken(!showToken)}
+                >
+                  {showToken ? <EyeOff /> : <Eye />}
+                </Button>
+              </div>
+            )}
           </Field>
-          <Button
-            size="lg"
-            disabled={configurationLocked}
-            onClick={() => setGateway({ token: generateToken() })}
-          >
-            {t('settings.generateToken')}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="lg"
+              disabled={configurationLocked}
+              // A new literal replaces a Keychain reference; that is also the repair for an unreadable item.
+              onClick={() => setGateway({ token: generateToken(), tokenRef: undefined })}
+            >
+              {t('settings.generateToken')}
+            </Button>
+            {/* Removed, not disabled, once no literal key remains. */}
+            {movable && (movable.gateway || movable.servers.length > 0) && (
+              <Button size="lg" disabled={configurationLocked} onClick={onMoveKeys}>
+                {t('keys.title')}
+              </Button>
+            )}
+          </div>
           <div className="startup-settings">
             <Toggle
               label={t('settings.launchAtLogin')}

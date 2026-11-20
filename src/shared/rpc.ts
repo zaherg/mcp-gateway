@@ -52,6 +52,8 @@ export interface AppSnapshot {
   update: UpdateStatus;
   /** The installed version while its release notes are waiting to be shown, else null. */
   whatsNew: string | null;
+  /** Show the Overview reminder: keys can move to Keychain and the user has not retired it. */
+  keyReminder: boolean;
   language: LanguageState;
 }
 
@@ -87,6 +89,11 @@ export type AppRPC = {
         params: { text: string; expectedRevision: string };
         response: AppResult<AppSnapshot>;
       };
+      migrateKeys: {
+        params: { gateway: boolean; servers: string[]; expectedRevision: string };
+        response: AppResult<AppSnapshot>;
+      };
+      dismissKeyReminder: { params: undefined; response: AppResult<AppSnapshot> };
       validateConfig: { params: { text: string }; response: AppResult<ConfigPreview> };
       confirmDiscard: { params: undefined; response: AppResult<boolean> };
       copyEndpoint: { params: { name: string }; response: AppResult<null> };

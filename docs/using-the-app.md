@@ -19,12 +19,20 @@ Live endpoints keep using the saved configuration until you choose **Save change
 **Start gateway** stays disabled while a draft is open; the button says why when you hover it.
 The draft bar also shows "Login registration unresolved" with **Retry login registration** when macOS login registration did not match the saved setting.
 
+## Keys in Keychain
+
+While the configuration file holds keys that can move to the macOS Keychain, Overview shows "You have keys stored in the configuration file." with **Review keys** and a close button.
+**Settings** shows **Move keys to Keychain** next to the global key for as long as such keys remain.
+Both open the same two-step dialog; closing it changes nothing.
+A moved key shows **Stored in Keychain** instead of its value.
+See [Keys in Keychain](configuration.md#keys-in-keychain).
+
 ## The menu-bar icon
 
 The icon menu shows a status line, **Open app…**, an update item when the app supports updates, **Start gateway** or **Stop gateway**, and **Quit MCP Gateway**.
 The status line reads "Gateway running", "Gateway stopped" or "Cleanup failed: see settings".
 The update item reads "Check for Updates…", "Update available: <version>" or "Update ready: <version>".
-**Start gateway** and **Stop gateway** are disabled while the configuration has an error.
+**Start gateway** and **Stop gateway** are disabled while the configuration has an error, except when a key stored in the macOS Keychain could not be read; then **Start gateway** reads it again.
 
 The app menu has **Settings…** (`Cmd+,`), **Check for Updates…** when the app supports updates, and **Quit MCP Gateway** (`Cmd+Q`).
 The File menu has **Close Window** (`Cmd+W`).

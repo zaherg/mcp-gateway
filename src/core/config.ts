@@ -21,7 +21,14 @@ import {
   parseConfigDocument,
   parseConfigTree,
 } from '@mcp-gateway/shared/config-document';
-import type { GatewayConfig, HttpServerConfig, StdioServerConfig } from '@mcp-gateway/shared/types';
+import type {
+  ConfigFile,
+  GatewayConfig,
+  HttpServerConfig,
+  KeyMigration,
+  KeySlot,
+  StdioServerConfig,
+} from '@mcp-gateway/shared/types';
 
 // Re-exported for existing main-process callers; the renderer imports the shared definition.
 export { MAX_CONFIG_BYTES };
@@ -41,6 +48,7 @@ const StdioSchema = z.strictObject({
   disabled: z.boolean().exactOptional(),
   legacyProtocol: z.boolean().exactOptional(),
   token: z.string().exactOptional(),
+  tokenRef: z.string().exactOptional(),
 });
 const HttpSchema = z.strictObject({
   url: z.string(),
@@ -48,12 +56,14 @@ const HttpSchema = z.strictObject({
   disabled: z.boolean().exactOptional(),
   legacyProtocol: z.boolean().exactOptional(),
   token: z.string().exactOptional(),
+  tokenRef: z.string().exactOptional(),
 });
 const ConfigSchema = z.strictObject({
   gateway: z.strictObject({
     host: z.string(),
     port: anyNumber,
-    token: z.string(),
+    token: z.string().exactOptional(),
+    tokenRef: z.string().exactOptional(),
     autoStart: z.boolean().exactOptional(),
     launchAtLogin: z.boolean().exactOptional(),
     keepAwake: z.boolean().exactOptional(),
@@ -188,13 +198,17 @@ const structureIssue = (value: unknown): StructureIssue | null => {
 };
 
 const TOKEN_RULE = '32 to 512 printable non-space ASCII characters.';
+const TOKEN_PATTERN = /^[\x21-\x7e]{32,512}$/;
+const REFERENCE = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/;
+// A lowercase UUID v4 from crypto.randomUUID(), the only IDs main creates.
+const KEY_REF = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const MAX_ALLOWED_PEERS = 16;
 const assertToken = (token: string, message: string): void => {
-  if (!/^[\x21-\x7e]{32,512}$/.test(token)) invalid(message);
+  if (!TOKEN_PATTERN.test(token)) invalid(message);
 };
 
 const expand = (value: string, environment: NodeJS.ProcessEnv): string => {
-  const result = value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_match, name: string) => {
+  const result = value.replace(new RegExp(REFERENCE, 'g'), (_match, name: string) => {
     const replacement = environment[name];
     if (replacement === undefined) invalid('A referenced environment variable is not defined.');
     return replacement;
@@ -209,8 +223,20 @@ export const isHttpServer = (
   return 'url' in server;
 };
 
-const validateConfig = (value: unknown, environment: NodeJS.ProcessEnv): GatewayConfig => {
-  let config: GatewayConfig;
+/** A slot holds a key or a reference, never both; a key is expanded and checked. */
+const checkSlot = (slot: KeySlot, map: (value: string) => string, message: string): void => {
+  if (slot.token !== undefined && slot.tokenRef !== undefined)
+    invalid('A key cannot have both token and tokenRef; keep one.');
+  if (slot.tokenRef !== undefined && !KEY_REF.test(slot.tokenRef))
+    invalid('A tokenRef must be a key ID created by MCP Gateway.');
+  if (slot.token !== undefined) {
+    slot.token = map(slot.token);
+    assertToken(slot.token, message);
+  }
+};
+
+const validateConfig = (value: unknown, environment: NodeJS.ProcessEnv): ConfigFile => {
+  let config: ConfigFile;
   try {
     config = ConfigSchema.parse(value);
   } catch {
@@ -219,10 +245,11 @@ const validateConfig = (value: unknown, environment: NodeJS.ProcessEnv): Gateway
   const map = (value: string) => expand(value, environment);
   const gateway = config.gateway;
   gateway.host = map(gateway.host);
-  gateway.token = map(gateway.token);
   if (!Number.isInteger(gateway.port) || gateway.port < 1 || gateway.port > 65535)
     invalid('The listener port must be an integer from 1 to 65535.');
-  assertToken(gateway.token, `The bearer token must contain ${TOKEN_RULE}`);
+  if (gateway.token === undefined && gateway.tokenRef === undefined)
+    invalid('The gateway needs a token or a tokenRef.');
+  checkSlot(gateway, map, `The bearer token must contain ${TOKEN_RULE}`);
   // A shared-space interface netmask is a tunnel's single address or a carrier's
   // other customers, so it never selects clients; the ranges must be explicit.
   const host = ipv4Number(gateway.host);
@@ -245,10 +272,7 @@ const validateConfig = (value: unknown, environment: NodeJS.ProcessEnv): Gateway
   for (const [name, server] of Object.entries(config.mcpServers)) {
     if (!SAFE_NAME.test(name)) invalid('Server names must be safe URL path segments.');
     // An explicit key is authoritative even on a disabled server; only omission inherits.
-    if (server.token !== undefined) {
-      server.token = map(server.token);
-      assertToken(server.token, `A server token must contain ${TOKEN_RULE}`);
-    }
+    checkSlot(server, map, `A server token must contain ${TOKEN_RULE}`);
     if (isHttpServer(server)) {
       server.url = map(server.url);
       let url: URL;
@@ -304,11 +328,15 @@ const validateConfig = (value: unknown, environment: NodeJS.ProcessEnv): Gateway
   return config;
 };
 
+/**
+ * Shape-only parse: validates the file and expands `${NAME}` but reads no stored key, so a
+ * `tokenRef` slot has no `token`. Use resolveKeys for the configuration the gateway serves.
+ */
 export const parseConfig = (
   text: string,
   environment: NodeJS.ProcessEnv = process.env,
   format: ConfigFormat = 'json',
-): GatewayConfig => {
+): ConfigFile => {
   if (Buffer.byteLength(text) > MAX_CONFIG_BYTES) invalid(CONFIG_TOO_LARGE);
   let value: unknown;
   try {
@@ -345,6 +373,58 @@ export const previewConfig = (
       ? { message: structural.message, offset: range.offset, length: range.length }
       : { message: structural.message };
   }
+};
+
+/** Every stored-key ID the file references, each once. */
+export const keyRefs = (config: ConfigFile): string[] => [
+  ...new Set(
+    [config.gateway, ...Object.values(config.mcpServers)].flatMap((slot) => slot.tokenRef ?? []),
+  ),
+];
+
+/** Replaces each reference with its key; `keys` holds every ID from keyRefs. Pure and synchronous. */
+export const resolveKeys = (
+  config: ConfigFile,
+  keys: ReadonlyMap<string, string>,
+): GatewayConfig => {
+  const resolve = <S extends KeySlot>(slot: S): S => {
+    if (slot.tokenRef === undefined) return slot;
+    const token = keys.get(slot.tokenRef);
+    if (token === undefined) invalid('A referenced key was not loaded.');
+    assertToken(token, `A stored key must contain ${TOKEN_RULE}`);
+    const resolved = { ...slot, token };
+    delete resolved.tokenRef;
+    return resolved;
+  };
+  const gateway = resolve(config.gateway);
+  const { token } = gateway;
+  if (token === undefined) invalid('The gateway needs a token or a tokenRef.');
+  return {
+    gateway: { ...gateway, token },
+    mcpServers: Object.fromEntries(
+      Object.entries(config.mcpServers).map(([name, server]) => [name, resolve(server)]),
+    ),
+  };
+};
+
+const isLiteralKey = (slot: unknown): boolean =>
+  isRecord(slot) &&
+  slot.tokenRef === undefined &&
+  typeof slot.token === 'string' &&
+  !REFERENCE.test(slot.token) &&
+  TOKEN_PATTERN.test(slot.token);
+
+/** Slots whose saved key is a literal, read from the unexpanded file. Names only, never values. */
+export const literalKeySlots = (text: string, format: ConfigFormat): KeyMigration => {
+  const parsed = parseConfigTree(text, format);
+  const value: unknown = parsed.ok ? getNodeValue(parsed.root) : undefined;
+  if (!isRecord(value) || !isRecord(value.mcpServers)) return { gateway: false, servers: [] };
+  return {
+    gateway: isLiteralKey(value.gateway),
+    servers: Object.entries(value.mcpServers).flatMap(([name, server]) =>
+      isLiteralKey(server) ? [name] : [],
+    ),
+  };
 };
 
 /** One route's accepted credential. Callers only pass a found own server entry. */

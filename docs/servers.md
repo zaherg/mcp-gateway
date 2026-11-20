@@ -47,6 +47,10 @@ Separate keys let you revoke one client or device without touching the rest.
 Changing a server key refuses the old key at once and closes that endpoint's open requests and sessions, while other endpoints keep running.
 [The configuration file](configuration.md#the-configuration-file) covers the reference syntax.
 
+A server's own key can be moved to the macOS Keychain; see [Keys in Keychain](configuration.md#keys-in-keychain).
+The dialog then shows **Stored in Keychain** instead of the key.
+**Generate secure key** replaces a stored key with a new key in the file, and **Use global key** removes the server's own key.
+
 ## Session-based clients
 
 Some clients still speak MCP `2025-11-25` and earlier.
@@ -89,5 +93,6 @@ The Bear preset allows every Bear tool, including tools that change notes.
 ## Secrets in headers and environment
 
 `${NAME}` references work in `gateway.host`, `gateway.token`, a server `token`, `url`, `headers` values, `command`, `args`, `cwd` and `env` values.
+Only the gateway keys can move to the macOS Keychain; `headers` and `env` values always stay in the configuration file.
 A missing variable fails validation with "A referenced environment variable is not defined."
 See [Environment variables](configuration.md#environment-variables) for where the app reads them.

@@ -28,7 +28,10 @@ export const GatewayToggle = ({
 }: GatewayToggle) => {
   const { t } = useI18n();
   const running = gateway?.running ?? false;
-  const blocked = !running && (dirty || !!gateway?.configError);
+  // An unreadable stored key is retried by Start, for example after unlocking Keychain.
+  const blocked =
+    !running &&
+    (dirty || (!!gateway?.configError && gateway.configError.code !== 'KeyUnavailable'));
   // A disabled button gets no pointer events, so the reason sits on a wrapper.
   const reason =
     configurationLocked || !blocked

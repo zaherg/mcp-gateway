@@ -12,5 +12,5 @@ It does not cover building or releasing the app; `DEVELOPMENT.md` and `RELEASING
 - [Connect a client](clients.md): setup for six clients, and protocol compatibility.
 - [Remote access](remote-access.md): LAN, Tailscale and WireGuard addresses.
 - [Security](security.md): what the gateway enforces and how to share safely.
-- [Configuration](configuration.md): the configuration file and environment variables.
+- [Configuration](configuration.md): the configuration file, keys in the macOS Keychain and environment variables.
 - [Troubleshooting](troubleshooting.md): status codes and common failures.

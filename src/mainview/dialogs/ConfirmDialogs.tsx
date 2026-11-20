@@ -4,7 +4,7 @@ import { Button } from '@mcp-gateway/mainview/components/mac/button';
 import { Modal } from '@mcp-gateway/mainview/components/ui';
 import { useI18n } from '@mcp-gateway/mainview/i18n';
 import type { UpdateStatus } from '@mcp-gateway/shared/rpc';
-import type { GatewayConfig } from '@mcp-gateway/shared/types';
+import type { ConfigFile } from '@mcp-gateway/shared/types';
 
 interface ConfirmDialogs {
   confirmQuit: boolean;
@@ -21,8 +21,8 @@ interface ConfirmDialogs {
   deleting: string | null;
   setDeleting: (name: string | null) => void;
   configurationLocked: boolean;
-  parsed: GatewayConfig | null;
-  update: (config: GatewayConfig) => void;
+  parsed: ConfigFile | null;
+  update: (config: ConfigFile) => void;
   fallbackFocus: RefObject<HTMLElement | null>;
 }
 

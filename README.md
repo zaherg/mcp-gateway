@@ -23,6 +23,7 @@ Copy the app to a writable location, then open it.
 2. In Settings, choose a private IPv4 address, a port and a global bearer token.
 3. Optionally, give a server its own key in the server dialog.
 4. Start the gateway, then copy its configuration into your MCP client.
+5. Optionally, move the keys out of the configuration file and into the macOS Keychain with **Move keys to Keychain** in Settings.
 
 Each server gets its own endpoint, such as `http://192.168.1.120:8765/mcp/bear`.
 [Getting started](docs/getting-started.md) walks through the same steps with the fields to fill in.
@@ -35,7 +36,7 @@ Each server gets its own endpoint, such as `http://192.168.1.120:8765/mcp/bear`.
 - [Connect a client](docs/clients.md): setup for six clients, and protocol compatibility.
 - [Remote access](docs/remote-access.md): LAN, Tailscale and WireGuard addresses.
 - [Security](docs/security.md): what the gateway enforces and how to share safely.
-- [Configuration](docs/configuration.md): the configuration file and environment variables.
+- [Configuration](docs/configuration.md): the configuration file, keys in the macOS Keychain and environment variables.
 - [Troubleshooting](docs/troubleshooting.md): status codes and common failures.
 
 The [user guide index](docs/README.md) lists the same pages in reading order.

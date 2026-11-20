@@ -20,7 +20,7 @@ Client formats change; if a step no longer matches, check the linked source.
 }
 ```
 
-The key is in plain text.
+The key is in plain text, even when the app keeps it in the macOS Keychain.
 Keep the paste target private.
 **Copy endpoint** copies only the URL.
 

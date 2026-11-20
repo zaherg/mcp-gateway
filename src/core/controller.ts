@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { type FSWatcher, lstatSync, watch } from 'node:fs';
 import { lstat } from 'node:fs/promises';
 import { dirname } from 'node:path';
@@ -6,7 +7,10 @@ import {
   type ConfigDocument,
   ConfigStore,
   isHttpServer,
+  keyRefs,
+  literalKeySlots,
   parseConfig,
+  resolveKeys,
 } from '@mcp-gateway/core/config';
 import { failure, GatewayError, visible } from '@mcp-gateway/core/errors';
 import { GatewayIngress, type PreventIdleSleep } from '@mcp-gateway/core/ingress';
@@ -20,11 +24,18 @@ import {
   selectInterface,
 } from '@mcp-gateway/core/network';
 import { createSerialQueue } from '@mcp-gateway/core/serial-queue';
+import {
+  editConfigDocument,
+  isRecord,
+  parseConfigDocument,
+} from '@mcp-gateway/shared/config-document';
 import type {
   GatewayConfig,
   GatewayController,
   GatewayOperation,
   GatewaySnapshot,
+  KeyMigration,
+  KeyStore,
   LogQuery,
   ServerCheckResult,
   VisibleError,
@@ -67,9 +78,16 @@ export class McpGatewayController implements GatewayController {
   private closeWatcher: (() => void) | undefined;
   private interfaceRecovery: ReturnType<typeof setInterval> | undefined;
 
+  private eligible: { revision: string; slots: KeyMigration } = {
+    revision: '',
+    slots: { gateway: false, servers: [] },
+  };
+
   private constructor(
     configPath: string,
     private readonly preventIdleSleep?: PreventIdleSleep,
+    // Development builds pass none: their items would be unreadable by the signed app.
+    private readonly keys?: KeyStore,
   ) {
     this.store = new ConfigStore(configPath);
   }
@@ -77,13 +95,14 @@ export class McpGatewayController implements GatewayController {
   static async open(
     configPath: string,
     preventIdleSleep?: PreventIdleSleep,
+    keys?: KeyStore,
   ): Promise<McpGatewayController> {
-    const controller = new McpGatewayController(configPath, preventIdleSleep);
+    const controller = new McpGatewayController(configPath, preventIdleSleep, keys);
     await controller.serial(async () => {
       const control = controller.control(controller.validationLifetime());
       try {
         controller.document = await controller.store.initialize();
-        controller.config = controller.parse(controller.document.text);
+        controller.config = await controller.parse(controller.document.text);
         await controller.validate(controller.config, control);
         controller.event('info', 'Configuration loaded.');
       } catch (error) {
@@ -115,6 +134,7 @@ export class McpGatewayController implements GatewayController {
       running,
       interfaces,
       network: interfaces.find((entry) => entry.address === config?.gateway.host)?.kind ?? null,
+      keyMigration: this.keyMigration(),
       servers:
         (running ? this.ingress?.snapshots() : undefined) ??
         Object.entries(config?.mcpServers ?? {}).map(([name, server]) => ({
@@ -130,8 +150,31 @@ export class McpGatewayController implements GatewayController {
     };
   }
 
-  private parse(text: string): GatewayConfig {
-    return parseConfig(text, process.env, this.store.format);
+  activeConfig(): GatewayConfig | undefined {
+    return this.config;
+  }
+
+  // Resolved mode: the only parse that reads Keychain, once per load and within one deadline.
+  private async parse(text: string): Promise<GatewayConfig> {
+    const file = parseConfig(text, process.env, this.store.format);
+    const refs = keyRefs(file);
+    if (refs.length === 0) return resolveKeys(file, new Map());
+    if (!this.keys)
+      throw failure(
+        'KeyUnavailable',
+        'Keys stored in Keychain need the signed MCP Gateway app. Generate a new key to use this build.',
+      );
+    return resolveKeys(file, await this.keys.get(refs));
+  }
+
+  private keyMigration(): KeyMigration {
+    if (!this.keys || !this.config || this.configError) return { gateway: false, servers: [] };
+    if (this.eligible.revision !== this.document.revision)
+      this.eligible = {
+        revision: this.document.revision,
+        slots: literalKeySlots(this.document.text, this.store.format),
+      };
+    return { gateway: this.eligible.slots.gateway, servers: [...this.eligible.slots.servers] };
   }
 
   private async validate(config: GatewayConfig, control: SelfProxyOptions): Promise<GatewayConfig> {
@@ -210,6 +253,8 @@ export class McpGatewayController implements GatewayController {
     if (this.ingress?.running) return;
     // Read the authoritative bytes again, even if a watch notification is delayed.
     await this.refresh(control);
+    // A still-unreadable key reports its own reason instead of asking to correct the file.
+    if (this.configError?.code === 'KeyUnavailable') throw new GatewayError(this.configError);
     if (!this.config || this.configError)
       throw failure('InvalidConfig', 'Correct the on-disk configuration before starting.');
     await this.stopOwned();
@@ -361,12 +406,67 @@ export class McpGatewayController implements GatewayController {
     return this.serial(async () => {
       const control = this.control(signal);
       this.ensureOpen();
-      const next = await this.validate(this.parse(text), control);
+      const next = await this.validate(await this.parse(text), control);
       const document = await this.store.save(text, expectedRevision).catch(async (error) => {
         await this.refresh(control);
         throw error;
       });
       await this.apply(document, next, control);
+      return this.snapshot();
+    });
+  }
+
+  migrateKeys(
+    slots: KeyMigration,
+    expectedRevision: string,
+    operation?: GatewayOperation,
+  ): Promise<GatewaySnapshot> {
+    const signal = this.operationSignal(operation);
+    return this.serial(async () => {
+      const control = this.control(signal);
+      this.ensureOpen();
+      const keys = this.keys;
+      const config = this.config;
+      if (!keys || !config)
+        throw failure('InvalidConfig', 'Keys can move to Keychain only in the signed app.');
+      if (expectedRevision !== this.document.revision)
+        throw failure('StaleRevision', 'Configuration changed on disk; review the keys again.');
+      const eligible = this.keyMigration();
+      if (
+        (!slots.gateway && slots.servers.length === 0) ||
+        (slots.gateway && !eligible.gateway) ||
+        slots.servers.some((name) => !eligible.servers.includes(name))
+      )
+        throw failure('InvalidConfig', 'These keys can no longer be moved; review them again.');
+      const file = parseConfigDocument(this.document.text, this.store.format);
+      if (!isRecord(file) || !isRecord(file.mcpServers))
+        throw failure('InvalidConfig', 'Configuration does not match the supported schema.');
+      const servers = file.mcpServers;
+      const chosen = [
+        ...(slots.gateway ? [file.gateway] : []),
+        ...slots.servers.map((name) => servers[name]),
+      ];
+      // Every item is created and read back before the file changes. A failure leaves the file
+      // as it was; created items stay as unused copies because the app never deletes one.
+      for (const slot of chosen) {
+        if (!isRecord(slot) || typeof slot.token !== 'string')
+          throw failure('InvalidConfig', 'These keys can no longer be moved; review them again.');
+        const ref = randomUUID();
+        await keys.set(ref, slot.token);
+        if ((await keys.get([ref])).get(ref) !== slot.token)
+          throw failure('ConfigIO', 'A key could not be stored in Keychain.');
+        delete slot.token;
+        slot.tokenRef = ref;
+      }
+      const text = editConfigDocument(this.document.text, file, this.store.format);
+      const document = await this.store.save(text, expectedRevision).catch(async (error) => {
+        await this.refresh(control);
+        throw error;
+      });
+      // Same keys, new references: no fingerprint or listener setting changes, so open
+      // sessions continue and nothing is read back from Keychain.
+      await this.apply(document, config, control);
+      this.event('info', 'Keys were moved to Keychain.');
       return this.snapshot();
     });
   }
@@ -417,7 +517,7 @@ export class McpGatewayController implements GatewayController {
       if (document.revision === this.document.revision && !this.configError) return null;
       // Validate the candidate before publishing its text/revision. A cancelled
       // refresh must leave document/config consistent so the next Start retries it.
-      const next = await this.validate(this.parse(document.text), control);
+      const next = await this.validate(await this.parse(document.text), control);
       return { document, config: next };
     } catch (error) {
       // A superseded operation leaves the authoritative config and configError alone.

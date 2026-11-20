@@ -2,11 +2,12 @@ import { CircleHelp, Code2, Copy, RefreshCw, Server, ShieldCheck, Trash2 } from 
 import { useEffect, useRef, useState } from 'react';
 
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
+import { Alert } from '@mcp-gateway/mainview/components/ui';
 import { bearPreset, type Editor, emptyEditor } from '@mcp-gateway/mainview/dialogs/ServerEditor';
 import { useI18n } from '@mcp-gateway/mainview/i18n';
 import type { MessageKey } from '@mcp-gateway/shared/i18n';
 import type { AppClient, AppResult, AppSnapshot } from '@mcp-gateway/shared/rpc';
-import type { GatewayConfig, GatewaySnapshot } from '@mcp-gateway/shared/types';
+import type { ConfigFile, GatewaySnapshot } from '@mcp-gateway/shared/types';
 
 type Run = (
   operation: () => Promise<AppResult<AppSnapshot | null>>,
@@ -24,8 +25,11 @@ const SERVER_STATUS = {
 
 interface Overview {
   gateway: GatewaySnapshot | undefined;
-  config: GatewayConfig | null;
+  config: ConfigFile | null;
   dirty: boolean;
+  keyReminder: boolean;
+  onReviewKeys: () => void;
+  onDismissKeys: () => void;
   configurationLocked: boolean;
   run: Run;
   client: AppClient;
@@ -48,6 +52,9 @@ export const Overview = ({
   gateway,
   config,
   dirty,
+  keyReminder,
+  onReviewKeys,
+  onDismissKeys,
   configurationLocked,
   run,
   client,
@@ -106,6 +113,14 @@ export const Overview = ({
   };
   return (
     <>
+      {keyReminder && (
+        <Alert kind="warning" role="status" label={t('keys.dismiss')} onDismiss={onDismissKeys}>
+          {t('keys.reminder')}{' '}
+          <Button variant="link" disabled={configurationLocked} onClick={onReviewKeys}>
+            {t('keys.review')}
+          </Button>
+        </Alert>
+      )}
       <section aria-labelledby="servers-heading">
         <div className="section-heading">
           <div>

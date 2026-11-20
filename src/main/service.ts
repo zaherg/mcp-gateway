@@ -50,6 +50,11 @@ const LogRequest = z.strictObject({ after: anyNumber });
 const NameRequest = z.strictObject({ name: z.string() });
 const TestRequest = z.strictObject({ name: z.string(), expectedRevision: z.string() });
 const SaveRequest = z.strictObject({ text: z.string(), expectedRevision: z.string() });
+const MigrateRequest = z.strictObject({
+  gateway: z.boolean(),
+  servers: z.array(z.string()).max(64),
+  expectedRevision: z.string(),
+});
 const PreviewRequest = z.strictObject({ text: z.string() });
 const AutomaticRequest = z.strictObject({ automatic: z.boolean() });
 const SocialLinkRequest = z.strictObject({ target: z.enum(SOCIAL_LINK_TARGETS) });
@@ -91,6 +96,8 @@ interface DesktopActions {
   confirmDiscard: () => Promise<boolean>;
   whatsNew: () => string | null;
   dismissWhatsNew: () => Promise<void>;
+  keyReminderRetired: () => boolean;
+  retireKeyReminder: () => Promise<void>;
   language: () => LanguageState;
   setLanguage: (preference: LanguagePreference) => Promise<void>;
 }
@@ -112,8 +119,12 @@ export class AppService {
   private snapshot(): AppSnapshot {
     // A later cleanup step can fail after the login library has been released.
     if (this.desktop.quitStatus().phase === 'idle') this.loginStatus = this.login.status();
+    const gateway = this.controller.snapshot();
     return {
-      gateway: this.controller.snapshot(),
+      gateway,
+      keyReminder:
+        !this.desktop.keyReminderRetired() &&
+        (gateway.keyMigration.gateway || gateway.keyMigration.servers.length > 0),
       login: this.loginStatus,
       update: this.updates.status(),
       whatsNew: this.desktop.whatsNew(),
@@ -261,6 +272,36 @@ export class AppService {
         return this.snapshot();
       });
     },
+    migrateKeys: (input: unknown) => {
+      const operation = this.controller.operation();
+      return this.run(async () => {
+        if (
+          this.desktop.quitStatus().phase !== 'idle' ||
+          this.updates.status().phase === 'restarting'
+        )
+          throw new RequestError('Quit cleanup has started. The keys were not moved.');
+        const { gateway, servers, expectedRevision } = decode(MigrateRequest, input);
+        if (
+          !/^[a-f0-9]{64}$/.test(expectedRevision) ||
+          servers.some((name) => !SAFE_NAME.test(name)) ||
+          new Set(servers).size !== servers.length
+        )
+          throw new RequestError('The key migration request is invalid.');
+        // Starting a move retires the reminder for good, whatever the outcome.
+        await this.desktop
+          .retireKeyReminder()
+          .catch((error) => this.controller.recordLocalError(error));
+        await this.controller.migrateKeys({ gateway, servers }, expectedRevision, operation);
+        return this.snapshot();
+      });
+    },
+    dismissKeyReminder: (input?: unknown) =>
+      // Like the release notes, closing the reminder must not wait behind a configuration operation.
+      this.lifecycle(async () => {
+        empty(input);
+        await this.desktop.retireKeyReminder();
+        return this.snapshot();
+      }),
     validateConfig: (input: unknown) =>
       // Read-only: never wait behind a configuration operation that a later edit supersedes.
       this.settle(() => {
@@ -296,7 +337,9 @@ export class AppService {
           throw new RequestError('Correct the configuration before copying it.');
         const server = snapshot.servers.find((entry) => entry.name === name);
         if (!server) throw new RequestError('Select a configured server.');
-        const config = parseConfig(snapshot.configText, process.env, snapshot.configFormat);
+        // The accepted configuration, with keys already resolved: copying never reads Keychain.
+        const config = this.controller.activeConfig();
+        if (!config) throw new RequestError('Correct the configuration before copying it.');
         const configured = Object.hasOwn(config.mcpServers, name)
           ? config.mcpServers[name]
           : undefined;

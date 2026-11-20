@@ -13,7 +13,7 @@ import { useI18n } from '@mcp-gateway/mainview/i18n';
 import { generateToken } from '@mcp-gateway/mainview/lib/token';
 import type { ConfigFormat } from '@mcp-gateway/shared/config-document';
 import { isRecord, parseConfigDocument } from '@mcp-gateway/shared/config-document';
-import type { GatewayConfig, HttpServerConfig, StdioServerConfig } from '@mcp-gateway/shared/types';
+import type { ConfigFile, HttpServerConfig, StdioServerConfig } from '@mcp-gateway/shared/types';
 
 export type Backend = StdioServerConfig | HttpServerConfig;
 export type Document = { text: string; revision: string; dirty: boolean };
@@ -29,8 +29,10 @@ export type Editor = {
   headers: string;
   disabled: boolean;
   legacyProtocol: boolean;
-  /** `undefined` inherits the global key; any string is this server's own key. */
+  /** `undefined` inherits the global key unless `tokenRef` is set; any string is this server's own key. */
   token: string | undefined;
+  /** This server's key is in Keychain; carried unchanged until a new key replaces it. */
+  tokenRef: string | undefined;
 };
 
 const stringMap = (value: unknown): value is Record<string, string> => {
@@ -47,7 +49,8 @@ const isBackend = (value: unknown): value is Backend => {
     !isRecord(value) ||
     (value.disabled !== undefined && typeof value.disabled !== 'boolean') ||
     (value.legacyProtocol !== undefined && typeof value.legacyProtocol !== 'boolean') ||
-    (value.token !== undefined && typeof value.token !== 'string')
+    (value.token !== undefined && typeof value.token !== 'string') ||
+    (value.tokenRef !== undefined && typeof value.tokenRef !== 'string')
   )
     return false;
   if ('url' in value)
@@ -62,13 +65,16 @@ const isBackend = (value: unknown): value is Backend => {
     (value.cwd === undefined || typeof value.cwd === 'string')
   );
 };
-const isFormConfig = (value: unknown): value is GatewayConfig => {
+const isFormConfig = (value: unknown): value is ConfigFile => {
   if (!isRecord(value) || !isRecord(value.gateway) || !isRecord(value.mcpServers)) return false;
   const { gateway, mcpServers } = value;
   return (
     typeof gateway.host === 'string' &&
     typeof gateway.port === 'number' &&
-    typeof gateway.token === 'string' &&
+    // Exactly one key form; native validation reports which rule failed.
+    (typeof gateway.token === 'string') !== (typeof gateway.tokenRef === 'string') &&
+    (gateway.token === undefined || typeof gateway.token === 'string') &&
+    (gateway.tokenRef === undefined || typeof gateway.tokenRef === 'string') &&
     (gateway.autoStart === undefined || typeof gateway.autoStart === 'boolean') &&
     (gateway.launchAtLogin === undefined || typeof gateway.launchAtLogin === 'boolean') &&
     (gateway.keepAwake === undefined || typeof gateway.keepAwake === 'boolean') &&
@@ -79,7 +85,7 @@ const isFormConfig = (value: unknown): value is GatewayConfig => {
   );
 };
 // This guard is for rendering only. Native validation remains authoritative on every save.
-export const formConfig = (text: string, format: ConfigFormat): GatewayConfig | null => {
+export const formConfig = (text: string, format: ConfigFormat): ConfigFile | null => {
   try {
     const value = parseConfigDocument(text, format);
     // The parsed document keeps every field, including unknown ones for native rejection.
@@ -101,6 +107,7 @@ export const emptyEditor = (): Editor => ({
   disabled: false,
   legacyProtocol: false,
   token: undefined,
+  tokenRef: undefined,
 });
 /** The macOS Bear preset fields; a name the user already typed is kept. */
 export const bearPreset = (name = ''): Pick<Editor, 'name' | 'command' | 'args'> => ({
@@ -235,16 +242,26 @@ export const ServerEditor = ({
         )}
         <Field label={t('editor.auth')} help={t('editor.authHelp')}>
           <NativeSelect
-            value={editor.token === undefined ? 'global' : 'custom'}
+            value={
+              editor.token === undefined && editor.tokenRef === undefined ? 'global' : 'custom'
+            }
             disabled={configurationLocked}
             onChange={(event) =>
-              onChange({ token: event.target.value === 'custom' ? '' : undefined })
+              onChange({
+                token: event.target.value === 'custom' ? '' : undefined,
+                tokenRef: undefined,
+              })
             }
           >
             <NativeSelectOption value="global">{t('editor.authGlobal')}</NativeSelectOption>
             <NativeSelectOption value="custom">{t('editor.authCustom')}</NativeSelectOption>
           </NativeSelect>
         </Field>
+        {editor.tokenRef !== undefined && (
+          <Field label={t('editor.key')} help={t('editor.keyHelp')}>
+            <p className="m-0 text-[13px]">{t('keys.stored')}</p>
+          </Field>
+        )}
         {editor.token !== undefined && (
           <Field label={t('editor.key')} help={t('editor.keyHelp')}>
             <div className="token-input">
@@ -268,11 +285,12 @@ export const ServerEditor = ({
             </div>
           </Field>
         )}
-        {editor.token !== undefined && (
+        {(editor.token !== undefined || editor.tokenRef !== undefined) && (
           <Button
             size="lg"
             disabled={configurationLocked}
-            onClick={() => onChange({ token: generateToken() })}
+            // A new literal replaces a Keychain reference; that is also the repair for an unreadable item.
+            onClick={() => onChange({ token: generateToken(), tokenRef: undefined })}
           >
             {t('editor.generateKey')}
           </Button>

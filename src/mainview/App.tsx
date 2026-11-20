@@ -8,6 +8,7 @@ import { Shell, type Tab } from '@mcp-gateway/mainview/components/Shell';
 import { SidebarUpdates } from '@mcp-gateway/mainview/components/SidebarUpdates';
 import { Modal } from '@mcp-gateway/mainview/components/ui';
 import { ConfirmDialogs } from '@mcp-gateway/mainview/dialogs/ConfirmDialogs';
+import { KeyMigration } from '@mcp-gateway/mainview/dialogs/KeyMigration';
 import {
   type Document,
   type Editor,
@@ -30,7 +31,7 @@ import { editConfigDocument } from '@mcp-gateway/shared/config-document';
 import type { LanguagePreference } from '@mcp-gateway/shared/i18n';
 import type { AppClient, AppSnapshot, SocialLinkTarget } from '@mcp-gateway/shared/rpc';
 import { needsLoginRetry } from '@mcp-gateway/shared/rpc';
-import type { GatewayConfig } from '@mcp-gateway/shared/types';
+import type { ConfigFile, KeyMigration as KeyMigrationSlots } from '@mcp-gateway/shared/types';
 import changelog from '../../CHANGELOG.md?raw';
 
 interface App {
@@ -58,6 +59,7 @@ export const App = ({ client }: App) => {
   const [showToken, setShowToken] = useState(false);
   const [rawOpen, setRawOpen] = useState(false);
   const [whatsNewClosed, setWhatsNewClosed] = useState(false);
+  const [keysOpen, setKeysOpen] = useState(false);
   const [updatesOpen, setUpdatesOpen] = useState(false);
   const [updatesRequested, setUpdatesRequested] = useState(false);
   const fallbackFocus = useRef<HTMLButtonElement>(null);
@@ -199,7 +201,8 @@ export const App = ({ client }: App) => {
     confirmQuit ||
     (confirmUpdate && Boolean(updateReady)) ||
     editor !== null ||
-    deleting !== null;
+    deleting !== null ||
+    keysOpen;
   const updatesTriggerDisabled =
     busy || configurationLocked || quitting || updateRestarting || competingDialog;
   const showUpdatesModal =
@@ -240,7 +243,7 @@ export const App = ({ client }: App) => {
 
   const format = snapshot?.gateway.configFormat ?? 'json';
   const filename = snapshot?.gateway.configPath.split('/').at(-1) ?? 'mcp.json';
-  const update = (config: GatewayConfig, rename?: Rename) => {
+  const update = (config: ConfigFile, rename?: Rename) => {
     if (configurationLocked) return;
     setDoc((previous) => {
       if (!previous) return previous;
@@ -255,7 +258,13 @@ export const App = ({ client }: App) => {
     setNotice('');
   };
   const parsed = doc ? formConfig(doc.text, format) : null;
-  const config = snapshot?.gateway.configError && !doc?.dirty ? null : parsed;
+  // An unreadable stored key leaves the file valid: keep the form, whose Generate is the repair.
+  const config =
+    snapshot?.gateway.configError &&
+    snapshot.gateway.configError.code !== 'KeyUnavailable' &&
+    !doc?.dirty
+      ? null
+      : parsed;
   const gateway = snapshot?.gateway;
   const stale = !!doc && !!gateway && doc.revision !== gateway.revision;
   const retryLogin = !!(
@@ -299,6 +308,24 @@ export const App = ({ client }: App) => {
     if (busy || configurationLocked) return;
     void run(() => client.revealConfig(), '');
   };
+  const dismissKeys = () => {
+    if (busy || configurationLocked) return;
+    void run(() => client.dismissKeyReminder(), '');
+  };
+  // Saved mode reloads the form and raw editor from the new revision, so no draft keeps the plaintext.
+  const moveKeys = async (slots: KeyMigrationSlots): Promise<boolean> => {
+    if (busy || configurationLocked || !doc || dirty) return false;
+    return run(
+      () =>
+        client.migrateKeys({
+          gateway: slots.gateway,
+          servers: slots.servers,
+          expectedRevision: doc.revision,
+        }),
+      t('keys.moved'),
+      true,
+    );
+  };
   const changeLanguage = (preference: LanguagePreference) => {
     if (busy || configurationLocked) return;
     void run(() => client.setLanguage({ preference }), '');
@@ -319,6 +346,7 @@ export const App = ({ client }: App) => {
       next.legacyProtocol = server.legacyProtocol ?? false;
       // Keep the raw reference text; only main expands it on save.
       next.token = server.token;
+      next.tokenRef = server.tokenRef;
       if ('url' in server) {
         next.type = 'http';
         next.url = server.url;
@@ -369,6 +397,7 @@ export const App = ({ client }: App) => {
       legacyProtocol: editor.legacyProtocol || undefined,
       // Undefined removes the property, which restores global inheritance.
       token: editor.token,
+      tokenRef: editor.tokenRef,
     };
     const server =
       editor.type === 'stdio'
@@ -493,6 +522,22 @@ export const App = ({ client }: App) => {
               />
             </Modal>
           )}
+          {keysOpen && snapshot && (
+            <KeyMigration
+              slots={snapshot.gateway.keyMigration}
+              dirty={dirty}
+              busy={busy || configurationLocked}
+              error={error}
+              filename={filename}
+              fallbackFocus={fallbackFocus}
+              onKeep={() => {
+                setKeysOpen(false);
+                dismissKeys();
+              }}
+              onClose={() => setKeysOpen(false)}
+              onMove={moveKeys}
+            />
+          )}
           {editor && (
             <ServerEditor
               editor={editor}
@@ -559,6 +604,9 @@ export const App = ({ client }: App) => {
                 gateway={gateway}
                 config={config}
                 dirty={dirty}
+                keyReminder={snapshot.keyReminder}
+                onReviewKeys={() => setKeysOpen(true)}
+                onDismissKeys={dismissKeys}
                 configurationLocked={configurationLocked}
                 run={run}
                 client={client}
@@ -578,6 +626,7 @@ export const App = ({ client }: App) => {
                 showToken={showToken}
                 setShowToken={setShowToken}
                 filename={filename}
+                onMoveKeys={() => setKeysOpen(true)}
               />
             )}
             <RawConfig

@@ -43,6 +43,7 @@ Open **Settings** and set:
 - **Global bearer token**: choose **Generate secure token**, or paste your own 32 to 512 printable ASCII characters without spaces.
 
 Choose **Save changes** in the draft bar.
+The key is saved in the configuration file; to keep it in the macOS Keychain instead, see [Keys in Keychain](configuration.md#keys-in-keychain).
 
 ## Start the gateway
 

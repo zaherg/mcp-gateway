@@ -16,6 +16,8 @@ import { parseConfig } from '@mcp-gateway/core/config';
 import { McpGatewayController } from '@mcp-gateway/core/controller';
 import { GatewayError } from '@mcp-gateway/core/errors';
 import { AppUpdater, resolveUpdateSupport } from '@mcp-gateway/main/app-updater';
+import { KeyReminderStore } from '@mcp-gateway/main/key-reminder';
+import { openKeychain } from '@mcp-gateway/main/keychain';
 import { LanguageStore } from '@mcp-gateway/main/language';
 import { InteractiveQuitGate, QuitCoordinator } from '@mcp-gateway/main/lifecycle';
 import {
@@ -43,10 +45,8 @@ const viewUrl =
   isDevelopment && typeof developmentServerUrl === 'string'
     ? developmentServerUrl
     : 'views://mainview/index.html';
-const dataDirectory = configurationDirectory(
-  Utils.paths.config,
-  installedIdentifier(PATHS.RESOURCES_FOLDER),
-);
+const identifier = installedIdentifier(PATHS.RESOURCES_FOLDER);
+const dataDirectory = configurationDirectory(Utils.paths.config, identifier);
 const nativeLibrary = join(PATHS.RESOURCES_FOLDER, 'app/native/login.dylib');
 const nativeQuitSignal = observeNativeQuitSignals(nativeLibrary);
 const login = openLoginManager(nativeLibrary);
@@ -54,9 +54,13 @@ const setMinimumWindowSize = openMinimumWindowSize(nativeLibrary);
 const windowSize = await WindowSizeStore.open(dataDirectory);
 // Opening the controller creates the folder on a first launch, so look before it does.
 const existingInstall = existsSync(dataDirectory);
-const controller = await McpGatewayController.open(join(dataDirectory, 'mcp.json'), () =>
-  preventIdleSleep(nativeLibrary),
+const controller = await McpGatewayController.open(
+  join(dataDirectory, 'mcp.json'),
+  () => preventIdleSleep(nativeLibrary),
+  // Unsigned development builds share the real configuration folder but never touch Keychain.
+  isDevelopment ? undefined : openKeychain(identifier),
 );
+const keyReminder = await KeyReminderStore.open(dataDirectory, existingInstall);
 let preferredLanguages: string[] = [];
 try {
   preferredLanguages = readPreferredLanguages(nativeLibrary);
@@ -114,7 +118,7 @@ const updateMenu = (): void => {
   }
   const update = updater.status();
   const t = language.translate;
-  const state = `${language.state.locale}:${snapshot.running}:${Boolean(snapshot.configError)}:${quitFailed}:${update.supported}:${update.phase}:${update.availableVersion ?? ''}`;
+  const state = `${language.state.locale}:${snapshot.running}:${snapshot.configError?.code ?? ''}:${quitFailed}:${update.supported}:${update.phase}:${update.availableVersion ?? ''}`;
   if (state === menuState) return;
   menuState = state;
   const updateLabel =
@@ -145,7 +149,8 @@ const updateMenu = (): void => {
       type: 'normal',
       label: snapshot.running ? t('common.stopGateway') : t('common.startGateway'),
       action: 'toggle',
-      enabled: !snapshot.configError,
+      // Start retries an unreadable stored key, for example after unlocking Keychain.
+      enabled: !snapshot.configError || snapshot.configError.code === 'KeyUnavailable',
     },
     { type: 'divider' },
     { type: 'normal', label: t('common.quitApp'), action: 'quit' },
@@ -321,6 +326,8 @@ const service = new AppService(
     },
     whatsNew: () => whatsNew.pending,
     dismissWhatsNew: () => whatsNew.dismiss(),
+    keyReminderRetired: () => keyReminder.retired,
+    retireKeyReminder: () => keyReminder.retire(),
     language: () => language.state,
     setLanguage: async (preference) => {
       await language.set(preference);

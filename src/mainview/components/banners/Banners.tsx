@@ -7,7 +7,7 @@ import { StaleConfigBanner } from '@mcp-gateway/mainview/components/banners/Stal
 import { UpdateBanners } from '@mcp-gateway/mainview/components/banners/UpdateBanners';
 import type { Tab } from '@mcp-gateway/mainview/components/Shell';
 import type { AppSnapshot, QuitStatus, UpdateStatus } from '@mcp-gateway/shared/rpc';
-import type { GatewayConfig, GatewaySnapshot } from '@mcp-gateway/shared/types';
+import type { ConfigFile, GatewaySnapshot } from '@mcp-gateway/shared/types';
 
 interface Banners {
   error: string | null;
@@ -27,7 +27,7 @@ interface Banners {
   setNotice: (notice: string) => void;
   gateway: GatewaySnapshot | undefined;
   errorOccurrence: string | null;
-  config: GatewayConfig | null;
+  config: ConfigFile | null;
   configurationLocked: boolean;
   snapshot: AppSnapshot | undefined;
   loginWanted: boolean;

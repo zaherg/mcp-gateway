@@ -31,26 +31,38 @@ export interface LogPage {
   hasMore: boolean;
 }
 
+interface GatewaySettings {
+  host: string;
+  port: number;
+  autoStart?: boolean;
+  launchAtLogin?: boolean;
+  keepAwake?: boolean;
+  /** IPv4 client ranges that replace the selected interface's netmask check. */
+  allowedPeers?: string[];
+}
+
+/** A key slot as written in the file: the key itself, or the ID of its Keychain item. */
+export interface KeySlot {
+  token?: string;
+  tokenRef?: string;
+}
+
+/** The resolved configuration: every Keychain reference is replaced by its key. */
 export interface GatewayConfig {
-  gateway: {
-    host: string;
-    port: number;
-    token: string;
-    autoStart?: boolean;
-    launchAtLogin?: boolean;
-    keepAwake?: boolean;
-    /** IPv4 client ranges that replace the selected interface's netmask check. */
-    allowedPeers?: string[];
-  };
+  gateway: GatewaySettings & { token: string };
   mcpServers: Record<string, StdioServerConfig | HttpServerConfig>;
 }
 
-interface ServerBase {
+/** The configuration as written in the file, where the global key may be a Keychain reference. */
+export interface ConfigFile {
+  gateway: GatewaySettings & KeySlot;
+  mcpServers: Record<string, StdioServerConfig | HttpServerConfig>;
+}
+
+interface ServerBase extends KeySlot {
   disabled?: boolean;
   /** Also serve session-based MCP (2025-11-25 and earlier) on this endpoint. */
   legacyProtocol?: boolean;
-  /** Optional inbound bearer token; omission inherits `gateway.token`. */
-  token?: string;
 }
 
 export interface StdioServerConfig extends ServerBase {
@@ -77,6 +89,8 @@ export interface InterfaceChoice {
 
 export type GatewayErrorCode =
   | 'InvalidConfig'
+  /** A valid file whose stored key cannot be read; the form stays open so Generate can replace it. */
+  | 'KeyUnavailable'
   | 'AmbiguousConfig'
   | 'UnsafeFile'
   | 'ConfigIO'
@@ -115,9 +129,24 @@ export interface GatewaySnapshot {
   interfaces: InterfaceChoice[];
   /** Kind of the saved listener address; null while it is not assigned or the configuration is invalid. */
   network: NetworkKind | null;
+  /** Slots whose saved key is a literal that can move to Keychain. Names only, never values. */
+  keyMigration: KeyMigration;
   servers: ServerSnapshot[];
   configError: VisibleError | null;
   operationalError: VisibleError | null;
+}
+
+export interface KeyMigration {
+  gateway: boolean;
+  servers: string[];
+}
+
+/** Keychain access for gateway keys. There is deliberately no delete. */
+export interface KeyStore {
+  /** Reads every ID within one deadline; fails with fixed text if any is missing or unreadable. */
+  get(refs: readonly string[]): Promise<Map<string, string>>;
+  /** Creates or replaces one item; refuses an empty value, which would delete it. */
+  set(ref: string, value: string): Promise<void>;
 }
 
 /** One completed handshake through a running endpoint; nothing else is reported. */
@@ -147,5 +176,13 @@ export interface GatewayController {
     expectedRevision: string,
     operation?: GatewayOperation,
   ): Promise<GatewaySnapshot>;
+  /** Moves literal keys into new Keychain items and saves their references in their place. */
+  migrateKeys(
+    slots: KeyMigration,
+    expectedRevision: string,
+    operation?: GatewayOperation,
+  ): Promise<GatewaySnapshot>;
+  /** The configuration the gateway uses, with resolved keys; undefined before one is accepted. */
+  activeConfig(): GatewayConfig | undefined;
   close(): Promise<void>;
 }

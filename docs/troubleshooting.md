@@ -74,11 +74,26 @@ A failed test also marks the card with the gateway's own error, which stays unti
 The configuration uses `${NAME}` for a variable that the app's environment does not define.
 See [Environment variables](configuration.md#environment-variables) for where the app reads them and how to set one for apps.
 
+## A Keychain key could not be read
+
+The configuration refers to a key in Keychain with `tokenRef`, and the app could not read it.
+The Keychain may be locked, access may have been denied, or the item may have been deleted.
+When macOS asks for the Keychain password, the app stops waiting after 5 seconds, but the macOS dialog stays open until you answer it.
+The listener does not start, and no other key is used instead.
+The form in **Settings** stays editable, unlike other configuration errors.
+
+- Unlock the login Keychain, then choose **Start gateway**, which reads the key again.
+- If the item is gone, choose **Generate secure token** in Settings or **Generate secure key** in the server dialog, save, and update your clients.
+- A development build never reads Keychain; it shows "Keys stored in Keychain need the signed MCP Gateway app. Generate a new key to use this build."
+
+See [Keys in Keychain](configuration.md#keys-in-keychain).
+
 ## Start gateway is disabled
 
 Hover the button to read the reason.
 An open draft shows "Save or discard the unsaved changes first."
 A configuration error shows "Repair the configuration first."
+An unreadable Keychain key is the exception: **Start gateway** stays available so it can read the key again.
 
 ## Configuration errors
 
@@ -94,6 +109,8 @@ Common causes:
 - A leftover `mcp.json.lock` from a crash.
   Quit every running copy, make sure nothing else is writing the file, then delete the lock.
 - A field this version does not accept.
-  Earlier releases reject `allowedPeers` and a server `token`.
+  Earlier releases reject `allowedPeers`, a server `token` and `tokenRef`.
+- A slot has both `token` and `tokenRef`, or a `tokenRef` that is not a key ID in the form the app creates.
+  Keep exactly one of them.
 
 [The configuration file](configuration.md#the-configuration-file) lists the accepted fields and limits.

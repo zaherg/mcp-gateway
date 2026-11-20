@@ -7,6 +7,9 @@
 - Give each client or device its own key, so one lost key can be revoked alone.
 - Keep the copied configuration private.
   It contains the key in plain text.
+- Move the gateway keys out of `mcp.json` with **Move keys to Keychain**, so the file and later backups of it no longer hold them.
+  Backups and copies made before the move still contain the keys; generate new keys if those may have been exposed.
+  See [Keys in Keychain](configuration.md#keys-in-keychain); upstream `headers` and `env` values stay in the file.
 - Treat the logs as sensitive.
   They can contain credentials and note content.
 - To reach the gateway from outside your LAN, use a Tailscale or WireGuard address.
@@ -21,6 +24,9 @@
 The old server key stops working at once, and that endpoint's open requests and sessions close.
 Other endpoints keep running.
 A new global key also restarts the listener.
+
+For a key stored in Keychain, **Generate** writes a new key into the file.
+Move it to Keychain again afterwards if you want; the old item stays in Keychain unused until you remove it in Keychain Access.
 
 ## What a client can do
 
