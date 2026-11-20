@@ -74,6 +74,12 @@ A failed test also marks the card with the gateway's own error, which stays unti
 The configuration uses `${NAME}` for a variable that the app's environment does not define.
 See [Environment variables](configuration.md#environment-variables) for where the app reads them and how to set one for apps.
 
+## Keychain setup failed on first launch
+
+The signed app did not create `mcp.json` because it could not store and verify the initial global key.
+Unlock the login Keychain and reopen the app, allowing access if macOS asks.
+The app does not fall back to a plaintext key.
+
 ## A Keychain key could not be read
 
 The configuration refers to a key in Keychain with `tokenRef`, and the app could not read it.
@@ -84,7 +90,7 @@ The form in **Settings** stays editable, unlike other configuration errors.
 
 - Unlock the login Keychain, then choose **Start gateway**, which reads the key again.
 - If the item is gone, choose **Generate secure token** in Settings or **Generate secure key** in the server dialog, save, and update your clients.
-- A development build never reads Keychain; it shows "Keys stored in Keychain need the signed MCP Gateway app. Generate a new key to use this build."
+- An unsigned development build never reads Keychain; it shows "Keys stored in Keychain need the signed MCP Gateway app. Generate a new key to use this build."
 
 See [Keys in Keychain](configuration.md#keys-in-keychain).
 

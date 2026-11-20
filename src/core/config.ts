@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { constants, type Stats } from 'node:fs';
 import * as fs from 'node:fs/promises';
 import { validateHeaderName, validateHeaderValue } from 'node:http';
@@ -456,13 +456,13 @@ export const serverFingerprint = (server: StdioServerConfig | HttpServerConfig):
   );
 };
 
-const newConfigText = (): string => {
+const newConfigText = (key: KeySlot): string => {
   return `${JSON.stringify(
     {
       gateway: {
         host: '127.0.0.1',
         port: 8765,
-        token: randomBytes(32).toString('hex'),
+        ...key,
         autoStart: false,
         launchAtLogin: false,
       },
@@ -752,7 +752,7 @@ export class ConfigStore {
     if (failed) throw failed.error;
   }
 
-  initialize(): Promise<ConfigDocument> {
+  initialize(createKey: () => Promise<KeySlot>): Promise<ConfigDocument> {
     if (this.initialized || this.selectionRefused) return this.read();
     return guarded(async () => {
       // Inspect each ancestor before creating owner-only directories; recursive
@@ -766,7 +766,13 @@ export class ConfigStore {
           throw failure('AmbiguousConfig', AMBIGUOUS_CONFIG);
         }
         this.selectedPath = jsonc ? this.jsoncPath : this.jsonPath;
-        if (!json && !jsonc) await this.replace(newConfigText(), true);
+        if (!json && !jsonc) {
+          const key = await createKey();
+          // The parent or alternate filename may have changed while the key was being created.
+          await safeParent(this.path);
+          await this.checkSelection();
+          await this.replace(newConfigText(key), true);
+        }
         this.initialized = true;
       });
       return this.read();

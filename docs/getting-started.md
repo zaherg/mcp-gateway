@@ -40,10 +40,11 @@ Open **Settings** and set:
 
 - **Interface / address**: start with `127.0.0.1` to allow this Mac only, then pick a LAN, Tailscale or WireGuard address when another device needs access.
 - **Port**: any port from 1 to 65535 that is free on this Mac.
-- **Global bearer token**: choose **Generate secure token**, or paste your own 32 to 512 printable ASCII characters without spaces.
+- **Global bearer token**: on a fresh install this shows **Stored in Keychain**.
+  Keep that key unless you want to replace it.
 
-Choose **Save changes** in the draft bar.
-The key is saved in the configuration file; to keep it in the macOS Keychain instead, see [Keys in Keychain](configuration.md#keys-in-keychain).
+If you changed any settings, choose **Save changes** in the draft bar.
+For keys already saved in a configuration file, see [Keys in Keychain](configuration.md#keys-in-keychain).
 
 ## Start the gateway
 

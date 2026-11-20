@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { type FSWatcher, lstatSync, watch } from 'node:fs';
 import { lstat } from 'node:fs/promises';
 import { dirname } from 'node:path';
@@ -43,6 +43,14 @@ import type {
 
 const WATCH_UNAVAILABLE =
   'Configuration watching is unavailable; reopen the controller before starting.';
+
+const createKeyRef = async (keys: KeyStore, token: string): Promise<string> => {
+  const ref = randomUUID();
+  await keys.set(ref, token);
+  if ((await keys.get([ref])).get(ref) !== token)
+    throw failure('ConfigIO', 'A key could not be stored in Keychain.');
+  return ref;
+};
 
 /** Local native/UI API. Snapshots contain explicit config credentials; do not log them. */
 export class McpGatewayController implements GatewayController {
@@ -99,21 +107,34 @@ export class McpGatewayController implements GatewayController {
   ): Promise<McpGatewayController> {
     const controller = new McpGatewayController(configPath, preventIdleSleep, keys);
     await controller.serial(async () => {
-      const control = controller.control(controller.validationLifetime());
+      const signal = controller.validationLifetime();
       try {
-        controller.document = await controller.store.initialize();
+        controller.document = await controller.store.initialize(async () => {
+          const token = randomBytes(32).toString('hex');
+          if (!keys) return { token };
+          try {
+            return { tokenRef: await createKeyRef(keys, token) };
+          } catch {
+            throw failure(
+              'KeySetupFailed',
+              'The first gateway key could not be stored in Keychain. Unlock Keychain, allow access, and reopen the app.',
+            );
+          }
+        });
         controller.config = await controller.parse(controller.document.text);
-        await controller.validate(controller.config, control);
+        await controller.validate(controller.config, controller.control(signal));
         controller.event('info', 'Configuration loaded.');
       } catch (error) {
         controller.logs.append({ server: null, level: 'error', source: 'controller' }, [error]);
         controller.configError = visible(error);
         controller.event('error', 'Configuration could not be loaded.');
+        // No file exists to watch; preference writes must not replace the setup error.
+        if (controller.configError.code === 'KeySetupFailed') return;
       }
       controller.observe();
       if (controller.config?.gateway.autoStart && !controller.configError) {
         try {
-          await controller.startOwned(control);
+          await controller.startOwned(controller.control(signal));
         } catch (error) {
           controller.operationalError = visible(error);
         }
@@ -451,12 +472,8 @@ export class McpGatewayController implements GatewayController {
       for (const slot of chosen) {
         if (!isRecord(slot) || typeof slot.token !== 'string')
           throw failure('InvalidConfig', 'These keys can no longer be moved; review them again.');
-        const ref = randomUUID();
-        await keys.set(ref, slot.token);
-        if ((await keys.get([ref])).get(ref) !== slot.token)
-          throw failure('ConfigIO', 'A key could not be stored in Keychain.');
+        slot.tokenRef = await createKeyRef(keys, slot.token);
         delete slot.token;
-        slot.tokenRef = ref;
       }
       const text = editConfigDocument(this.document.text, file, this.store.format);
       const document = await this.store.save(text, expectedRevision).catch(async (error) => {

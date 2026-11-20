@@ -91,6 +91,7 @@ export type GatewayErrorCode =
   | 'InvalidConfig'
   /** A valid file whose stored key cannot be read; the form stays open so Generate can replace it. */
   | 'KeyUnavailable'
+  | 'KeySetupFailed'
   | 'AmbiguousConfig'
   | 'UnsafeFile'
   | 'ConfigIO'

@@ -7,7 +7,8 @@
 - Give each client or device its own key, so one lost key can be revoked alone.
 - Keep the copied configuration private.
   It contains the key in plain text.
-- Move the gateway keys out of `mcp.json` with **Move keys to Keychain**, so the file and later backups of it no longer hold them.
+- The signed app keeps a new installation's global key in Keychain.
+  If your configuration contains plaintext keys, choose **Move keys to Keychain** so later backups do not contain them.
   Backups and copies made before the move still contain the keys; generate new keys if those may have been exposed.
   See [Keys in Keychain](configuration.md#keys-in-keychain); upstream `headers` and `env` values stay in the file.
 - Treat the logs as sensitive.

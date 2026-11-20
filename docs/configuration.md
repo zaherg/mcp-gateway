@@ -4,7 +4,7 @@
 
 Most settings are structured fields: the gateway preferences in **Settings**, and the server dialog on **Overview**.
 **Authoritative configuration**, a collapsible section in **Settings**, shows the file path and the full contents, including credentials.
-A key moved to the macOS Keychain appears there only as its `tokenRef`.
+A key stored in the macOS Keychain appears there only as its `tokenRef`.
 Use it to edit the file directly, or to repair one that structured editing cannot load.
 **Show in Finder** in that section selects the file in Finder, so you can open it in another editor; if the file is missing, it opens the folder instead.
 The section below describes the file itself.
@@ -82,8 +82,11 @@ The configuration can be at most 1 MiB and hold at most 64 servers.
 
 ## Keys in Keychain
 
-The signed app can move the global key and each server's own key out of the file and into the macOS Keychain.
-Only these gateway keys move.
+When neither `mcp.json` nor `mcp.jsonc` exists, the signed app generates the global key in memory, stores it in Keychain, and reads it back before creating `mcp.json` with only `gateway.tokenRef`.
+If Keychain cannot store or verify the key, no configuration file is created; unlock Keychain, allow access, and reopen the app.
+
+An upgrade leaves existing files and keys unchanged.
+You can move the global key and each server's own key to Keychain without rotating them.
 Upstream `headers` values and `env` values always stay in the file.
 
 To move them, choose **Review keys** in the Overview reminder or **Move keys to Keychain** in **Settings**.
@@ -115,7 +118,8 @@ Limits:
 
 - Earlier releases cannot open a file that contains `tokenRef`, because their schemas are strict.
 - Copying the configuration file to another Mac does not copy the Keychain items.
-- Development builds never read or write Keychain; they report an error for a file with `tokenRef`.
+- Unsigned development builds never access Keychain: they create new files with a literal `token` and report an error for a file with `tokenRef`.
+  The signed `MCP Gateway Dev` build uses Keychain like the production app.
 - When the Keychain is locked, macOS may ask for your password; the app stops waiting after 5 seconds and shows a configuration error until the key can be read.
   After unlocking, choose **Start gateway** to read the key again.
 
