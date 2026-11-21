@@ -262,7 +262,7 @@
     "editor.apply": "Auf Entwurf anwenden",
     "editor.footnote": "Prüfen und speichern Sie die Änderungen, um das laufende Gateway zu aktualisieren.",
 
-    "logs.readFailed": "Die lokalen Protokolle konnten nicht gelesen werden. Öffnen Sie die Protokolle erneut, um es zu wiederholen.",
+    "logs.readFailed": "Die lokalen Protokolle konnten nicht gelesen werden. Es wird automatisch erneut versucht.",
     "logs.clearFailed": "Die lokalen Protokolle konnten nicht gelöscht werden. Öffnen Sie die Protokolle erneut, um es zu wiederholen.",
     "logs.title": "Backend-Protokolle",
     "logs.intro": "Vollständige lokale Diagnose, nur während der Laufzeit der App aufbewahrt",

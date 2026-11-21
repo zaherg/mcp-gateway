@@ -262,7 +262,7 @@
     "editor.apply": "Taslağa uygula",
     "editor.footnote": "Çalışan ağ geçidini güncellemek için değişiklikleri gözden geçirip kaydedin.",
 
-    "logs.readFailed": "Yerel günlükler okunamadı. Yeniden denemek için Günlükler’i yeniden açın.",
+    "logs.readFailed": "Yerel günlükler okunamadı. Otomatik olarak yeniden deneniyor.",
     "logs.clearFailed": "Yerel günlükler temizlenemedi. Yeniden denemek için Günlükler’i yeniden açın.",
     "logs.title": "Arka uç günlükleri",
     "logs.intro": "Eksiksiz yerel tanılama, yalnızca uygulama çalışırken tutulur",

@@ -47,6 +47,7 @@ It stops at the first failure, and nothing is uploaded before verification passe
 2. **Build** with `bun run release`, which signs and notarizes into `build/v<version>/` and `artifacts/v<version>/`.
 3. **Verify** with `bun scripts/verify-release.ts`: signatures, notarization tickets, Gatekeeper, versions, the feed and identifier inside the payload, the manifests, the archive and the DMG.
 4. **Publish** with `gh release create`, adding `SHA256SUMS` to the four artifacts.
+   It first checks again that the working tree is clean and `HEAD` is still the preflight commit, and refuses to publish otherwise; an edit made and undone during the build is not detected.
    The release targets the built commit, so the tag lands there, and its notes are the version's `CHANGELOG.md` section.
 5. **Read back** the release and download every file from `releases/latest/download`, comparing each with `SHA256SUMS`.
    A failure here says the release IS published; inspect it on GitHub instead of publishing again.

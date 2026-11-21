@@ -262,7 +262,7 @@
     "editor.apply": "Apply to draft",
     "editor.footnote": "Review and save changes to update the running gateway.",
 
-    "logs.readFailed": "Could not read local logs. Reopen Logs to retry.",
+    "logs.readFailed": "Could not read local logs. Retrying automatically.",
     "logs.clearFailed": "Could not clear local logs. Reopen Logs to retry.",
     "logs.title": "Backend logs",
     "logs.intro": "Full local diagnostics, kept only while the app runs",

@@ -78,6 +78,7 @@ Logs are kept in memory only and are cleared when you quit.
 Filter by level, by server or by search text, and empty the list with **Clear logs**.
 Clearing the list does not fix the failure behind an entry.
 At most 500 entries are kept, and the tab says when earlier entries were removed.
+If reading the logs fails, the tab shows the error and tries again every 2 seconds; the error clears after the next successful read.
 The tab warns that logs can contain credentials and note content.
 
 Refused requests are not logged.
@@ -95,6 +96,7 @@ The first check runs about 10 seconds after launch, then once a day.
 A failed check or download is retried about once an hour.
 You can turn this off by choosing **Updates** in the sidebar to open the **Updates** dialog.
 The app stores that choice in `updates.json`, next to `mcp.json`.
+If saving the choice fails, the app shows an error, keeps the previous setting and records the cause in **Logs**.
 The app offers a release only when its version is higher than the installed one.
 
 You can also check by hand in the **Updates** dialog from the sidebar, or from the menu bar and app menu.

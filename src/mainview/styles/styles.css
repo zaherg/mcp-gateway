@@ -585,7 +585,7 @@ main {
   overflow-wrap: anywhere;
 }
 .field small.raw-feedback-error {
-  color: var(--mac-red);
+  color: var(--mac-red-ink);
 }
 .raw-actions {
   display: flex;

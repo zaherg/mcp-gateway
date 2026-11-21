@@ -3,6 +3,7 @@
 ## Editing in the app
 
 Most settings are structured fields: the gateway preferences in **Settings**, and the server dialog on **Overview**.
+Structured edits rewrite only the values you change; a removed value also takes its line with it when nothing else is on that line.
 **Authoritative configuration**, a collapsible section in **Settings**, shows the file path and the full contents, including credentials.
 A key stored in the macOS Keychain appears there only as its `tokenRef`.
 Use it to edit the file directly, or to repair one that structured editing cannot load.
@@ -28,6 +29,7 @@ The files must be readable only by you, and symlinks are refused.
 The app reloads the file when another app saves it.
 Save or discard unsaved changes in the app first; otherwise its next save is refused as stale.
 If the app reports that the configuration must be an owner-only regular file after an outside edit, run `chmod 600` on the file.
+If it reports a second hard link after the app stopped during its first launch, delete the hidden `.mcp.json.<id>.tmp` (or `.mcp.jsonc.<id>.tmp`) file in the same folder, then reopen the app.
 
 After a crash, an `mcp.json.lock` file may remain next to the configuration.
 Quit every running copy of the app and make sure nothing else is writing the file.
@@ -93,6 +95,7 @@ To move them, choose **Review keys** in the Overview reminder or **Move keys to 
 Save or discard any draft first.
 The dialog lists the keys by name, never by value, and asks you to confirm a one-way move.
 All listed keys move together, or none do.
+Choosing **Stop gateway** while a requested move is still waiting to run cancels it, and nothing changes.
 
 A key can move when it is written in the file as a literal.
 Keys written as `${NAME}`, servers that use the global key, and keys already in Keychain are not offered.

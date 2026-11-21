@@ -262,7 +262,7 @@
     "editor.apply": "Appliquer au brouillon",
     "editor.footnote": "Vérifiez et enregistrez les modifications pour mettre à jour la passerelle en cours d’exécution.",
 
-    "logs.readFailed": "Impossible de lire les journaux locaux. Rouvrez les journaux pour réessayer.",
+    "logs.readFailed": "Impossible de lire les journaux locaux. Nouvelle tentative automatique.",
     "logs.clearFailed": "Impossible d’effacer les journaux locaux. Rouvrez les journaux pour réessayer.",
     "logs.title": "Journaux des backends",
     "logs.intro": "Diagnostics locaux complets, conservés uniquement pendant l’exécution de l’app",

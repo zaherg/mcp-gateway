@@ -208,6 +208,7 @@ This version is stateless: every message is a `POST` to `/mcp/<name>`.
 Requests that use an older protocol version or the `initialize` handshake return 400.
 The gateway bridges stdio servers itself.
 An HTTP server must answer `server/discover` with `2026-07-28`, or the gateway refuses it.
+The gateway reuses that answer for 60 seconds; a check that timed out, lost its connection or got a 5xx reply is asked again on the next request.
 
 Some clients do not support `2026-07-28` yet.
 For them, turn on **Allow session-based clients** for a server, or set `"legacyProtocol": true` on it in `mcp.json`.
@@ -220,4 +221,5 @@ Each session also takes one of the 16 shared backend slots.
 A new session beyond either limit gets 429.
 A session ends after 60 seconds without an open request or event stream, and the client must initialize again.
 Session requests count toward the same 16-call limit and 4 MiB message limit as stateless requests.
+A stateless request that fails frees its call slot once its backend has closed.
 App versions up to `0.3.2` reject a configuration that contains `legacyProtocol`.

@@ -19,6 +19,8 @@ export const configFormat = (path: string): ConfigFormat =>
 /** Shared with the raw editor: main and the renderer enforce the same file limit. */
 export const MAX_CONFIG_BYTES = 1024 * 1024;
 export const CONFIG_TOO_LARGE = 'Configuration exceeds the size limit.';
+/** A server name is one URL path segment; the renderer checks it before editing a draft. */
+export const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 
 // Fixed messages only: parser diagnostics must not echo configuration credentials.
 const syntaxError = (): Error =>
@@ -214,6 +216,12 @@ export const editConfigDocument = (
       { offset: node.offset, length: node.length, content: '' },
       ...(comma === undefined ? [] : [{ offset: comma, length: 1, content: '' }]),
     ]);
+    // A line left holding only indentation would remain as a blank line; remove it as well.
+    const at = node.offset - (comma !== undefined && comma < node.offset ? 1 : 0);
+    const lineStart = text.lastIndexOf('\n', at - 1) + 1;
+    const lineEnd = text.indexOf('\n', at);
+    if (lineEnd >= 0 && /^[ \t]*\r?$/.test(text.slice(lineStart, lineEnd)))
+      text = text.slice(0, lineStart) + text.slice(lineEnd + 1);
   };
   change([], original, next);
   checkedTree(text, format);

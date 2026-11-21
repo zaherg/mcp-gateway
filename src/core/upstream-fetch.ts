@@ -15,7 +15,9 @@ const install = (): void => {
   const original = globalThis.fetch;
   const guard = (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const origin = originOf(input);
-    const refuse = origin !== undefined && guarded.has(origin) && init?.redirect === undefined;
+    // An explicit 'follow' is the default mode, so it is refused too.
+    const refuse =
+      origin !== undefined && guarded.has(origin) && (init?.redirect ?? 'follow') === 'follow';
     return original(input, refuse ? { ...init, redirect: 'error' } : init);
   };
   // Object.assign carries over fetch's static members, such as preconnect.

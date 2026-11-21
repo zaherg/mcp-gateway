@@ -446,12 +446,11 @@ export const createMount = (
             // Also cover a failed transport.start(), before serve's own finally.
             await request.stop();
           }
-          // A terminal reply already ended this work. Without one, only the
-          // owned child's confirmed cleanup frees its slot.
-          if (child && cleanupConfirmed(child)) releaseWork();
         } finally {
-          // Refusals before a child exists cannot have dispatched backend work.
-          if (!child) releaseWork();
+          // Refusals before a child exists cannot have dispatched backend work. Otherwise a
+          // terminal reply already ended this work, or only the owned child's confirmed
+          // cleanup frees its slot, also when serve() rejected.
+          if (!child || cleanupConfirmed(child)) releaseWork();
         }
       }),
     );
@@ -689,7 +688,10 @@ class UpstreamDiscovery {
       try {
         if (!response.ok) return response.status >= 500 ? undefined : false;
         for (;;) {
-          const { value, done } = await reader.read();
+          // A timeout or reset mid-body is not an answer: ask again on the next request.
+          const read = await reader.read().catch(() => undefined);
+          if (!read) return undefined;
+          const { value, done } = read;
           if (done) break;
           length += value.byteLength;
           if (length > MAX_DISCOVERY_BYTES) return false;
@@ -704,7 +706,8 @@ class UpstreamDiscovery {
         return result ?? false;
       } finally {
         try {
-          await reader.cancel();
+          // Cancelling an errored body rejects; that must not replace the result above.
+          await reader.cancel().catch(() => undefined);
         } finally {
           reader.releaseLock();
         }

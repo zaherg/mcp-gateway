@@ -17,6 +17,7 @@ The sidebar notice names the network of the saved address: this Mac only, LAN, T
 
 DHCP can give this Mac a new address.
 When that happens, requests get `503` until you pick the new address; a DHCP reservation on your router avoids the problem.
+If the saved address comes back, the listener restarts by itself, unless you chose **Stop gateway** in the meantime.
 
 ## Keeping the endpoints reachable
 
@@ -44,5 +45,6 @@ Tailscale access controls or WireGuard `AllowedIPs` decide which devices can con
 **Allowed client ranges** limits which clients may connect.
 The placeholder, "Selected interface's subnet", is the default: clients in the subnet of the chosen address.
 Enter IPv4 ranges separated by commas to name the clients explicitly.
+Only a blank field returns to the default; a field that holds only commas, such as `, ,`, is refused on save with "allowedPeers must list 1 to 16 address ranges."
 Leave the field empty with a loopback address such as `127.0.0.1`; the two cannot be combined.
 [The configuration file](configuration.md#the-configuration-file) describes the `allowedPeers` field and its validation rules.

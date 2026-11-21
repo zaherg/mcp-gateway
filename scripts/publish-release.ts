@@ -250,6 +250,14 @@ const main = async (): Promise<void> => {
   const notes = join(root, '.cache', `release-notes-${tag}.md`);
   await mkdir(join(root, '.cache'), { recursive: true });
   await writeFile(notes, `${await releaseNotes()}\n`);
+  // Signing takes minutes; the files built and read since preflight must still be that commit's.
+  if (
+    (await checked(['git', 'status', '--porcelain'])).trim() ||
+    (await checked(['git', 'rev-parse', 'HEAD'])).trim() !== commit
+  )
+    throw new Error(
+      'The checkout changed during the build; it no longer matches the release commit.',
+    );
   stage('Publish the GitHub release');
   await publish(commit, notes);
   published = true;

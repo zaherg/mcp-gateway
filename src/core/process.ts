@@ -252,6 +252,8 @@ export class BackendProcesses implements ChildrenOwner {
       }
       const deadline = Date.now() + TERMINATION_GRACE_MS;
       let reported = false;
+      // One TERM starts the grace period; repeating it makes many backends force-quit.
+      let termSent = false;
       for (;;) {
         if (groupGone(pid)) {
           await exited;
@@ -263,8 +265,13 @@ export class BackendProcesses implements ChildrenOwner {
           return;
         }
         if (remember(state)) {
+          const graceful = Date.now() < deadline;
           try {
-            process.kill(-pid, Date.now() < deadline ? 'SIGTERM' : 'SIGKILL');
+            if (!graceful) process.kill(-pid, 'SIGKILL');
+            else if (!termSent) {
+              process.kill(-pid, 'SIGTERM');
+              termSent = true;
+            }
           } catch (error) {
             // ESRCH is rechecked, and EPERM never means successful termination.
             if ((error as NodeJS.ErrnoException).code !== 'ESRCH' && !reported) {

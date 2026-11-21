@@ -20,6 +20,7 @@ import {
   MAX_CONFIG_BYTES,
   parseConfigDocument,
   parseConfigTree,
+  SAFE_NAME,
 } from '@mcp-gateway/shared/config-document';
 import type {
   ConfigFile,
@@ -31,14 +32,13 @@ import type {
 } from '@mcp-gateway/shared/types';
 
 // Re-exported for existing main-process callers; the renderer imports the shared definition.
-export { MAX_CONFIG_BYTES };
+export { MAX_CONFIG_BYTES, SAFE_NAME };
 
 const missing = (error: unknown) => (error as NodeJS.ErrnoException)?.code === 'ENOENT';
 
 const AMBIGUOUS_CONFIG = 'Both configuration files exist; keep only one and reopen the app.';
 // A lock with no readable pid is only treated as abandoned after this long.
 const STALE_UNOWNED_LOCK_MS = 10_000;
-export const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const StringMap = ownRecord(z.string());
 const StdioSchema = z.strictObject({
   command: z.string(),
@@ -209,7 +209,8 @@ const assertToken = (token: string, message: string): void => {
 
 const expand = (value: string, environment: NodeJS.ProcessEnv): string => {
   const result = value.replace(new RegExp(REFERENCE, 'g'), (_match, name: string) => {
-    const replacement = environment[name];
+    // Only an own entry: `${constructor}` must not resolve to an inherited Object member.
+    const replacement = Object.hasOwn(environment, name) ? environment[name] : undefined;
     if (replacement === undefined) invalid('A referenced environment variable is not defined.');
     return replacement;
   });
@@ -531,6 +532,13 @@ const guarded = async <A>(work: () => Promise<A>): Promise<A> => {
 };
 
 const safeFile = (stat: Stats): void => {
+  // replace() publishes a new file with link() then unlink(); a crash between them leaves
+  // the hidden temporary name as a second link.
+  if (stat.isFile() && stat.nlink === 2)
+    throw failure(
+      'UnsafeFile',
+      'The configuration file has a second hard link. If the app stopped while creating it, delete the hidden .mcp.json.<id>.tmp or .mcp.jsonc.<id>.tmp file in the same folder, then reopen the app.',
+    );
   if (
     !stat.isFile() ||
     stat.nlink !== 1 ||

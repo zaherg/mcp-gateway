@@ -282,6 +282,7 @@ export class AppService {
           throw new RequestError('Quit cleanup has started. The keys were not moved.');
         const { gateway, servers, expectedRevision } = decode(MigrateRequest, input);
         if (
+          (!gateway && servers.length === 0) ||
           !/^[a-f0-9]{64}$/.test(expectedRevision) ||
           servers.some((name) => !SAFE_NAME.test(name)) ||
           new Set(servers).size !== servers.length

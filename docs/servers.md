@@ -4,6 +4,7 @@
 
 A server is either a local executable that speaks MCP over stdio, or an existing MCP endpoint reached over Streamable HTTP.
 Both kinds produce one endpoint per server, such as `/mcp/bear`.
+When the gateway stops a local command, for example on **Stop gateway**, a restart or quit, it sends `SIGTERM` to the command's process group once, then `SIGKILL` if the group is still running 5 seconds later.
 
 The server dialog asks for:
 
@@ -17,6 +18,7 @@ The server dialog asks for:
 
 The JSON fields use the same editor as **Authoritative configuration**: they color the JSON, match brackets and keep their own undo history.
 The dialog checks them when you choose **Apply to draft**.
+It also refuses a server name that breaks the **Server name** rule with "The server fields are invalid." and leaves the draft unchanged.
 
 **Cancel** closes the dialog without changing the draft.
 **Apply to draft** keeps the edit in the draft; **Save changes** in the draft bar applies it.

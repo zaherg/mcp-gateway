@@ -59,6 +59,8 @@ export class McpGatewayController implements GatewayController {
   private document: ConfigDocument = { text: '', revision: '' };
   private config: GatewayConfig | undefined;
   private ingress: GatewayIngress | undefined;
+  // The lifetime the running listener was started with; Stop aborts it.
+  private ingressSignal: AbortSignal | undefined;
   private closingIngress: GatewayIngress | undefined;
   private configError: VisibleError | null = null;
   private operationalError: VisibleError | null = null;
@@ -300,6 +302,7 @@ export class McpGatewayController implements GatewayController {
       this.ensureOpen();
       this.requireWatchHealthy();
       this.ingress = ingress;
+      this.ingressSignal = control.signal;
       this.closingIngress = undefined;
       this.cancelInterfaceRecovery();
       this.operationalError = null;
@@ -313,6 +316,7 @@ export class McpGatewayController implements GatewayController {
   private async stopOwned(): Promise<void> {
     const ingress = this.ingress ?? this.closingIngress;
     this.ingress = undefined;
+    this.ingressSignal = undefined;
     if (!ingress) return;
     // Stopped/config snapshots must not expose old routes, but a deadline does
     // not release ownership. No replacement can start until this close succeeds.
@@ -345,12 +349,12 @@ export class McpGatewayController implements GatewayController {
 
   // The listener closes when its address disappears (fail closed). The user
   // still wants it running, so reopen it once the configured address returns.
-  // A Stop or close aborts the captured lifetime and ends the wait.
+  // A Stop or close aborts the listener's lifetime and ends the wait. A fresh lifetime
+  // must not be taken here: it would outlive a Stop that is still waiting in the queue.
   private awaitInterface = (lost: GatewayIngress): void => {
-    if (this.closed || this.closing || (this.ingress !== lost && this.closingIngress !== lost))
-      return;
+    const signal = this.ingressSignal;
+    if (this.closed || this.closing || this.ingress !== lost || !signal || signal.aborted) return;
     this.cancelInterfaceRecovery();
-    const signal = this.validationLifetime();
     const timer = setInterval(() => {
       if (signal.aborted) {
         this.cancelInterfaceRecovery();
@@ -451,6 +455,9 @@ export class McpGatewayController implements GatewayController {
     return this.serial(async () => {
       const control = this.control(signal);
       this.ensureOpen();
+      // As for a save, a Stop that arrived while this move waited for the queue cancels it.
+      if (signal.aborted)
+        throw failure('Cancelled', 'The key move was cancelled because the gateway stopped.');
       const keys = this.keys;
       const config = this.config;
       if (!keys || !config)

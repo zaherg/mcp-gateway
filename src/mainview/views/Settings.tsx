@@ -17,13 +17,17 @@ const NETWORK_LABELS: Record<NetworkKind, MessageKey> = {
   tunnel: 'settings.networkKind.tunnel',
 };
 
-/** Comma-separated field text as a list of ranges; an empty field removes the property. */
+/**
+ * Comma-separated field text as a list of ranges. A blank field removes the property; text
+ * with no ranges, such as ", ,", stays an empty list so saving reports it instead of
+ * silently dropping the restriction.
+ */
 const peerList = (text: string): string[] | undefined => {
   const entries = text
     .split(',')
     .map((entry) => entry.trim())
     .filter(Boolean);
-  return entries.length > 0 ? entries : undefined;
+  return text.trim() ? entries : undefined;
 };
 
 interface Settings {

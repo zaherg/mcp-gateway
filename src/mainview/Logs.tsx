@@ -73,6 +73,8 @@ export const Logs = ({ client, servers }: Logs) => {
     setEntries([]);
     setError(null);
     const poll = async () => {
+      // A failed read retries at the normal pace instead of stopping the view.
+      let delay = 2000;
       try {
         const result = await logRequest(client.readLogs({ after: cursor.current }));
         if (cancelled || generation !== requestGeneration.current) return;
@@ -100,9 +102,11 @@ export const Logs = ({ client, servers }: Logs) => {
             return all.slice(start);
           });
         setError(null);
-        timer = setTimeout(poll, page.hasMore ? 0 : 2000);
+        if (page.hasMore) delay = 0;
       } catch {
         if (!cancelled && generation === requestGeneration.current) setError(t('logs.readFailed'));
+      } finally {
+        if (!cancelled && generation === requestGeneration.current) timer = setTimeout(poll, delay);
       }
     };
     if (!clearing) void poll();

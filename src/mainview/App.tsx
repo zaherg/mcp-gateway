@@ -27,7 +27,7 @@ import { RawConfig } from '@mcp-gateway/mainview/views/RawConfig';
 import { Settings } from '@mcp-gateway/mainview/views/Settings';
 import { Updates } from '@mcp-gateway/mainview/views/Updates';
 import { changelogSection } from '@mcp-gateway/shared/changelog';
-import { editConfigDocument } from '@mcp-gateway/shared/config-document';
+import { editConfigDocument, SAFE_NAME } from '@mcp-gateway/shared/config-document';
 import type { LanguagePreference } from '@mcp-gateway/shared/i18n';
 import type { AppClient, AppSnapshot, SocialLinkTarget } from '@mcp-gateway/shared/rpc';
 import { needsLoginRetry } from '@mcp-gateway/shared/rpc';
@@ -365,6 +365,12 @@ export const App = ({ client }: App) => {
   const applyServer = (event: FormEvent) => {
     event.preventDefault();
     if (!editor || !config || configurationLocked) return;
+    // Saving would reject the name anyway; "__proto__" would also replace the draft's prototype
+    // below instead of adding a server, silently dropping a renamed one.
+    if (!SAFE_NAME.test(editor.name)) {
+      setEditorError(t('app.serverFieldsInvalid'));
+      return;
+    }
     if (editor.name !== editor.original && Object.hasOwn(config.mcpServers, editor.name)) {
       setEditorError(t('app.serverExists'));
       return;

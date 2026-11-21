@@ -185,19 +185,11 @@ export class AppUpdater implements UpdateRuntime {
 
   async setAutomatic(enabled: boolean): Promise<UpdateStatus> {
     this.assertAvailable();
-    const previous = this.value.automaticUpdates;
-    try {
-      await writePreference(this.options.dataDirectory, enabled);
-      this.set({ automaticUpdates: enabled });
-      if (this.value.error === PREFERENCE_ERROR)
-        this.set({ error: null, phase: this.value.phase === 'error' ? 'idle' : this.value.phase });
-    } catch {
-      this.set({
-        automaticUpdates: previous,
-        phase: this.value.phase === 'idle' ? 'error' : this.value.phase,
-        error: 'The update preference could not be saved. The previous setting remains active.',
-      });
-    }
+    // A failed write reaches the caller as a failed request; the previous setting stays active.
+    await writePreference(this.options.dataDirectory, enabled);
+    this.set({ automaticUpdates: enabled });
+    if (this.value.error === PREFERENCE_ERROR)
+      this.set({ error: null, phase: this.value.phase === 'error' ? 'idle' : this.value.phase });
     if (this.value.automaticUpdates) this.scheduleChecks();
     else this.clearTimers();
     this.publish();
