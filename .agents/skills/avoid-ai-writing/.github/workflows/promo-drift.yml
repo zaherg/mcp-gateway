@@ -1,0 +1,119 @@
+name: promo-drift
+
+# Every release moves the pattern count and the word-table count. The promo
+# surfaces that quote those numbers live in other repos and do not change on
+# that day, so nothing over there has a commit to hook onto — the drift is
+# created here and can only be caught from here.
+#
+# Runs on release, weekly as a backstop, and on demand. Opens (or updates) a
+# single issue when a surface has gone stale.
+#
+# Every tracked surface is a public repo, so this needs no secret beyond the
+# job's own GITHUB_TOKEN. conorbronsdon.com/builds floors both counts instead
+# of quoting them, which is why it is not tracked and no PAT is required here.
+
+on:
+  release:
+    types: [published]
+  schedule:
+    # Mondays 15:00 UTC. Weekly is enough: releases fire the check directly,
+    # and this only has to catch a release that was cut some other way.
+    - cron: "0 15 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: promo-drift
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # .ssot.yaml names the surfaces as repos; each resolves to ../<name>
+      # beside this checkout, so the surfaces are cloned as siblings.
+      # Depth 1: only the current content of each file matters.
+      - name: Clone the public promo surfaces
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          cd "$GITHUB_WORKSPACE/.."
+          for repo in agent-skills ai-tools-for-creators; do
+            git clone --depth 1 --quiet \
+              "https://github.com/$OWNER/$repo.git" "$repo"
+          done
+
+      - name: Get ssot-check
+        run: |
+          cd "$GITHUB_WORKSPACE/.."
+          git clone --depth 1 --quiet https://github.com/conorbronsdon/ssot-check.git ssot-check
+          # Use the same reviewed revision as the repository-local SSOT pilot.
+          git -C ssot-check fetch --depth 1 origin 594269d32d4951d417269deaebcd3d621a8a766e
+          git -C ssot-check checkout --detach FETCH_HEAD
+
+      - name: Check the promo surfaces
+        id: check
+        run: |
+          set -o pipefail
+          # `check` exits 1 on drift and on unreadable copies alike, so its exit
+          # code is deliberately ignored: the report script re-reads the JSON
+          # and decides what is actionable (and exits 2 on unusable output).
+          python3 ../ssot-check/ssot_check.py check --json > result.json || true
+          # The report exits 0 (no drift), 1 (drift) or 2 (it could not read
+          # the checker's output). Only 1 opens the drift issue; anything else
+          # is a broken run and fails the job instead of claiming drift.
+          rc=0
+          python3 scripts/promo-drift-report.py < result.json > report.md || rc=$?
+          case "$rc" in
+            0) echo "drift=false" >> "$GITHUB_OUTPUT" ;;
+            1) echo "drift=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::promo-drift-report.py exit $rc: the checker output was unreadable, not drift"
+               cat report.md
+               echo "--- checker output (first 4 KB) ---"
+               head -c 4096 result.json
+               exit 1 ;;
+          esac
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
+          cat report.md
+
+      - name: Open or update the drift issue
+        if: steps.check.outputs.drift == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -o pipefail
+          title="Promo surfaces have drifted from the canonical counts"
+          {
+            echo "The counts in this repo's README moved and one or more"
+            echo "surfaces elsewhere still quote the old ones."
+            echo
+            cat report.md
+            echo
+            echo "Canonical is this repo. Fix the surfaces, not the README —"
+            echo "the README is already asserted against references/patterns.md by"
+            echo "\`scripts/check-pattern-count.sh\`."
+            echo
+            echo "_Opened by [promo-drift](.github/workflows/promo-drift.yml)._"
+          } > issue.md
+
+          # Loose search, then exact title match, so a differently-worded issue
+          # never gets commented on by mistake.
+          # gh's --jq takes only an expression (no --arg), so the exact-title
+          # filter runs in standalone jq, which the runner image ships.
+          existing="$(gh issue list --state open --search "in:title drifted from the canonical counts" \
+            --json number,title \
+            | jq -r --arg t "$title" 'map(select(.title == $t)) | .[0].number // empty')"
+
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file issue.md
+          else
+            gh issue create --title "$title" --body-file issue.md
+          fi

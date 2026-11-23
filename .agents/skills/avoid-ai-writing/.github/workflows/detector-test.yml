@@ -1,0 +1,94 @@
+name: detector
+
+on:
+  push:
+    paths:
+      - "detector/**"
+      - "scripts/**"
+      - "vale/**"
+      - "examples/**"
+      - "evals/**"
+      - "package.json"
+      - ".github/workflows/detector-test.yml"
+      - "README.md"
+      - "SKILL.md"
+      - "SKILL.full.md"
+      - "references/**"
+      - "dist/**"
+      - "CHANGELOG.md"
+      - "CONTRIBUTING.md"
+      - "PROOF.md"
+      - 'bin/**'
+      - 'action.yml'
+      - '.pre-commit-hooks.yaml'
+  # This job is a required-check candidate, so it must report on every PR.
+  # Workflow-level path filters would leave unrelated PRs pending forever.
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Pull requests share a stable group so newer commits cancel stale checks.
+  # Pushes use a unique group and always run to completion.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  node-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # package.json declares "engines": { "node": ">=18" }.  Exercise the
+    # documented minimum and every maintained release line, so a regression
+    # that only shows up on older Node cannot ship unnoticed.  fail-fast is
+    # off so that one red version still leaves a report for the others.
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["18", "20", "22", "24"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node-version }}
+      # Pinned Vale for scripts/vale-cases.test.js. VALE_REQUIRED on the test
+      # step makes the cases fail rather than skip if Vale is missing. Bump
+      # VALE_VERSION together with vale/fixtures/cases.json, and take the
+      # SHA-256 of the Linux tarball from the release.
+      - name: Install Vale
+        env:
+          VALE_VERSION: 3.26.0
+          VALE_SHA256: 22aa69a556558e4a9dfc63c17030777383d8d3c48dcdfad655fa98e839d666ed
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/vale.tar.gz" "https://github.com/vale-cli/vale/releases/download/v${VALE_VERSION}/vale_${VALE_VERSION}_Linux_64-bit.tar.gz"
+          echo "${VALE_SHA256}  $RUNNER_TEMP/vale.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/vale.tar.gz" -C "$RUNNER_TEMP" vale
+          echo "VALE_BIN=$RUNNER_TEMP/vale" >> "$GITHUB_ENV"
+      - run: npm test
+        env:
+          VALE_REQUIRED: "1"
+      # Release runs trigger only on package.json changes, so a release PR that
+      # bumps CHANGELOG.md without package.json would otherwise merge green and
+      # never release. Enforce the agreement on every PR instead.
+      - run: node scripts/verify-release-versions.js
+      # Scores this repo's own docs with this repo's own detector. A document
+      # that drifts past its budget in scripts/self-scan.js fails here. PROOF.md
+      # explains what the numbers mean and what they do not claim.
+      - run: npm run self-scan:check
+
+  # The main ruleset requires the exact `test` check. Matrix jobs report
+  # versioned names, so this job restores that check and requires every Node
+  # run to pass. `always()` prevents a failed dependency from skipping a
+  # required check (GitHub treats skipped checks as successful).
+  test:
+    needs: node-tests
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Require every Node run to pass
+        env:
+          NODE_TESTS_RESULT: ${{ needs.node-tests.result }}
+        run: test "$NODE_TESTS_RESULT" = success

@@ -1,4 +1,6 @@
-!.agents/skills
+!.agents/
+.agents/*
+!.agents/skills/
 node_modules/
 .cache/
 .hutch/
