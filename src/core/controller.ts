@@ -109,8 +109,7 @@ export class McpGatewayController implements GatewayController {
     port: number,
   ): Promise<McpGatewayController> {
     const controller = new McpGatewayController(configPath, preventIdleSleep, keys);
-    await controller.serial(async () => {
-      const signal = controller.validationLifetime();
+    await controller.cancellable(controller.validationLifetime(), async (control) => {
       try {
         controller.document = await controller.store.initialize(async () => {
           const token = randomBytes(32).toString('hex');
@@ -127,7 +126,7 @@ export class McpGatewayController implements GatewayController {
           }
         });
         controller.config = await controller.parse(controller.document.text);
-        await controller.validate(controller.config, controller.control(signal));
+        await controller.validate(controller.config, control);
         controller.event('info', 'Configuration loaded.');
       } catch (error) {
         controller.logs.append({ server: null, level: 'error', source: 'controller' }, [error]);
@@ -139,7 +138,7 @@ export class McpGatewayController implements GatewayController {
       controller.observe();
       if (controller.config?.gateway.autoStart && !controller.configError) {
         try {
-          await controller.startOwned(controller.control(signal));
+          await controller.startOwned(control);
         } catch (error) {
           controller.operationalError = visible(error);
         }
@@ -244,11 +243,18 @@ export class McpGatewayController implements GatewayController {
     return operation?.signal ?? this.validationLifetime();
   }
 
-  private control(signal: AbortSignal): SelfProxyOptions {
-    return {
-      signal,
-      deadline: Date.now() + SELF_PROXY_DEADLINE_MS,
-    };
+  // Queued work runs under the lifetime captured when it was requested. A Stop requested
+  // after it aborts that lifetime, so the work refuses at dequeue, before any side effect.
+  // The deadline bounds validation, not time spent waiting for the queue.
+  private cancellable<A>(
+    signal: AbortSignal,
+    work: (control: SelfProxyOptions) => Promise<A>,
+  ): Promise<A> {
+    return this.serial(async () => {
+      if (signal.aborted)
+        throw failure('Cancelled', 'The request was cancelled because the gateway stopped.');
+      return work({ signal, deadline: Date.now() + SELF_PROXY_DEADLINE_MS });
+    });
   }
 
   private cancelValidation(): void {
@@ -333,10 +339,7 @@ export class McpGatewayController implements GatewayController {
   }
 
   start(operation?: GatewayOperation): Promise<GatewaySnapshot> {
-    const signal = this.operationSignal(operation);
-    return this.serial(async () => {
-      // The deadline bounds validation, not time spent waiting for the queue.
-      const control = this.control(signal);
+    return this.cancellable(this.operationSignal(operation), async (control) => {
       try {
         await this.startOwned(control);
         return this.snapshot();
@@ -366,9 +369,9 @@ export class McpGatewayController implements GatewayController {
         return;
       }
       this.cancelInterfaceRecovery();
-      void this.serial(async () => {
-        if (signal.aborted || this.ingress?.running) return;
-        await this.startOwned(this.control(signal));
+      void this.cancellable(signal, async (control) => {
+        if (this.ingress?.running) return;
+        await this.startOwned(control);
         this.event('info', 'The selected interface returned; the gateway listener restarted.');
       }).catch((error) => {
         if (!isSelfProxyCancelled(error)) this.report(visible(error));
@@ -394,9 +397,7 @@ export class McpGatewayController implements GatewayController {
   }
 
   restartServer(name: string, operation?: GatewayOperation): Promise<GatewaySnapshot> {
-    const signal = this.operationSignal(operation);
-    return this.serial(async () => {
-      const control = this.control(signal);
+    return this.cancellable(this.operationSignal(operation), async (control) => {
       this.ensureOpen();
       if (!this.ingress?.running)
         throw failure('BackendFailure', 'Start the gateway before restarting a server.');
@@ -430,9 +431,7 @@ export class McpGatewayController implements GatewayController {
     expectedRevision: string,
     operation?: GatewayOperation,
   ): Promise<GatewaySnapshot> {
-    const signal = this.operationSignal(operation);
-    return this.serial(async () => {
-      const control = this.control(signal);
+    return this.cancellable(this.operationSignal(operation), async (control) => {
       this.ensureOpen();
       // No file exists yet; a failed save would replace the setup remedy with a generic error.
       if (this.configError?.code === 'KeySetupFailed') throw new GatewayError(this.configError);
@@ -451,13 +450,8 @@ export class McpGatewayController implements GatewayController {
     expectedRevision: string,
     operation?: GatewayOperation,
   ): Promise<GatewaySnapshot> {
-    const signal = this.operationSignal(operation);
-    return this.serial(async () => {
-      const control = this.control(signal);
+    return this.cancellable(this.operationSignal(operation), async (control) => {
       this.ensureOpen();
-      // As for a save, a Stop that arrived while this move waited for the queue cancels it.
-      if (signal.aborted)
-        throw failure('Cancelled', 'The key move was cancelled because the gateway stopped.');
       const keys = this.keys;
       const config = this.config;
       if (!keys || !config)
@@ -585,7 +579,7 @@ export class McpGatewayController implements GatewayController {
         if (this.watchTimer) clearTimeout(this.watchTimer);
         this.watchTimer = setTimeout(() => {
           this.watchTimer = undefined;
-          void this.serial(async () => {
+          void this.cancellable(signal, async (control) => {
             if (this.closed || this.closing || !this.watchHealthy) return;
             try {
               const current = await lstat(dirname(this.store.path));
@@ -602,7 +596,7 @@ export class McpGatewayController implements GatewayController {
               this.failWatcher();
               return;
             }
-            await this.refresh(this.control(signal));
+            await this.refresh(control);
           }).catch((error) => {
             if (!isSelfProxyCancelled(error)) this.report(visible(error));
           });
