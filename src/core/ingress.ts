@@ -216,20 +216,37 @@ export class GatewayIngress {
     if (this.closed) throw failure('Closed', 'The listener is closed.');
     this.config = config;
     this.syncSleepAssertion();
-    await Promise.all([...this.closingMounts.keys()].map((name) => this.remove(name)));
     for (const name of this.backendErrors.keys()) {
       if (!Object.hasOwn(config.mcpServers, name)) this.backendErrors.delete(name);
     }
+    const wanted = (name: string) =>
+      Object.hasOwn(config.mcpServers, name) && !config.mcpServers[name]?.disabled;
     // Detach every changed endpoint before awaiting any close, so a new key never
     // reaches an old mount while another one is still shutting down.
     const stale = [...this.endpoints].filter(([name, endpoint]) => {
       const next = Object.hasOwn(config.mcpServers, name) ? config.mcpServers[name] : undefined;
       return !next || next.disabled || endpoint.fingerprint !== serverFingerprint(next);
     });
-    await Promise.all(stale.map(([name]) => this.remove(name)));
+    const closing = new Map(stale.map(([name]) => [name, this.remove(name)]));
+    for (const name of this.closingMounts.keys())
+      if (!closing.has(name)) closing.set(name, this.remove(name));
+    // Only a name that mounts again waits for its old cleanup. Another server's stuck
+    // cleanup must not delay or fail this change; it is reported, and Stop still waits for it.
+    const blocking: Promise<void>[] = [];
+    for (const [name, closed] of closing) {
+      const failed = (error: unknown) => {
+        const visibleError = visible(error);
+        if (wanted(name)) this.backendErrors.set(name, visibleError);
+        this.report(visibleError);
+      };
+      if (wanted(name)) blocking.push(closed.catch(failed));
+      else void closed.catch(failed);
+    }
+    await Promise.all(blocking);
     if (this.closed) throw failure('Closed', 'The listener is closed.');
     for (const [name, server] of Object.entries(config.mcpServers)) {
-      if (server.disabled || this.endpoints.has(name)) continue;
+      // A name whose old mount has not closed stays unmounted and shows that error.
+      if (server.disabled || this.endpoints.has(name) || this.closingMounts.has(name)) continue;
       this.backendErrors.delete(name);
       const mount = createMount(
         name,

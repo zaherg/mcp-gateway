@@ -38,6 +38,10 @@ Turn on **Allow session-based clients** for that server and try again; see [Prot
 A red light and the word **Error** mean the gateway could not mount the server.
 The card shows the error message; open **Logs** and read the last entries for that server.
 
+If the message says that backend cleanup did not complete, a process from that server's previous run is still running.
+The other servers keep working, but **Stop gateway** and quit fail until that process exits.
+Quit the process, for example in Activity Monitor, then restart the server or save again.
+
 **Mounted** with failing tools also points at the backend; check **Logs** for its output.
 
 ## A command is not found
