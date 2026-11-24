@@ -214,6 +214,7 @@ export class GatewayIngress {
   async reconcile(config: GatewayConfig, control?: SelfProxyOptions): Promise<void> {
     await rejectSelfProxy(config, control);
     if (this.closed) throw failure('Closed', 'The listener is closed.');
+    const previous = this.config;
     this.config = config;
     this.syncSleepAssertion();
     for (const name of this.backendErrors.keys()) {
@@ -230,44 +231,58 @@ export class GatewayIngress {
     const closing = new Map(stale.map(([name]) => [name, this.remove(name)]));
     for (const name of this.closingMounts.keys())
       if (!closing.has(name)) closing.set(name, this.remove(name));
-    // Only a name that mounts again waits for its old cleanup. Another server's stuck
-    // cleanup must not delay or fail this change; it is reported, and Stop still waits for it.
-    const blocking: Promise<void>[] = [];
     for (const [name, closed] of closing) {
-      const failed = (error: unknown) => {
-        const visibleError = visible(error);
-        if (wanted(name)) this.backendErrors.set(name, visibleError);
-        this.report(visibleError);
-      };
-      if (wanted(name)) blocking.push(closed.catch(failed));
-      else void closed.catch(failed);
-    }
-    await Promise.all(blocking);
-    if (this.closed) throw failure('Closed', 'The listener is closed.');
-    for (const [name, server] of Object.entries(config.mcpServers)) {
-      // A name whose old mount has not closed stays unmounted and shows that error.
-      if (server.disabled || this.endpoints.has(name) || this.closingMounts.has(name)) continue;
-      this.backendErrors.delete(name);
-      const mount = createMount(
+      closing.set(
         name,
-        server,
-        (message) => {
-          const error = visible(failure('BackendFailure', message));
-          this.backendErrors.set(name, error);
-          this.report(error);
-        },
-        this.admission,
-        this.work,
-        this.sessionAdmission,
-        this.logs,
+        closed.catch((error) => {
+          const visibleError = visible(error);
+          if (wanted(name)) this.backendErrors.set(name, visibleError);
+          this.report(visibleError);
+        }),
       );
-      this.endpoints.set(name, {
-        mount,
-        fingerprint: serverFingerprint(server),
-        responses: new Set(),
-        sessions: server.legacyProtocol === true,
-      });
     }
+    await Promise.all(
+      Object.entries(config.mcpServers).map(async ([name, server]) => {
+        if (server.disabled || this.endpoints.has(name)) return;
+        const old = Object.hasOwn(previous.mcpServers, name)
+          ? previous.mcpServers[name]
+          : undefined;
+        if (closing.has(name)) {
+          // An unchanged name's older cleanup is still owned, but is not this save's work.
+          if (
+            !stale.some(([detached]) => detached === name) &&
+            old &&
+            !old.disabled &&
+            serverFingerprint(old) === serverFingerprint(server)
+          )
+            return;
+          await closing.get(name);
+        }
+        if (this.closed) throw failure('Closed', 'The listener is closed.');
+        if (this.endpoints.has(name) || this.closingMounts.has(name)) return;
+        this.backendErrors.delete(name);
+        const mount = createMount(
+          name,
+          server,
+          (message) => {
+            const error = visible(failure('BackendFailure', message));
+            this.backendErrors.set(name, error);
+            this.report(error);
+          },
+          this.admission,
+          this.work,
+          this.sessionAdmission,
+          this.logs,
+        );
+        this.endpoints.set(name, {
+          mount,
+          fingerprint: serverFingerprint(server),
+          responses: new Set(),
+          sessions: server.legacyProtocol === true,
+        });
+      }),
+    );
+    if (this.closed) throw failure('Closed', 'The listener is closed.');
   }
 
   async restart(name: string, control?: SelfProxyOptions): Promise<void> {

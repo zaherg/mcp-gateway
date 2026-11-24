@@ -39,8 +39,9 @@ A red light and the word **Error** mean the gateway could not mount the server.
 The card shows the error message; open **Logs** and read the last entries for that server.
 
 If the message says that backend cleanup did not complete, a process from that server's previous run is still running.
-The other servers keep working, but **Stop gateway** and quit fail until that process exits.
-Quit the process, for example in Activity Monitor, then restart the server or save again.
+Other servers keep working and accept configuration changes, but **Stop gateway** and quit fail until that process exits.
+Quit the process, for example in Activity Monitor, then use the restart button on that server's card.
+Cleanup completion alone does not remount the server; a later configuration change may also recover it.
 
 **Mounted** with failing tools also points at the backend; check **Logs** for its output.
 
