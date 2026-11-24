@@ -193,6 +193,9 @@ const groupGone = (pgid: number): boolean => {
   }
 };
 
+// macOS assigns process IDs in increasing order and reuses one only after the counter
+// wraps at 99,999, so a group present this soon after its leader exited is still ours.
+const EXIT_TRUST_MS = 1_000;
 const TERMINATION_GRACE_MS = 5_000;
 const TERMINATION_POLL_MS = 50;
 // Unconfirmed groups are only inspected, so a fast poll would waste CPU forever.
@@ -221,19 +224,27 @@ export class BackendProcesses implements ChildrenOwner {
   own(child: ChildProcess): () => Promise<void> {
     const pid = child.pid;
     const running = () => child.exitCode === null && child.signalCode === null;
+    // Set only when this owner saw the exit happen.
+    let exitedAt: number | undefined;
     const exited = new Promise<void>((resolve) => {
       if (!running()) resolve();
       else {
-        child.once('exit', resolve);
+        child.once('exit', () => {
+          exitedAt = Date.now();
+          resolve();
+        });
         child.once('close', resolve);
       }
     });
     let known = new Map<number, string>();
     const remember = (state: BackendGroup): boolean => {
       if (state.status !== 'present') return false;
+      // A helper started after registration is unknown, so the first inspection after the
+      // leader's exit records it; later inspections then trust it through `known`.
       const trusted = running()
         ? state.members.some((member) => member.pid === pid)
-        : state.members.some((member) => known.get(member.pid) === member.start);
+        : (exitedAt !== undefined && Date.now() - exitedAt < EXIT_TRUST_MS) ||
+          state.members.some((member) => known.get(member.pid) === member.start);
       if (trusted) known = new Map(state.members.map(({ pid, start }) => [pid, start]));
       return trusted;
     };

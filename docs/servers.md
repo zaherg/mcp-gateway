@@ -5,6 +5,7 @@
 A server is either a local executable that speaks MCP over stdio, or an existing MCP endpoint reached over Streamable HTTP.
 Both kinds produce one endpoint per server, such as `/mcp/bear`.
 When the gateway stops a local command, for example on **Stop gateway**, a restart or quit, it sends `SIGTERM` to the command's process group once, then `SIGKILL` if the group is still running 5 seconds later.
+The same applies to programs the command started that keep running after the command exits.
 
 The server dialog asks for:
 
