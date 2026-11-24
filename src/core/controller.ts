@@ -517,9 +517,11 @@ export class McpGatewayController implements GatewayController {
         await this.startOwned(control);
       } else await this.ingress?.reconcile(next, control);
     } catch (error) {
+      // The document is already accepted, so a failure to apply it is the gateway's error,
+      // not the caller's: a save must not report a file it wrote as unsaved.
       this.report(visible(error));
-      await this.stopOwned();
-      throw error;
+      // stopOwned reports its own failure and keeps the listener owned for the next Stop.
+      await this.stopOwned().catch(() => undefined);
     }
   }
 
