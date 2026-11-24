@@ -71,9 +71,13 @@ Run the available checks:
 ```sh
 bun run typecheck
 bun run lint
+bun --no-env-file test tests/discovery-cache.test.ts
 ```
 
-This repository has no unit, component, browser or packaged-acceptance test suites.
+The discovery-cache regression check uses synthetic loopback HTTP servers and the real gateway ingress.
+It covers retry after connection failure, interrupted response bodies and HTTP 503; positive and negative caching; malformed JSON and invalid UTF-8; and the 64 KiB discovery-response boundary, for JSON and SSE.
+It uses no real configuration, Keychain items or external services.
+This is the approved, narrowly scoped exception to the project's no-tests policy; broader unit, component, browser and packaged-acceptance suites remain absent.
 
 `.github/workflows/lint.yml` runs on branch pushes, pull requests, manual runs and calls from the release workflow.
 It uses Actionlint 1.7.12, ShellCheck 0.11.0 and Typos 1.52.0, each pinned by checksum.
