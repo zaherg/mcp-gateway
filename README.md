@@ -4,7 +4,7 @@ MCP Gateway is a macOS menu-bar app.
 It shares local stdio MCP servers and remote Streamable HTTP MCP servers with other devices on a trusted LAN.
 
 > [!NOTE]
-> Built with AI models (AI Assistant).
+> There will be no more changes for the next few weeks/months as I have everything I need from the project. So unless there is something broken I don't think anything will change any soon.
 
 ## Platform support
 
