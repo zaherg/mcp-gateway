@@ -7,6 +7,10 @@ Release dates are the dates each section was stamped for release.
 
 ## [Unreleased]
 
+Changes after `0.9.0`.
+
+## [0.9.0] - 2026-11-25
+
 ### Added
 
 - Test a server's connection from its card
@@ -221,7 +225,8 @@ The first release.
 - In-memory logs, launch at login, and an optional gateway start when the app opens.
 - Experimental Linux and Windows packaging.
 
-[Unreleased]: https://github.com/zaherg/mcp-gateway/compare/0.8.3...HEAD
+[Unreleased]: https://github.com/zaherg/mcp-gateway/compare/0.9.0...HEAD
+[0.9.0]: https://github.com/zaherg/mcp-gateway/compare/0.8.3...0.9.0
 [0.8.3]: https://github.com/zaherg/mcp-gateway/compare/0.8.2...0.8.3
 [0.8.2]: https://github.com/zaherg/mcp-gateway/compare/0.8.0...0.8.2
 [0.8.0]: https://github.com/zaherg/mcp-gateway/compare/0.7.0...0.8.0
