@@ -7,7 +7,32 @@ Release dates are the dates each section was stamped for release.
 
 ## [Unreleased]
 
-Changes after `0.8.3`.
+### Added
+
+- Test a server's connection from its card
+- Add **Keep the Mac awake while the gateway runs** to Settings
+- Move existing keys into the macOS Keychain with **Move keys to Keychain** in Settings, without changing the keys that clients use
+- Store the global bearer token in the macOS Keychain on a fresh install
+
+### Changed
+
+- Update libraries
+- Earlier releases reject a configuration that contains `tokenRef` or `keepAwake`
+
+### Fixed
+
+- Retry an HTTP server's protocol check after an interrupted reply, instead of refusing its clients with HTTP 400 for a minute
+- Free a call slot after a failed request, so failures can no longer use up all 16 slots and leave every call refused with HTTP 429
+- Send a stopping server one `SIGTERM` and wait 5 seconds before `SIGKILL`, so wrappers such as `docker run -i` can shut down cleanly
+- Stop the helper processes that a server leaves when it exits by itself, so **Stop gateway** and quitting the app no longer fail
+- Keep one server that does not stop from delaying or failing changes to other servers, and from stopping the gateway
+- Keep the gateway stopped after **Stop gateway**, even if its network interface goes away and comes back during the stop
+- Report a written configuration as saved even when the gateway cannot apply it, for example because the port is in use
+- Refuse an **Allowed client ranges** value that contains only commas, instead of removing the restriction without notice
+- Check server names in the server dialog, so an invalid name no longer removes a server from the draft
+- Remove the whole line when a form edit deletes a value from the configuration file, instead of leaving it blank
+- Show configuration editor errors in a red that meets WCAG AA contrast
+- Keep **Logs** updating after a failed read, without reopening the tab
 
 ## [0.8.3] - 2026-11-16
 
