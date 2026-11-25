@@ -23,9 +23,7 @@ const withDeadline = <A>(work: () => Promise<A>, error: () => Error): Promise<A>
  * account is the reference ID. Errors are fixed text: never the key, the ID or the system message.
  */
 export const openKeychain = (identifier: string): KeyStore => {
-  const test = identifier === TEST_IDENTIFIER;
-  const service = test ? 'MCP Gateway APP Test' : 'MCP Gateway APP';
-  const legacyService = test ? 'MCP Gateway Test' : 'MCP Gateway';
+  const service = identifier === TEST_IDENTIFIER ? 'MCP Gateway APP Test' : 'MCP Gateway APP';
   const unreadable = () => failure('KeyUnavailable', UNREADABLE);
   const unwritable = () => failure('ConfigIO', UNWRITABLE);
   return {
@@ -33,11 +31,7 @@ export const openKeychain = (identifier: string): KeyStore => {
       withDeadline(async () => {
         const keys = new Map<string, string>();
         for (const ref of refs) {
-          // Existing references keep working under their old service. Never retry an access error.
-          const value = await Bun.secrets
-            .get({ service, name: ref })
-            .then((key) => key ?? Bun.secrets.get({ service: legacyService, name: ref }))
-            .catch(() => null);
+          const value = await Bun.secrets.get({ service, name: ref }).catch(() => null);
           if (!value) throw unreadable();
           keys.set(ref, value);
         }
