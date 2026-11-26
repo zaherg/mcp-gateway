@@ -20,7 +20,137 @@ export const configFormat = (path: string): ConfigFormat =>
 export const MAX_CONFIG_BYTES = 1024 * 1024;
 export const CONFIG_TOO_LARGE = 'Configuration exceeds the size limit.';
 /** A server name is one URL path segment; the renderer checks it before editing a draft. */
-export const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+export const SAFE_NAME =
+  /^(?!(?:constructor|toString|toLocaleString|valueOf|hasOwnProperty|isPrototypeOf|propertyIsEnumerable|__proto__|__defineGetter__|__defineSetter__|__lookupGetter__|__lookupSetter__)$)[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
+export const SENSITIVE_ENV_KEYS = new Set([
+  'PATH',
+  'HOME',
+  'PYTHONSTARTUP',
+  'PYTHONPATH',
+  'NODE_EXTRA_CA_CERTS',
+  'GIT_SSH_COMMAND',
+  'BASH_ENV',
+  'ZDOTDIR',
+]);
+
+export const sensitiveEnvOverrides = (
+  env: Readonly<Record<string, string>> | undefined,
+): string[] => {
+  if (!env) return [];
+  return Object.keys(env).filter((key) => SENSITIVE_ENV_KEYS.has(key.toUpperCase()));
+};
+
+const ENV_REFERENCE_PATTERN = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/;
+const LITERAL_TOKEN_PATTERN = /^[\x21-\x7e]{32,512}$/;
+const SECRET_KEY_NAME_PATTERN = /(?:key|token|secret|password|authorization)/i;
+const WELL_KNOWN_SECRET_PREFIX_PATTERN =
+  /(?:^|[\s=:])(?:Bearer\s+\S{8,}|Basic\s+\S{8,}|sk-[A-Za-z0-9_-]{12,}|ghp_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,}|xox[baprs]-[A-Za-z0-9-]{12,}|AIza[A-Za-z0-9_-]{16,})/i;
+const URL_SECRET_QUERY_PATTERN =
+  /[?&](?:token|api_key|apikey|key|secret|access_token|password)=([^&#\s]+)/i;
+const ARG_SECRET_PATTERN =
+  /(?:^|--?)(?:[a-z0-9_-]*?(?:api[-_]?key|token|secret|password|authorization))(?:=([^\s]+))?$/i;
+
+const isUnexpandedLiteral = (value: unknown): value is string =>
+  typeof value === 'string' && value.trim().length > 0 && !ENV_REFERENCE_PATTERN.test(value);
+
+const isLiteralTokenSlot = (slot: unknown): boolean =>
+  isRecord(slot) &&
+  slot.tokenRef === undefined &&
+  isUnexpandedLiteral(slot.token) &&
+  LITERAL_TOKEN_PATTERN.test(slot.token);
+
+const hasLiteralSecretValue = (key: string, value: unknown): boolean => {
+  if (!isUnexpandedLiteral(value)) return false;
+  if (WELL_KNOWN_SECRET_PREFIX_PATTERN.test(value)) return true;
+  return SECRET_KEY_NAME_PATTERN.test(key) && value.trim().length >= 8;
+};
+
+const hasUrlLiteralSecret = (url: unknown): boolean => {
+  if (!isUnexpandedLiteral(url)) return false;
+  const match = URL_SECRET_QUERY_PATTERN.exec(url);
+  if (!match?.[1]) return false;
+  return !ENV_REFERENCE_PATTERN.test(match[1]);
+};
+
+const hasArgsLiteralSecret = (args: unknown): boolean => {
+  if (!Array.isArray(args)) return false;
+  for (let i = 0; i < args.length; i++) {
+    const item = args[i];
+    if (typeof item !== 'string') continue;
+    if (
+      isUnexpandedLiteral(item) &&
+      (WELL_KNOWN_SECRET_PREFIX_PATTERN.test(item) || hasUrlLiteralSecret(item))
+    ) {
+      return true;
+    }
+    const match = ARG_SECRET_PATTERN.exec(item);
+    if (match) {
+      if (match[1] !== undefined) {
+        if (isUnexpandedLiteral(match[1])) return true;
+      } else {
+        const next = args[i + 1];
+        if (isUnexpandedLiteral(next) && !next.startsWith('-')) return true;
+      }
+    }
+  }
+  return false;
+};
+
+/** Inspects unexpanded configuration text or a pre-parsed syntax tree for literal tokens and embedded secret values. */
+export const hasUnmigratedSecretLiterals = (
+  source: string | Node,
+  format: ConfigFormat = 'json',
+): { gateway: boolean; servers: string[]; warnings: string[] } => {
+  let root: Node | undefined;
+  if (typeof source === 'string') {
+    const parsed = parseConfigTree(source, format);
+    root = parsed.ok ? parsed.root : undefined;
+  } else {
+    root = source;
+  }
+  const value: unknown = root ? getNodeValue(root) : undefined;
+  if (!isRecord(value) || !isRecord(value.mcpServers))
+    return { gateway: false, servers: [], warnings: [] };
+  const gateway = isLiteralTokenSlot(value.gateway);
+  const servers: string[] = [];
+  const warnings: string[] = [];
+  if (gateway) warnings.push('gateway.token');
+  for (const [name, server] of Object.entries(value.mcpServers)) {
+    if (!isRecord(server)) continue;
+    let flagged = false;
+    if (isLiteralTokenSlot(server)) {
+      flagged = true;
+      warnings.push(`${name}.token`);
+    }
+    if (isRecord(server.env)) {
+      for (const [key, envVal] of Object.entries(server.env)) {
+        if (hasLiteralSecretValue(key, envVal)) {
+          flagged = true;
+          warnings.push(`${name}.env.${key}`);
+        }
+      }
+    }
+    if (isRecord(server.headers)) {
+      for (const [key, headerVal] of Object.entries(server.headers)) {
+        if (hasLiteralSecretValue(key, headerVal)) {
+          flagged = true;
+          warnings.push(`${name}.headers.${key}`);
+        }
+      }
+    }
+    if (hasArgsLiteralSecret(server.args)) {
+      flagged = true;
+      warnings.push(`${name}.args`);
+    }
+    if (hasUrlLiteralSecret(server.url)) {
+      flagged = true;
+      warnings.push(`${name}.url`);
+    }
+    if (flagged) servers.push(name);
+  }
+  return { gateway, servers, warnings };
+};
 
 // Fixed messages only: parser diagnostics must not echo configuration credentials.
 const syntaxError = (): Error =>
@@ -32,7 +162,7 @@ const DEPTH_MESSAGE = 'Configuration is nested too deeply.';
 // The schema nests four levels; the parser recurses per level and overflows on unbounded depth.
 const MAX_CONFIG_DEPTH = 64;
 
-export interface ConfigSourceRange {
+interface ConfigSourceRange {
   offset: number;
   length: number;
 }
@@ -44,11 +174,11 @@ export interface ConfigIssue {
   length?: number;
 }
 
-export interface ConfigTextIssue extends ConfigSourceRange {
+interface ConfigTextIssue extends ConfigSourceRange {
   message: string;
 }
 
-export type ConfigTree = { ok: true; root: Node } | { ok: false; issue: ConfigTextIssue };
+type ConfigTree = { ok: true; root: Node } | { ok: false; issue: ConfigTextIssue };
 
 const duplicateKey = (node: Node): Node | undefined => {
   if (node.type === 'object') {
@@ -139,8 +269,11 @@ export const formatConfigDocument = (text: string, format: ConfigFormat = 'json'
   return applyEdits(text, formatText(text, undefined, { tabSize: 2, insertSpaces: true, eol }));
 };
 
-export const parseConfigDocument = (text: string, format: ConfigFormat = 'json'): unknown => {
-  return getNodeValue(checkedTree(text, format));
+export const parseConfigDocument = (
+  source: string | Node,
+  format: ConfigFormat = 'json',
+): unknown => {
+  return getNodeValue(typeof source === 'string' ? checkedTree(source, format) : source);
 };
 
 /** Plain-object check shared with the runtime schemas. */
@@ -181,7 +314,8 @@ export const editConfigDocument = (
       for (const key of Object.keys(before)) {
         if (!Object.hasOwn(after, key)) set([...path, key], undefined);
       }
-      for (const [key, value] of Object.entries(after)) change([...path, key], before[key], value);
+      for (const [key, value] of Object.entries(after))
+        change([...path, key], Object.hasOwn(before, key) ? before[key] : undefined, value);
     } else if (Array.isArray(before) && Array.isArray(after)) {
       for (let index = before.length - 1; index >= after.length; index--)
         set([...path, index], undefined);
@@ -190,38 +324,16 @@ export const editConfigDocument = (
     } else set(path, after);
   };
   const set = (path: JSONPath, value: unknown): void => {
-    if (value !== undefined) {
-      text = applyEdits(text, modify(text, path, value, {}));
-      return;
+    const edits = modify(text, path, value, {});
+    text = applyEdits(text, edits);
+    if (value === undefined && edits.length > 0) {
+      // A line left holding only indentation would remain as a blank line; remove it as well.
+      const at = edits[0]?.offset ?? 0;
+      const lineStart = text.lastIndexOf('\n', at - 1) + 1;
+      const lineEnd = text.indexOf('\n', at);
+      if (lineEnd >= 0 && /^[ \t]*\r?$/.test(text.slice(lineStart, lineEnd)))
+        text = text.slice(0, lineStart) + text.slice(lineEnd + 1);
     }
-    const tree = checkedTree(text, format);
-    const valueNode = findNodeAtLocation(tree, path);
-    if (!valueNode) return;
-    const node = valueNode.parent?.type === 'property' ? valueNode.parent : valueNode;
-    const parent = node.parent;
-    if (!parent?.children) throw syntaxError();
-    const index = parent.children.indexOf(node);
-    const scanner = createScanner(text, true);
-    const end = node.offset + node.length;
-    // Delete syntax, not the trivia belonging to retained neighboring values.
-    scanner.setPosition(end);
-    let comma = scanner.scan() === SyntaxKind.CommaToken ? scanner.getTokenOffset() : undefined;
-    if (comma === undefined && index > 0) {
-      const previous = parent.children[index - 1];
-      if (!previous) throw syntaxError();
-      scanner.setPosition(previous.offset + previous.length);
-      if (scanner.scan() === SyntaxKind.CommaToken) comma = scanner.getTokenOffset();
-    }
-    text = applyEdits(text, [
-      { offset: node.offset, length: node.length, content: '' },
-      ...(comma === undefined ? [] : [{ offset: comma, length: 1, content: '' }]),
-    ]);
-    // A line left holding only indentation would remain as a blank line; remove it as well.
-    const at = node.offset - (comma !== undefined && comma < node.offset ? 1 : 0);
-    const lineStart = text.lastIndexOf('\n', at - 1) + 1;
-    const lineEnd = text.indexOf('\n', at);
-    if (lineEnd >= 0 && /^[ \t]*\r?$/.test(text.slice(lineStart, lineEnd)))
-      text = text.slice(0, lineStart) + text.slice(lineEnd + 1);
   };
   change([], original, next);
   checkedTree(text, format);

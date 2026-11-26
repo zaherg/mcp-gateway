@@ -11,7 +11,7 @@ type Catalog = Record<MessageKey, string>;
 // A language with no exact region match falls back to the first listed catalog in that language.
 export const CATALOG_LOCALES = ['en_US', 'fr_FR', 'de_DE', 'tr_TR'] as const;
 export type CatalogLocale = (typeof CATALOG_LOCALES)[number];
-export const DEFAULT_LOCALE: CatalogLocale = 'en_US';
+const DEFAULT_LOCALE: CatalogLocale = 'en_US';
 
 // Typing every catalog as `Catalog` makes a key missing from a translation a typecheck error.
 const CATALOGS: Record<CatalogLocale, Catalog> = {
@@ -81,7 +81,7 @@ export const messageTemplate = (locale: Locale, key: MessageKey): string => CATA
 /** A locale's own name, from its catalog. */
 export const languageName = (locale: Locale): string => messageTemplate(locale, 'language.name');
 
-export type MessageValues = Readonly<Record<string, string | number>>;
+type MessageValues = Readonly<Record<string, string | number>>;
 export type Translate = (key: MessageKey, values?: MessageValues) => string;
 
 /** A placeholder without a value stays visible, so the omission shows in review. */
@@ -89,6 +89,6 @@ export const translator =
   (locale: Locale): Translate =>
   (key, values) =>
     messageTemplate(locale, key).replace(PLACEHOLDER, (match, name: string) => {
-      const value = values?.[name];
+      const value = values && Object.hasOwn(values, name) ? values[name] : undefined;
       return value === undefined ? match : String(value);
     });

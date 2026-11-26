@@ -14,8 +14,18 @@ import {
 } from './build-config';
 import { withDmgMount } from './release-dmg';
 import { compareBundleInventories, inventoryBundle, inventoryDigest } from './release-inventory';
-import { hashFile, readUpdateArtifacts, releaseFiles } from './update-artifacts';
+import {
+  hashFile,
+  readUpdateArtifacts,
+  redactedUrl,
+  redactSecrets,
+  releaseFiles,
+  verifyEmbeddedMetadata,
+  watchCancelSignals,
+} from './update-artifacts';
 
+if (process.env.SIGN_VERIFY_SKIP)
+  throw new Error('SIGN_VERIFY_SKIP is forbidden during release verification.');
 const options = parseArgs({
   args: process.argv.slice(2),
   allowPositionals: true,
@@ -48,22 +58,21 @@ const wrapper = resolve(
 );
 const CHANNEL = 'stable';
 const dmg = join(artifacts, DMG_FILE);
-const manifestPath = join(artifacts, UPDATE_FILES.manifest);
-const integrityPath = join(artifacts, UPDATE_FILES.integrity);
 const archive = join(artifacts, UPDATE_FILES.archive);
-const redact = (value: string) => {
-  let text = value;
-  for (const name of ['APPLE_ID', 'APPLE_TEAM_ID', 'APPLE_APP_PASSWORD'])
-    if (process.env[name]) text = text.split(process.env[name]).join('[redacted]');
-  return text
-    .replace(
-      /^(Authority|origin)=Developer ID Application:.*$/gm,
-      '$1=Developer ID Application [redacted]',
-    )
-    .replace(/^TeamIdentifier=.*$/gm, 'TeamIdentifier=[redacted]');
-};
 const checks: Array<{ name: string; exitCode: number; output: string }> = [];
-const cancellation = new AbortController();
+const evidence: Record<string, unknown> = {
+  version: packageInfo.version,
+  architecture: 'arm64',
+  feed: redactedUrl(FEED_URL),
+  identifier: IDENTIFIER,
+  buildKind: testBuild ? 'test' : 'production',
+  notarizationAndGatekeeperChecked: !testBuild,
+  checkedAt: new Date().toISOString(),
+  checks,
+};
+const cancellation = watchCancelSignals('Release verification cancelled.', (signal) => {
+  evidence.cancelledBy = signal;
+});
 process.env.TMPDIR = join(root, '.cache/tmp');
 const check = async (name: string, args: [string, ...string[]]) => {
   const { stdout, stderr, exitCode } = await runCommand(
@@ -72,7 +81,7 @@ const check = async (name: string, args: [string, ...string[]]) => {
     120_000,
     cancellation.signal,
   );
-  checks.push({ name, exitCode, output: redact(`${stdout}\n${stderr}`).trim() });
+  checks.push({ name, exitCode, output: redactSecrets(`${stdout}\n${stderr}`).trim() });
   if (exitCode !== 0) throw new Error(`${name} failed; inspect the redacted verification record.`);
   return stdout;
 };
@@ -119,38 +128,13 @@ const verifyBundleVersion = async (label: string, path: string, subject: string)
     throw new Error(`${subject} version does not match package.json.`);
   return version;
 };
-const evidence: Record<string, unknown> = {
-  version: packageInfo.version,
-  architecture: 'arm64',
-  feed: FEED_URL,
-  identifier: IDENTIFIER,
-  buildKind: testBuild ? 'test' : 'production',
-  notarizationAndGatekeeperChecked: !testBuild,
-  checkedAt: new Date().toISOString(),
-  checks,
-};
-const cancel = (signal: 'SIGINT' | 'SIGTERM') => {
-  if (cancellation.signal.aborted) return;
-  evidence.cancelledBy = signal;
-  process.exitCode = signal === 'SIGINT' ? 130 : 143;
-  cancellation.abort(new Error('Release verification cancelled.'));
-};
-const interrupt = () => cancel('SIGINT');
-const terminate = () => cancel('SIGTERM');
-process.on('SIGINT', interrupt);
-process.on('SIGTERM', terminate);
 try {
+  if (process.env.SIGN_VERIFY_SKIP)
+    throw new Error('SIGN_VERIFY_SKIP is forbidden during release verification.');
   await mkdir(process.env.TMPDIR, { recursive: true });
-  for (const [name, path] of [
-    ['DMG', dmg],
-    ['update manifest', manifestPath],
-    ['update integrity manifest', integrityPath],
-    ['runtime archive', archive],
-  ] as const) {
-    const info = await lstat(path);
-    if (info.isSymbolicLink() || !info.isFile() || info.size <= 0)
-      throw new Error(`${name} is missing or unsafe: ${path}`);
-  }
+  const dmgInfo = await lstat(dmg);
+  if (dmgInfo.isSymbolicLink() || !dmgInfo.isFile() || dmgInfo.size <= 0)
+    throw new Error(`DMG is missing or unsafe: ${dmg}`);
   const { manifest, expanded: archiveIntegrity } = await readUpdateArtifacts(
     artifacts,
     { identifier: IDENTIFIER, version: packageInfo.version },
@@ -186,18 +170,20 @@ try {
     entries: wrapperInventory.length,
     digest: inventoryDigest(wrapperInventory),
   };
-  const metadata = JSON.parse(
+  verifyEmbeddedMetadata(
     await readFile(join(wrapper, 'Contents/Resources/metadata.json'), 'utf8'),
+    {
+      identifier: IDENTIFIER,
+      channel: CHANNEL,
+      hash: manifest.hash,
+    },
   );
-  if (
-    metadata.identifier !== IDENTIFIER ||
-    metadata.channel !== CHANNEL ||
-    metadata.hash !== manifest.hash
-  )
-    throw new Error('Wrapper metadata does not match the update manifest.');
+  const payloadEntryPath = `Contents/Resources/${manifest.hash}.tar.zst`;
   const digest = await hash(archive);
-  if ((await hash(join(wrapper, `Contents/Resources/${metadata.hash}.tar.zst`))) !== digest)
-    throw new Error('Wrapper/update payload mismatch.');
+  const wrapperPayloadDigest =
+    wrapperInventory.find((entry) => entry.path === payloadEntryPath)?.sha256 ??
+    (await hash(join(wrapper, payloadEntryPath)));
+  if (wrapperPayloadDigest !== digest) throw new Error('Wrapper/update payload mismatch.');
   evidence.payloadArchiveSha256 = digest;
   evidence.dmgSha256 = await hash(dmg);
   await withDmgMount(
@@ -211,20 +197,18 @@ try {
       // The DMG app has no Gatekeeper check on purpose; the extracted payload gets one below.
       await verifySignature('DMG app', dmgApp);
       await verifyTicket('DMG app', dmgApp);
-      const dmgMetadata = JSON.parse(
+      verifyEmbeddedMetadata(
         await readFile(join(dmgApp, 'Contents/Resources/metadata.json'), 'utf8'),
+        {
+          identifier: IDENTIFIER,
+          channel: CHANNEL,
+          hash: manifest.hash,
+        },
       );
-      if (
-        dmgMetadata.identifier !== IDENTIFIER ||
-        dmgMetadata.channel !== CHANNEL ||
-        dmgMetadata.hash !== manifest.hash
-      )
-        throw new Error('DMG application metadata does not match the update manifest.');
       const dmgVersion = await verifyBundleVersion('DMG app', dmgApp, 'DMG application');
-      const dmgPayload = join(dmgApp, 'Contents/Resources', `${manifest.hash}.tar.zst`);
-      if ((await hash(dmgPayload)) !== digest)
-        throw new Error('DMG application update payload does not match the runtime archive.');
       const dmgInventory = await inventoryBundle(dmgApp, cancellation.signal);
+      if (dmgInventory.find((entry) => entry.path === payloadEntryPath)?.sha256 !== digest)
+        throw new Error('DMG application update payload does not match the runtime archive.');
       try {
         compareBundleInventories(wrapperInventory, dmgInventory, {
           expected: 'verified wrapper',
@@ -265,17 +249,13 @@ try {
   await verifyTicket('payload', payload);
   await verifyGatekeeper('payload', payload, 'execute');
   await verifyBundleVersion('payload', payload, 'Payload');
-  const payloadMetadata = JSON.parse(
-    await readFile(join(payload, 'Contents/Resources/version.json'), 'utf8'),
-  ) as Record<string, unknown>;
-  if (
-    payloadMetadata.identifier !== IDENTIFIER ||
-    payloadMetadata.channel !== CHANNEL ||
-    payloadMetadata.version !== manifest.version ||
-    payloadMetadata.hash !== manifest.hash ||
-    payloadMetadata.baseUrl !== FEED_URL
-  )
-    throw new Error('Payload identity, version, hash, or fixed feed does not match the manifest.');
+  verifyEmbeddedMetadata(await readFile(join(payload, 'Contents/Resources/version.json'), 'utf8'), {
+    identifier: IDENTIFIER,
+    channel: CHANNEL,
+    version: manifest.version,
+    hash: manifest.hash,
+    baseUrl: FEED_URL,
+  });
   await check('payload signing metadata', [
     '/usr/bin/codesign',
     '--display',
@@ -321,36 +301,60 @@ try {
     accountPasswordMatches: 0,
     publicSigningCertificateMetadataExcluded: true,
   };
-  const keys = ['APPLE_ID', 'APPLE_TEAM_ID', 'APPLE_APP_PASSWORD'];
-  if (!testBuild && keys.every((key) => !!process.env[key])) {
-    const output = await check('Apple notarization history', [
-      '/usr/bin/xcrun',
-      'notarytool',
-      'history',
-      '--apple-id',
-      process.env.APPLE_ID ?? '',
-      '--team-id',
-      process.env.APPLE_TEAM_ID ?? '',
-      '--password',
-      process.env.APPLE_APP_PASSWORD ?? '',
-      '--output-format',
-      'json',
-    ]);
-    const history = JSON.parse(output);
-    evidence.notarization = history.history
-      .filter(
-        (entry: { name?: string }) =>
-          entry.name === 'MCP Gateway.app.zip' || entry.name === 'MCPGateway.dmg',
-      )
-      .slice(0, 3)
-      .map((entry: { id: string; name: string; status: string; createdDate: string }) => ({
-        id: entry.id,
-        name: entry.name,
-        status: entry.status,
-        createdDate: entry.createdDate,
-      }));
-    // Preserve only the relevant redacted, structured receipt rather than account history.
-    checks.pop();
+  const keys = ['APPLE_ID', 'APPLE_TEAM_ID', 'APPLE_APP_PASSWORD'] as const;
+  if (!testBuild) {
+    const requiredchecks = [
+      'wrapper signature',
+      'wrapper ticket',
+      'wrapper Gatekeeper',
+      'DMG signature',
+      'DMG ticket',
+      'DMG Gatekeeper',
+      'DMG app signature',
+      'DMG app ticket',
+      'payload signature',
+      'payload ticket',
+      'payload Gatekeeper',
+    ];
+    for (const requiredName of requiredchecks) {
+      if (!checks.some((item) => item.name === requiredName && item.exitCode === 0))
+        throw new Error(`Missing required production release check: ${requiredName}.`);
+    }
+    const configuredKeys = keys.filter((key) => Boolean(process.env[key]));
+    if (configuredKeys.length > 0 && configuredKeys.length < keys.length) {
+      const missingKey = keys.find((key) => !process.env[key]);
+      throw new Error(`Incomplete Apple notarization credentials; missing ${missingKey}.`);
+    }
+    if (configuredKeys.length === keys.length) {
+      const output = await check('Apple notarization history', [
+        '/usr/bin/xcrun',
+        'notarytool',
+        'history',
+        '--apple-id',
+        process.env.APPLE_ID ?? '',
+        '--team-id',
+        process.env.APPLE_TEAM_ID ?? '',
+        '--password',
+        process.env.APPLE_APP_PASSWORD ?? '',
+        '--output-format',
+        'json',
+      ]);
+      const history = JSON.parse(output);
+      evidence.notarization = history.history
+        .filter(
+          (entry: { name?: string }) =>
+            entry.name === 'MCP Gateway.app.zip' || entry.name === 'MCPGateway.dmg',
+        )
+        .slice(0, 3)
+        .map((entry: { id: string; name: string; status: string; createdDate: string }) => ({
+          id: entry.id,
+          name: entry.name,
+          status: entry.status,
+          createdDate: entry.createdDate,
+        }));
+      // Preserve only the relevant redacted, structured receipt rather than account history.
+      checks.pop();
+    }
   }
   cancellation.signal.throwIfAborted();
   evidence.ok = true;
@@ -359,7 +363,9 @@ try {
   );
 } catch (error) {
   evidence.ok = false;
-  evidence.error = redact(error instanceof Error ? error.message : 'Release verification failed.');
+  evidence.error = redactSecrets(
+    error instanceof Error ? error.message : 'Release verification failed.',
+  );
   process.exitCode ||= 1;
   console.error(evidence.error);
 } finally {
@@ -367,6 +373,5 @@ try {
   await writeFile(verificationOutput, `${JSON.stringify(evidence, null, 2)}\n`, {
     mode: 0o600,
   });
-  process.removeListener('SIGINT', interrupt);
-  process.removeListener('SIGTERM', terminate);
+  cancellation.dispose();
 }

@@ -1,464 +1,138 @@
 import { Activity } from 'lucide-react';
-import { type FormEvent, useEffect, useRef, useState } from 'react';
 
-import { Banners } from '@mcp-gateway/mainview/components/banners/Banners';
-import { DraftBar } from '@mcp-gateway/mainview/components/DraftBar';
+import { ConfigBlockerBar } from '@mcp-gateway/mainview/components/ConfigBlockerBar';
 import { GatewayToggle } from '@mcp-gateway/mainview/components/GatewayToggle';
-import { Shell, type Tab } from '@mcp-gateway/mainview/components/Shell';
+import { Shell } from '@mcp-gateway/mainview/components/Shell';
 import { SidebarUpdates } from '@mcp-gateway/mainview/components/SidebarUpdates';
 import { Modal } from '@mcp-gateway/mainview/components/ui';
-import { ConfirmDialogs } from '@mcp-gateway/mainview/dialogs/ConfirmDialogs';
-import { KeyMigration } from '@mcp-gateway/mainview/dialogs/KeyMigration';
 import {
-  type Document,
-  type Editor,
-  emptyEditor,
-  formConfig,
-  parseStringMap,
-  ServerEditor,
-} from '@mcp-gateway/mainview/dialogs/ServerEditor';
+  type ActiveModal,
+  GatewayViewProvider,
+  useGatewayView,
+} from '@mcp-gateway/mainview/context/GatewayViewContext';
+import { KeyMigration } from '@mcp-gateway/mainview/dialogs/KeyMigration';
+import { ServerEditor } from '@mcp-gateway/mainview/dialogs/ServerEditor';
 import { WhatsNew } from '@mcp-gateway/mainview/dialogs/WhatsNew';
-import { useOperations } from '@mcp-gateway/mainview/hooks/useOperations';
-import { useQuit } from '@mcp-gateway/mainview/hooks/useQuit';
 import { useI18n } from '@mcp-gateway/mainview/i18n';
 import { Logs } from '@mcp-gateway/mainview/Logs';
 import { Overview } from '@mcp-gateway/mainview/views/Overview';
 import { RawConfig } from '@mcp-gateway/mainview/views/RawConfig';
 import { Settings } from '@mcp-gateway/mainview/views/Settings';
 import { Updates } from '@mcp-gateway/mainview/views/Updates';
-import { changelogSection } from '@mcp-gateway/shared/changelog';
-import { editConfigDocument, SAFE_NAME } from '@mcp-gateway/shared/config-document';
-import type { LanguagePreference } from '@mcp-gateway/shared/i18n';
-import type { AppClient, AppSnapshot, SocialLinkTarget } from '@mcp-gateway/shared/rpc';
-import { needsLoginRetry } from '@mcp-gateway/shared/rpc';
-import type { ConfigFile, KeyMigration as KeyMigrationSlots } from '@mcp-gateway/shared/types';
-import changelog from '../../CHANGELOG.md?raw';
+import type { AppClient } from '@mcp-gateway/shared/rpc';
 
-interface App {
+export type { ActiveModal };
+
+interface AppProps {
   client: AppClient;
 }
 
-interface Rename {
-  from: string;
-  to: string;
-}
-
-export const App = ({ client }: App) => {
-  const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null);
-  const [doc, setDoc] = useState<Document | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [errorOccurrence, setErrorOccurrence] = useState<string | null>(null);
-  const [notice, setNotice] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [updateBusy, setUpdateBusy] = useState(false);
-  const [confirmQuit, setConfirmQuit] = useState(false);
-  const [confirmUpdate, setConfirmUpdate] = useState(false);
-  const [editor, setEditor] = useState<Editor | null>(null);
-  const [editorError, setEditorError] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState<string | null>(null);
-  const [showToken, setShowToken] = useState(false);
-  const [rawOpen, setRawOpen] = useState(false);
-  const [whatsNewClosed, setWhatsNewClosed] = useState(false);
-  const [keysOpen, setKeysOpen] = useState(false);
-  const [updatesOpen, setUpdatesOpen] = useState(false);
-  const [updatesRequested, setUpdatesRequested] = useState(false);
-  const fallbackFocus = useRef<HTMLButtonElement>(null);
-  const updatesTrigger = useRef<HTMLButtonElement>(null);
-  const [tab, setTab] = useState<Tab>('overview');
-  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
-  const dismiss = (id: string) => setDismissed((previous) => new Set([...previous, id]));
-  const errorOccurrenceRef = useRef(errorOccurrence);
-  errorOccurrenceRef.current = errorOccurrence;
-  const pollFailed = useRef(false);
-  const docRef = useRef(doc);
-  docRef.current = doc;
-  const editingRef = useRef(false);
-  editingRef.current = editor !== null || deleting !== null;
-  const generation = useRef(0);
-  const { t, setLocale } = useI18n();
-  const snapshotLocale = snapshot?.language.locale;
-  useEffect(() => {
-    if (snapshotLocale) setLocale(snapshotLocale);
-  }, [snapshotLocale, setLocale]);
-  const updateState = snapshot?.update;
-  const updateRestarting = updateState?.phase === 'restarting';
-  const dirty = doc?.dirty ?? false;
-
+const AppWorkspace = () => {
   const {
-    quitStatus,
-    quitStatusKnown,
-    requestingQuit,
-    quitReadError,
-    quitting,
-    shutdownStarted,
-    configurationLocked,
-    requestQuit,
-    requestUpdateRestart,
-    interactiveQuit,
-    quitRequestPending,
-    quitGeneration,
-  } = useQuit({
     client,
     snapshot,
-    updateRestarting,
-    generation,
-    confirmQuit,
-    setConfirmQuit,
-    setConfirmUpdate,
-    setError,
-    setNotice,
-    busy,
+    gateway,
+    doc,
     dirty,
-    editor,
-    deleting,
-  });
-
-  const { run, runUpdate } = useOperations({
-    quitGeneration,
-    generation,
-    setBusy,
+    stale,
+    filename,
+    tab,
+    activeModal,
+    editorError,
+    existingNames,
+    busy,
     updateBusy,
-    setUpdateBusy,
-    setError,
-    setErrorOccurrence,
-    setNotice,
-    setSnapshot,
-    setDoc,
-  });
+    error,
+    configurationLocked,
+    quitting,
+    updateState,
+    updateRestarting,
+    whatsNewPending,
+    updatesTriggerDisabled,
+    fallbackFocus,
+    updatesTrigger,
+    setTab,
+    setRawOpen,
+    setEditorError,
+    changeEditor,
+    reloadFromDisk,
+    applyServer,
+    closeModal,
+    openUpdatesModal,
+    requestUpdateRestart,
+    closeWhatsNew,
+    dismissKeyReminder,
+    migrateKeys,
+    run,
+  } = useGatewayView();
+  const { t } = useI18n();
 
-  useEffect(() => {
-    // Only a new authoritative snapshot can retire an acknowledgement. A local
-    // action may clear its banner before polling has observed the same core issue.
-    const active = new Set([
-      `config-${snapshot?.gateway.configError?.occurrenceId}`,
-      `operation-${snapshot?.gateway.operationalError?.occurrenceId}`,
-      `login-${snapshot?.login.occurrenceId}`,
-      `stale-${snapshot?.gateway.revision}`,
-      `operation-${errorOccurrenceRef.current}`,
-      `config-${errorOccurrenceRef.current}`,
-      `quit-${quitStatus.attempt}`,
-      `update-${snapshot?.update.phase}-${snapshot?.update.availableVersion ?? ''}-${snapshot?.update.error ?? ''}`,
-    ]);
-    setDismissed((previous) => {
-      const retained = Array.from(previous).filter((id) => active.has(id));
-      return retained.length === previous.size ? previous : new Set(retained);
-    });
-  }, [snapshot, quitStatus.attempt]);
-
-  const dismissLocalError = () => {
-    setError(null);
-    if (errorOccurrence) {
-      dismiss(`operation-${errorOccurrence}`);
-      dismiss(`config-${errorOccurrence}`);
+  const activeDialog = (() => {
+    switch (activeModal?.kind) {
+      case 'serverEditor':
+        return (
+          <ServerEditor
+            editor={activeModal.editor}
+            existingNames={existingNames}
+            editorError={editorError}
+            configurationLocked={configurationLocked}
+            fallbackFocus={fallbackFocus}
+            onChange={changeEditor}
+            onClose={closeModal}
+            onSubmit={applyServer}
+            onDismissError={() => setEditorError(null)}
+          />
+        );
+      case 'keyMigration':
+        return snapshot ? (
+          <KeyMigration
+            slots={snapshot.gateway.keyMigration}
+            dirty={dirty}
+            busy={busy || configurationLocked}
+            error={error}
+            filename={filename}
+            fallbackFocus={fallbackFocus}
+            onKeep={() => {
+              closeModal();
+              dismissKeyReminder();
+            }}
+            onClose={closeModal}
+            onMove={migrateKeys}
+          />
+        ) : null;
+      case 'updates':
+        return updateState?.supported && !quitting && !updateRestarting ? (
+          <Modal
+            title={t('common.updates')}
+            onClose={closeModal}
+            fallbackFocus={fallbackFocus}
+            busy={busy || updateBusy}
+          >
+            <Updates />
+          </Modal>
+        ) : null;
+      default:
+        return whatsNewPending && snapshot?.whatsNew ? (
+          <WhatsNew
+            version={snapshot.whatsNew}
+            fallbackFocus={fallbackFocus}
+            onClose={closeWhatsNew}
+          />
+        ) : null;
     }
-  };
-
-  useEffect(() => {
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout>;
-    const poll = async () => {
-      const current = generation.current;
-      try {
-        const result = await client.snapshot();
-        if (cancelled || current !== generation.current || quitRequestPending.current) return;
-        if (!result.ok) {
-          if (!pollFailed.current) {
-            setErrorOccurrence(result.error.occurrenceId ?? null);
-            setError(`${result.error.code}: ${result.error.message}`);
-          }
-          pollFailed.current = true;
-          return;
-        }
-        pollFailed.current = false;
-        setSnapshot(result.value);
-        if (!docRef.current?.dirty && !editingRef.current) {
-          const gateway = result.value.gateway;
-          setDoc({ text: gateway.configText, revision: gateway.revision, dirty: false });
-        }
-      } catch {
-        if (!cancelled && !pollFailed.current) {
-          setErrorOccurrence(null);
-          setError(t('app.statusUnavailable'));
-        }
-        pollFailed.current = true;
-      } finally {
-        if (!cancelled) timer = setTimeout(poll, 2000);
-      }
-    };
-    void poll();
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [client, quitRequestPending, t]);
-
-  const updateReady = updateState?.phase === 'ready';
-  const whatsNewOpen = Boolean(
-    snapshot?.whatsNew && !whatsNewClosed && changelogSection(changelog, snapshot.whatsNew),
-  );
-  const competingDialog =
-    whatsNewOpen ||
-    confirmQuit ||
-    (confirmUpdate && Boolean(updateReady)) ||
-    editor !== null ||
-    deleting !== null ||
-    keysOpen;
-  const updatesTriggerDisabled =
-    busy || configurationLocked || quitting || updateRestarting || competingDialog;
-  const showUpdatesModal =
-    updatesOpen &&
-    Boolean(updateState?.supported) &&
-    !competingDialog &&
-    !quitting &&
-    !updateRestarting;
-
-  useEffect(() => {
-    const showUpdates = () => setUpdatesRequested(true);
-    window.addEventListener('mcp-gateway:show-updates', showUpdates);
-    return () => window.removeEventListener('mcp-gateway:show-updates', showUpdates);
-  }, []);
-
-  useEffect(() => {
-    if (!quitting && !updateRestarting) return;
-    setUpdatesOpen(false);
-    setUpdatesRequested(false);
-  }, [quitting, updateRestarting]);
-
-  useEffect(() => {
-    if (!updatesRequested || !updateState) return;
-    if (!updateState.supported) {
-      setUpdatesOpen(false);
-      setUpdatesRequested(false);
-      return;
-    }
-    if (updatesOpen) {
-      setUpdatesRequested(false);
-      return;
-    }
-    if (updatesTriggerDisabled) return;
-    setUpdatesRequested(false);
-    updatesTrigger.current?.focus();
-    setUpdatesOpen(true);
-  }, [updatesOpen, updatesRequested, updatesTriggerDisabled, updateState]);
-
-  const format = snapshot?.gateway.configFormat ?? 'json';
-  const filename = snapshot?.gateway.configPath.split('/').at(-1) ?? 'mcp.json';
-  const update = (config: ConfigFile, rename?: Rename) => {
-    if (configurationLocked) return;
-    setDoc((previous) => {
-      if (!previous) return previous;
-      const text = editConfigDocument(
-        previous.text,
-        config,
-        format,
-        rename ? { path: ['mcpServers'], ...rename } : undefined,
-      );
-      return { ...previous, text, dirty: previous.dirty || text !== previous.text };
-    });
-    setNotice('');
-  };
-  const parsed = doc ? formConfig(doc.text, format) : null;
-  // An unreadable stored key leaves the file valid: keep the form, whose Generate is the repair.
-  const config =
-    snapshot?.gateway.configError &&
-    snapshot.gateway.configError.code !== 'KeyUnavailable' &&
-    !doc?.dirty
-      ? null
-      : parsed;
-  const gateway = snapshot?.gateway;
-  const stale = !!doc && !!gateway && doc.revision !== gateway.revision;
-  const retryLogin = !!(
-    config &&
-    snapshot &&
-    !gateway?.configError &&
-    !stale &&
-    needsLoginRetry(snapshot.login, config.gateway.launchAtLogin ?? false)
-  );
-  // The retry action lives in the Settings draft bar, so only Settings offers it.
-  const showLoginRetry = retryLogin && tab === 'settings';
-  const save = async (text = doc?.text) => {
-    if (configurationLocked || !doc || text === undefined) return false;
-    return run(
-      () => client.saveConfig({ text, expectedRevision: doc.revision }),
-      t('app.configSaved'),
-      true,
-    );
-  };
-  const confirmDiscard = async (): Promise<boolean> => {
-    try {
-      const result = await client.confirmDiscard();
-      if (result.ok) return result.value;
-      setErrorOccurrence(result.error.occurrenceId ?? null);
-      setError(`${result.error.code}: ${result.error.message}`);
-    } catch {
-      setError(t('app.confirmUnavailable'));
-    }
-    return false;
-  };
-  const discard = async () => {
-    if (configurationLocked || !gateway || !(await confirmDiscard())) return;
-    setDoc({ text: gateway.configText, revision: gateway.revision, dirty: false });
-    setError(null);
-  };
-  const openSocialLink = (target: SocialLinkTarget) => {
-    if (busy || configurationLocked) return;
-    void run(() => client.openSocialLink({ target }), '');
-  };
-  const revealConfig = () => {
-    if (busy || configurationLocked) return;
-    void run(() => client.revealConfig(), '');
-  };
-  const dismissKeys = () => {
-    if (busy || configurationLocked) return;
-    void run(() => client.dismissKeyReminder(), '');
-  };
-  // Saved mode reloads the form and raw editor from the new revision, so no draft keeps the plaintext.
-  const moveKeys = async (slots: KeyMigrationSlots): Promise<boolean> => {
-    if (busy || configurationLocked || !doc || dirty) return false;
-    return run(
-      () =>
-        client.migrateKeys({
-          gateway: slots.gateway,
-          servers: slots.servers,
-          expectedRevision: doc.revision,
-        }),
-      t('keys.moved'),
-      true,
-      false,
-    );
-  };
-  const changeLanguage = (preference: LanguagePreference) => {
-    if (busy || configurationLocked) return;
-    void run(() => client.setLanguage({ preference }), '');
-  };
-  const changeEditor = (patch: Partial<Editor>) => {
-    if (configurationLocked) return;
-    setEditor((previous) => (previous ? { ...previous, ...patch } : null));
-  };
-  const openEditor = (name?: string) => {
-    if (configurationLocked) return;
-    const next = emptyEditor();
-    if (name && config) {
-      const server = config.mcpServers[name];
-      if (!server) return;
-      next.original = name;
-      next.name = name;
-      next.disabled = server.disabled ?? false;
-      next.legacyProtocol = server.legacyProtocol ?? false;
-      // Keep the raw reference text; only main expands it on save.
-      next.token = server.token;
-      next.tokenRef = server.tokenRef;
-      if ('url' in server) {
-        next.type = 'http';
-        next.url = server.url;
-        next.headers = JSON.stringify(server.headers ?? {}, null, 2);
-      } else {
-        next.command = server.command;
-        next.args = JSON.stringify(server.args ?? [], null, 2);
-        next.env = JSON.stringify(server.env ?? {}, null, 2);
-        next.cwd = server.cwd ?? '';
-      }
-    }
-    setEditorError(null);
-    setEditor(next);
-  };
-  const applyServer = (event: FormEvent) => {
-    event.preventDefault();
-    if (!editor || !config || configurationLocked) return;
-    // Saving would reject the name anyway; "__proto__" would also replace the draft's prototype
-    // below instead of adding a server, silently dropping a renamed one.
-    if (!SAFE_NAME.test(editor.name)) {
-      setEditorError(t('app.serverFieldsInvalid'));
-      return;
-    }
-    if (editor.name !== editor.original && Object.hasOwn(config.mcpServers, editor.name)) {
-      setEditorError(t('app.serverExists'));
-      return;
-    }
-    // An empty custom field is a mistake, not a request to inherit the global key.
-    if (editor.token === '') {
-      setEditorError(t('app.serverKeyEmpty'));
-      return;
-    }
-    let args: string[] | undefined;
-    let env: Record<string, string> | undefined;
-    let headers: Record<string, string> | undefined;
-    try {
-      if (editor.type === 'stdio') {
-        const parsedArgs = JSON.parse(editor.args || '[]');
-        if (!Array.isArray(parsedArgs) || !parsedArgs.every((arg) => typeof arg === 'string'))
-          throw new Error(t('app.argumentsInvalid'));
-        args = parsedArgs;
-        env = parseStringMap(editor.env, t('app.environmentInvalid'));
-      } else {
-        headers = parseStringMap(editor.headers, t('app.headersInvalid'));
-      }
-    } catch (failure) {
-      setEditorError(failure instanceof Error ? failure.message : t('app.serverFieldsInvalid'));
-      return;
-    }
-    // Spread last: these keys follow the transport fields in the saved file.
-    const shared = {
-      disabled: editor.disabled,
-      // Omitted when off, so older versions can still read the file.
-      legacyProtocol: editor.legacyProtocol || undefined,
-      // Undefined removes the property, which restores global inheritance.
-      token: editor.token,
-      tokenRef: editor.tokenRef,
-    };
-    const server =
-      editor.type === 'stdio'
-        ? { command: editor.command, args, env, cwd: editor.cwd || undefined, ...shared }
-        : { url: editor.url, headers, ...shared };
-    const servers = { ...config.mcpServers };
-    if (editor.original) delete servers[editor.original];
-    servers[editor.name] = server;
-    update(
-      { ...config, mcpServers: servers },
-      editor.original && editor.original !== editor.name
-        ? { from: editor.original, to: editor.name }
-        : undefined,
-    );
-    setEditor(null);
-  };
-  const toggleEndpoint = async (name: string, disabled: boolean) => {
-    if (configurationLocked || !config || !doc || dirty) return;
-    const server = config.mcpServers[name];
-    if (!server) return;
-    const text = editConfigDocument(
-      doc.text,
-      { ...config, mcpServers: { ...config.mcpServers, [name]: { ...server, disabled } } },
-      format,
-    );
-    // Save this text: `doc` in this closure still holds the text from before the change.
-    setDoc({ ...doc, text, dirty: true });
-    await save(text);
-  };
+  })();
 
   return (
     <Shell
-      tab={tab}
-      setTab={setTab}
-      snapshot={snapshot}
-      busy={busy}
-      quitting={quitting}
-      editor={editor}
-      deleting={deleting}
-      quitStatus={quitStatus}
-      interactiveQuit={interactiveQuit}
-      onOpenSocialLink={openSocialLink}
-      socialLinksDisabled={busy || configurationLocked}
-      onLanguageChange={changeLanguage}
-      languageDisabled={busy || configurationLocked}
       sidebarUpdates={
         <SidebarUpdates
           updateState={updateState}
           disabled={updatesTriggerDisabled}
-          onOpen={() => setUpdatesRequested(true)}
+          onOpen={openUpdatesModal}
+          onRestart={() => void requestUpdateRestart()}
           triggerRef={updatesTrigger}
         />
       }
-      fallbackFocus={fallbackFocus}
       gatewayToggle={
         snapshot &&
         doc && (
@@ -471,119 +145,17 @@ export const App = ({ client }: App) => {
           />
         )
       }
-      dialogs={
-        <>
-          {snapshot?.whatsNew && !whatsNewClosed && (
-            <WhatsNew
-              version={snapshot.whatsNew}
-              fallbackFocus={fallbackFocus}
-              onClose={() => {
-                // Close now; a failed save is logged by main and the notes return next launch.
-                setWhatsNewClosed(true);
-                void client.dismissWhatsNew().catch(() => undefined);
-              }}
-            />
-          )}
-          <ConfirmDialogs
-            confirmQuit={confirmQuit}
-            setConfirmQuit={setConfirmQuit}
-            quitting={quitting}
-            requestQuit={requestQuit}
-            confirmUpdate={confirmUpdate}
-            updateReady={updateReady}
-            updateState={updateState}
-            dirty={dirty}
-            updateRestarting={updateRestarting}
-            requestUpdateRestart={requestUpdateRestart}
-            setConfirmUpdate={setConfirmUpdate}
-            deleting={deleting}
-            setDeleting={setDeleting}
-            configurationLocked={configurationLocked}
-            parsed={parsed}
-            update={update}
-            fallbackFocus={fallbackFocus}
-          />
-          {showUpdatesModal && updateState && (
-            <Modal
-              title={t('common.updates')}
-              onClose={() => setUpdatesOpen(false)}
-              fallbackFocus={fallbackFocus}
-            >
-              <Updates
-                updateState={updateState}
-                updateBusy={updateBusy}
-                configurationLocked={configurationLocked}
-                busy={busy}
-                quitStatusKnown={quitStatusKnown}
-                quitStatus={quitStatus}
-                editor={editor}
-                deleting={deleting}
-                error={error}
-                onDismissError={dismissLocalError}
-                runUpdate={runUpdate}
-                client={client}
-                onRequestRestart={() => {
-                  setUpdatesOpen(false);
-                  setConfirmUpdate(true);
-                }}
-              />
-            </Modal>
-          )}
-          {keysOpen && snapshot && (
-            <KeyMigration
-              slots={snapshot.gateway.keyMigration}
-              dirty={dirty}
-              busy={busy || configurationLocked}
-              error={error}
-              filename={filename}
-              fallbackFocus={fallbackFocus}
-              onKeep={() => {
-                setKeysOpen(false);
-                dismissKeys();
-              }}
-              onClose={() => setKeysOpen(false)}
-              onMove={moveKeys}
-            />
-          )}
-          {editor && (
-            <ServerEditor
-              editor={editor}
-              editorError={editorError}
-              configurationLocked={configurationLocked}
-              fallbackFocus={fallbackFocus}
-              onChange={changeEditor}
-              onClose={() => setEditor(null)}
-              onSubmit={applyServer}
-              onDismissError={() => setEditorError(null)}
-            />
-          )}
-        </>
-      }
+      dialogs={activeDialog}
     >
-      <Banners
-        error={error}
-        dismissLocalError={dismissLocalError}
-        updateState={updateState}
-        tab={tab}
-        dismissed={dismissed}
-        dismiss={dismiss}
-        quitting={quitting}
-        quitStatus={quitStatus}
-        shutdownStarted={shutdownStarted}
-        updateRestarting={updateRestarting}
-        quitStatusKnown={quitStatusKnown}
-        requestingQuit={requestingQuit}
-        quitReadError={quitReadError}
-        notice={notice}
-        setNotice={setNotice}
-        gateway={gateway}
-        errorOccurrence={errorOccurrence}
-        config={config}
-        configurationLocked={configurationLocked}
-        snapshot={snapshot ?? undefined}
-        loginWanted={parsed?.gateway.launchAtLogin ?? false}
-        loginInDraftBar={retryLogin && !dirty}
+      <ConfigBlockerBar
+        configError={gateway?.configError}
         stale={stale}
+        disabled={configurationLocked || busy}
+        onOpenRawConfig={() => {
+          setTab('settings');
+          setRawOpen(true);
+        }}
+        onReloadFromDisk={reloadFromDisk}
       />
       {(!snapshot || !doc) && tab === 'logs' ? (
         <Logs client={client} servers={[]} />
@@ -594,76 +166,23 @@ export const App = ({ client }: App) => {
           <p>{t('app.waiting')}</p>
         </section>
       ) : (
-        <>
-          <fieldset disabled={busy} className="workspace">
-            <DraftBar
-              dirty={dirty}
-              retryLogin={showLoginRetry}
-              configurationLocked={configurationLocked}
-              snapshot={snapshot}
-              save={save}
-              discard={discard}
-            />
-            {tab === 'logs' ? (
-              <Logs client={client} servers={gateway?.servers.map((server) => server.name) ?? []} />
-            ) : tab === 'overview' ? (
-              <Overview
-                gateway={gateway}
-                config={config}
-                dirty={dirty}
-                keyReminder={snapshot.keyReminder}
-                onReviewKeys={() => setKeysOpen(true)}
-                onDismissKeys={dismissKeys}
-                configurationLocked={configurationLocked}
-                run={run}
-                client={client}
-                openEditor={openEditor}
-                toggleEndpoint={toggleEndpoint}
-                setDeleting={setDeleting}
-                setEditor={setEditor}
-                setEditorError={setEditorError}
-              />
-            ) : (
-              <Settings
-                config={config}
-                gateway={gateway}
-                snapshot={snapshot}
-                configurationLocked={configurationLocked}
-                update={update}
-                showToken={showToken}
-                setShowToken={setShowToken}
-                filename={filename}
-                onMoveKeys={() => setKeysOpen(true)}
-              />
-            )}
-            <RawConfig
-              client={client}
-              visible={tab === 'settings'}
-              doc={doc}
-              setDoc={setDoc}
-              configurationLocked={configurationLocked || busy}
-              format={format}
-              filename={filename}
-              gateway={gateway}
-              dirty={dirty}
-              retryLogin={showLoginRetry}
-              save={save}
-              discard={discard}
-              reveal={revealConfig}
-              rawOpen={rawOpen}
-              setRawOpen={setRawOpen}
-              setNotice={setNotice}
-            />
-          </fieldset>
-          <footer className="page-footer">
-            <span>
-              <span className={`led ${gateway?.running ? 'on' : ''}`} />
-              {gateway?.running ? t('app.listenerActive') : t('app.noListener')}
-            </span>
-            <span>{t('app.closeHint')}</span>
-          </footer>
-        </>
+        <fieldset disabled={busy} className="workspace">
+          {tab === 'logs' ? (
+            <Logs client={client} servers={gateway?.servers.map((server) => server.name) ?? []} />
+          ) : tab === 'overview' ? (
+            <Overview />
+          ) : (
+            <Settings />
+          )}
+          <RawConfig visible={tab === 'settings'} />
+        </fieldset>
       )}
     </Shell>
   );
 };
+
+export const App = ({ client }: AppProps) => (
+  <GatewayViewProvider client={client}>
+    <AppWorkspace />
+  </GatewayViewProvider>
+);

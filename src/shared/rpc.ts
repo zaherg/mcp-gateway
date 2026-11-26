@@ -5,7 +5,10 @@ import type {
   LogPage,
   LogQuery,
   ServerCheckResult,
+  UpdateDownloadProgress,
 } from '@mcp-gateway/shared/types';
+
+export type { UpdateDownloadProgress } from '@mcp-gateway/shared/types';
 
 export interface LoginStatus {
   occurrenceId?: string;
@@ -42,6 +45,10 @@ export interface UpdateStatus {
   installedVersion: string | null;
   availableVersion: string | null;
   phase: UpdatePhase;
+  progressPercent?: number | null;
+  downloadedBytes?: number | null;
+  totalBytes?: number | null;
+  downloadProgress?: UpdateDownloadProgress | null;
   error: string | null;
   checkedAt: string | null;
 }
@@ -66,9 +73,18 @@ export type AppResult<T> =
   | { ok: false; error: { code: string; message: string; occurrenceId?: string } };
 
 /** One fixed, sanitized configuration problem from the read-only native check. */
-export interface ConfigPreview {
+interface ConfigPreview {
   issue: ConfigIssue | null;
 }
+
+export type MenuCommand =
+  | 'tab:overview'
+  | 'tab:logs'
+  | 'tab:settings'
+  | 'tab:raw-config'
+  | 'server:add'
+  | 'updates:open'
+  | 'gateway:reload';
 
 export type AppRPC = {
   bun: {
@@ -96,13 +112,20 @@ export type AppRPC = {
       dismissKeyReminder: { params: undefined; response: AppResult<AppSnapshot> };
       validateConfig: { params: { text: string }; response: AppResult<ConfigPreview> };
       confirmDiscard: { params: undefined; response: AppResult<boolean> };
+      confirmDeleteServer: { params: { name: string }; response: AppResult<boolean> };
       copyEndpoint: { params: { name: string }; response: AppResult<null> };
       copyClientConfig: { params: { name: string }; response: AppResult<null> };
       openSocialLink: { params: { target: SocialLinkTarget }; response: AppResult<null> };
       revealConfig: { params: undefined; response: AppResult<null> };
+      openConfigInEditor: { params: undefined; response: AppResult<null> };
+      importExternalServers: {
+        params: { expectedRevision: string };
+        response: AppResult<{ snapshot: AppSnapshot; importedCount: number }>;
+      };
       dismissWhatsNew: { params: undefined; response: AppResult<null> };
       updatesCheck: { params: undefined; response: AppResult<UpdateStatus> };
       updatesDownload: { params: undefined; response: AppResult<UpdateStatus> };
+      updatesInstall: { params: undefined; response: AppResult<UpdateStatus> };
       updatesSetAutomatic: {
         params: { automatic: boolean };
         response: AppResult<UpdateStatus>;
@@ -120,9 +143,12 @@ export type AppRPC = {
   };
   webview: {
     requests: {
-      interactiveQuit: { params: undefined; response: boolean };
+      hasUnsavedRawConfig: { params: undefined; response: boolean };
     };
-    messages: Record<string, never>;
+    messages: {
+      snapshotChanged: AppSnapshot;
+      menuCommand: { command: MenuCommand };
+    };
   };
 };
 
@@ -136,4 +162,7 @@ type Method<Request> = Request extends { params: infer Params; response: infer R
   : never;
 
 /** The renderer-facing client: one method per request in `AppRPC`. */
-export type AppClient = { [Name in keyof Requests]: Method<Requests[Name]> };
+export type AppClient = { [Name in keyof Requests]: Method<Requests[Name]> } & {
+  onSnapshotChanged?: (listener: (snapshot: AppSnapshot) => void) => () => void;
+  onMenuCommand?: (listener: (command: MenuCommand) => void) => () => void;
+};

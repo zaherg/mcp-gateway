@@ -1,10 +1,34 @@
-import type { IncomingMessage } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Readable } from 'node:stream';
 import { MIMEType } from 'node:util';
 
 import { JSONRPCMessageSchema } from '@modelcontextprotocol/sdk/types.js';
 
 export const MAX_BACKEND_MESSAGE_BYTES = 4 * 1024 * 1024;
+export const MAX_SSE_EVENT_BYTES = MAX_BACKEND_MESSAGE_BYTES;
+export const REQUEST_BODY_TIMEOUT_MS = 30_000;
+
+export interface JsonRpcErrorBody {
+  readonly code: number;
+  readonly message: string;
+}
+
+export const writeJsonRpcError = (
+  res: ServerResponse,
+  status: number,
+  error: JsonRpcErrorBody,
+  id: string | number | null = null,
+): void => {
+  if (res.headersSent || res.destroyed) return;
+  const payload = Buffer.from(
+    JSON.stringify({ jsonrpc: '2.0', id, error: { code: error.code, message: error.message } }),
+    'utf8',
+  );
+  res.statusCode = status;
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Content-Length', String(payload.byteLength));
+  res.end(payload);
+};
 
 export class BackendOutputLimitError extends Error {
   constructor() {
@@ -91,7 +115,7 @@ class BackendEventBudget {
         this.lineBytes = 0;
       } else {
         this.lineBytes++;
-        if (++this.bytes > MAX_BACKEND_MESSAGE_BYTES) throw new BackendOutputLimitError();
+        if (++this.bytes > MAX_SSE_EVENT_BYTES) throw new BackendOutputLimitError();
       }
     }
   }
@@ -293,11 +317,12 @@ export const readRequestBody = async (
   } catch {
     throw new RequestBodyError(415);
   }
+  const bodySignal = AbortSignal.any([signal, AbortSignal.timeout(REQUEST_BODY_TIMEOUT_MS)]);
   const bytes = await new Promise<Buffer>((resolve, reject) => {
     const chunks: Buffer[] = [];
     let length = 0;
     const cleanup = () => {
-      signal.removeEventListener('abort', aborted);
+      bodySignal.removeEventListener('abort', aborted);
       request.off('data', data);
       request.off('end', end);
       request.off('error', failed);
@@ -320,11 +345,11 @@ export const readRequestBody = async (
       cleanup();
       resolve(Buffer.concat(chunks, length));
     };
-    if (signal.aborted || request.destroyed) {
+    if (bodySignal.aborted || request.destroyed) {
       aborted();
       return;
     }
-    signal.addEventListener('abort', aborted, { once: true });
+    bodySignal.addEventListener('abort', aborted, { once: true });
     request.on('data', data);
     request.once('end', end);
     request.once('error', failed);
@@ -343,7 +368,5 @@ export const readRequestBody = async (
     if (!parsed.success) throw new RequestBodyError(400);
     return parsed.data;
   });
-  // Pinned body-parser 1.x checks _body before reading. Keep its exact checked
-  // value and skip only its second byte read, never the transport's validation.
-  Object.assign(request, { body: Array.isArray(body) ? messages : messages[0], _body: true });
+  Object.assign(request, { body: Array.isArray(body) ? messages : messages[0] });
 };

@@ -1,7 +1,6 @@
-import { Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff, Lock, Minus, Plus } from 'lucide-react';
 import { type FormEvent, type RefObject, useState } from 'react';
 
-import { JsonEditor } from '@mcp-gateway/mainview/components/JsonEditor';
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
 import { Input } from '@mcp-gateway/mainview/components/mac/input';
 import {
@@ -12,21 +11,33 @@ import { Alert, CheckboxRow, Field, Modal } from '@mcp-gateway/mainview/componen
 import { useI18n } from '@mcp-gateway/mainview/i18n';
 import { generateToken } from '@mcp-gateway/mainview/lib/token';
 import type { ConfigFormat } from '@mcp-gateway/shared/config-document';
-import { isRecord, parseConfigDocument } from '@mcp-gateway/shared/config-document';
+import {
+  isRecord,
+  parseConfigDocument,
+  SAFE_NAME,
+  sensitiveEnvOverrides,
+} from '@mcp-gateway/shared/config-document';
 import type { ConfigFile, HttpServerConfig, StdioServerConfig } from '@mcp-gateway/shared/types';
 
-export type Backend = StdioServerConfig | HttpServerConfig;
 export type Document = { text: string; revision: string; dirty: boolean };
+
+export interface KeyValueRow {
+  id: string;
+  key: string;
+  value: string;
+  secret?: boolean;
+}
+
 export type Editor = {
   original: string | null;
   name: string;
   type: 'stdio' | 'http';
   command: string;
-  args: string;
-  env: string;
+  args: string[];
+  env: KeyValueRow[];
   cwd: string;
   url: string;
-  headers: string;
+  headers: KeyValueRow[];
   disabled: boolean;
   legacyProtocol: boolean;
   /** `undefined` inherits the global key unless `tokenRef` is set; any string is this server's own key. */
@@ -35,8 +46,74 @@ export type Editor = {
   tokenRef: string | undefined;
 };
 
+let rowSequence = 0;
+
+export const createKeyValueRow = (
+  key = '',
+  value = '',
+  secret = isDefaultSecretRow(key, value),
+): KeyValueRow => ({
+  id: `kv-${++rowSequence}`,
+  key,
+  value,
+  secret,
+});
+
+const isDefaultSecretRow = (key: string, value: string): boolean => {
+  if (!key && !value) return false;
+  if (/\$\{[^}]+\}/.test(value)) return false;
+  return (
+    /^(authorization|x-api-key|api-key)$/i.test(key) ||
+    /(-api-key|token|secret|password|key)$/i.test(key)
+  );
+};
+
+export const recordToKeyValueRows = (record: Record<string, string> | undefined): KeyValueRow[] => {
+  if (!record) return [];
+  return Object.entries(record).map(([key, value]) => createKeyValueRow(key, value));
+};
+
+const FORBIDDEN_MAP_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+export const keyValueRowsToRecord = (
+  rows: readonly KeyValueRow[],
+  message: string,
+): Record<string, string> => {
+  const result = Object.create(null) as Record<string, string>;
+  for (const row of rows) {
+    const key = row.key.trim();
+    if (key.length === 0) {
+      if (row.value.length > 0) throw new Error(message);
+      continue;
+    }
+    if (FORBIDDEN_MAP_KEYS.has(key) || Object.hasOwn(result, key)) {
+      throw new Error(message);
+    }
+    result[key] = row.value;
+  }
+  return { ...result };
+};
+
+const hasInvalidKeyValueRows = (rows: readonly KeyValueRow[]): boolean => {
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const key = row.key.trim();
+    if (key.length === 0) {
+      if (row.value.length > 0) return true;
+      continue;
+    }
+    if (FORBIDDEN_MAP_KEYS.has(key) || seen.has(key)) return true;
+    seen.add(key);
+  }
+  return false;
+};
+
 const stringMap = (value: unknown): value is Record<string, string> => {
-  return isRecord(value) && Object.values(value).every((item) => typeof item === 'string');
+  return (
+    isRecord(value) &&
+    !Object.hasOwn(value, '__proto__') &&
+    Object.values(value).every((item) => typeof item === 'string')
+  );
 };
 /** Parses an editor JSON field that must hold an object of string values. */
 export const parseStringMap = (text: string, message: string): Record<string, string> => {
@@ -44,7 +121,7 @@ export const parseStringMap = (text: string, message: string): Record<string, st
   if (!stringMap(value)) throw new Error(message);
   return value;
 };
-const isBackend = (value: unknown): value is Backend => {
+const isBackend = (value: unknown): value is StdioServerConfig | HttpServerConfig => {
   if (
     !isRecord(value) ||
     (value.disabled !== undefined && typeof value.disabled !== 'boolean') ||
@@ -99,11 +176,11 @@ export const emptyEditor = (): Editor => ({
   name: '',
   type: 'stdio',
   command: '',
-  args: '[]',
-  env: '{}',
+  args: [],
+  env: [],
   cwd: '',
   url: '',
-  headers: '{}',
+  headers: [],
   disabled: false,
   legacyProtocol: false,
   token: undefined,
@@ -113,11 +190,142 @@ export const emptyEditor = (): Editor => ({
 export const bearPreset = (name = ''): Pick<Editor, 'name' | 'command' | 'args'> => ({
   name: name || 'bear',
   command: '/Applications/Bear.app/Contents/MacOS/bearcli',
-  args: '["mcp-server"]',
+  args: ['mcp-server'],
 });
+
+interface ArgsListEditorProps {
+  args: string[];
+  readOnly: boolean;
+  onChange: (args: string[]) => void;
+}
+
+const ArgsListEditor = ({ args, readOnly, onChange }: ArgsListEditorProps) => {
+  const updateArg = (index: number, value: string) => {
+    const next = [...args];
+    next[index] = value;
+    onChange(next);
+  };
+  const removeArg = (index: number) => {
+    onChange(args.filter((_, idx) => idx !== index));
+  };
+  const addArg = () => {
+    onChange([...args, '']);
+  };
+  return (
+    <div className="args-list flex flex-col gap-1.5">
+      {args.map((arg, index) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: ordered string arguments array edited by index.
+        <div key={index} className="flex items-center gap-1.5">
+          <Input
+            value={arg}
+            readOnly={readOnly}
+            placeholder={`--arg-${index + 1}`}
+            onChange={(event) => updateArg(index, event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !readOnly) {
+                event.preventDefault();
+                addArg();
+              }
+            }}
+          />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            disabled={readOnly}
+            aria-label={`Remove argument ${index + 1}`}
+            onClick={() => removeArg(index)}
+          >
+            <Minus />
+          </Button>
+        </div>
+      ))}
+      <div>
+        <Button type="button" disabled={readOnly} onClick={addArg}>
+          <Plus /> Add Argument
+        </Button>
+      </div>
+    </div>
+  );
+};
+
+interface KeyValueTableEditorProps {
+  rows: KeyValueRow[];
+  readOnly: boolean;
+  onChange: (rows: KeyValueRow[]) => void;
+}
+
+const KeyValueTableEditor = ({ rows, readOnly, onChange }: KeyValueTableEditorProps) => {
+  const updateRow = (id: string, patch: Partial<KeyValueRow>) => {
+    onChange(rows.map((row) => (row.id === id ? { ...row, ...patch } : row)));
+  };
+  const removeRow = (id: string) => {
+    onChange(rows.filter((row) => row.id !== id));
+  };
+  const addRow = () => {
+    onChange([...rows, createKeyValueRow()]);
+  };
+  return (
+    <div className="kv-table flex flex-col gap-1.5">
+      {rows.map((row) => {
+        const isEnvRef = /\$\{[^}]+\}/.test(row.value);
+        return (
+          <div key={row.id} className="flex items-center gap-1.5">
+            <Input
+              value={row.key}
+              readOnly={readOnly}
+              placeholder="KEY"
+              onChange={(event) => updateRow(row.id, { key: event.target.value })}
+            />
+            <Input
+              type={row.secret ? 'password' : 'text'}
+              value={row.value}
+              readOnly={readOnly}
+              placeholder="value or ${ENV_VAR}"
+              onChange={(event) => updateRow(row.id, { value: event.target.value })}
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              disabled={readOnly}
+              aria-label={row.secret ? 'Show value' : 'Mask value'}
+              title={
+                isEnvRef
+                  ? 'Environment variable reference'
+                  : row.secret
+                    ? 'Show value'
+                    : 'Mask secret value'
+              }
+              onClick={() => updateRow(row.id, { secret: !row.secret })}
+            >
+              {isEnvRef ? <Lock /> : row.secret ? <EyeOff /> : <Eye />}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              disabled={readOnly}
+              aria-label={`Remove ${row.key || 'row'}`}
+              onClick={() => removeRow(row.id)}
+            >
+              <Minus />
+            </Button>
+          </div>
+        );
+      })}
+      <div>
+        <Button type="button" disabled={readOnly} onClick={addRow}>
+          <Plus /> Add Row
+        </Button>
+      </div>
+    </div>
+  );
+};
 
 interface ServerEditor {
   editor: Editor;
+  existingNames?: ReadonlySet<string>;
   editorError: string | null;
   configurationLocked: boolean;
   fallbackFocus: RefObject<HTMLElement | null>;
@@ -127,8 +335,18 @@ interface ServerEditor {
   onDismissError: () => void;
 }
 
+const rowsToEnvPreview = (rows: readonly KeyValueRow[]): Record<string, string> => {
+  const env: Record<string, string> = {};
+  for (const row of rows) {
+    const key = row.key.trim();
+    if (key && !FORBIDDEN_MAP_KEYS.has(key)) env[key] = row.value;
+  }
+  return env;
+};
+
 export const ServerEditor = ({
   editor,
+  existingNames,
   editorError,
   configurationLocked,
   fallbackFocus,
@@ -140,11 +358,24 @@ export const ServerEditor = ({
   const { t } = useI18n();
   // Local reveal only; it resets whenever the dialog unmounts.
   const [showKey, setShowKey] = useState(false);
+  const [dismissedEnvSignature, setDismissedEnvSignature] = useState<string | null>(null);
+  const trimmedName = editor.name.trim();
+  const isDuplicateName =
+    trimmedName.length > 0 &&
+    trimmedName !== editor.original &&
+    Boolean(existingNames?.has(trimmedName));
+  const isInvalidName = trimmedName.length > 0 && !SAFE_NAME.test(trimmedName);
+  const hasInvalidEnv = editor.type === 'stdio' && hasInvalidKeyValueRows(editor.env);
+  const hasInvalidHeaders = editor.type === 'http' && hasInvalidKeyValueRows(editor.headers);
+  const sensitiveKeys =
+    editor.type === 'stdio' ? sensitiveEnvOverrides(rowsToEnvPreview(editor.env)) : [];
+  const envSignature = sensitiveKeys.join(',');
   return (
     <Modal
       title={editor.original ? t('common.editServer') : t('editor.addTitle')}
       onClose={onClose}
       fallbackFocus={fallbackFocus}
+      busy={configurationLocked}
     >
       <form onSubmit={onSubmit}>
         <p className="dialog-intro">
@@ -156,9 +387,15 @@ export const ServerEditor = ({
             required
             value={editor.name}
             readOnly={configurationLocked}
+            aria-invalid={isDuplicateName || isInvalidName || undefined}
             onChange={(event) => onChange({ name: event.target.value })}
           />
         </Field>
+        {(isDuplicateName || isInvalidName) && (
+          <p className="inline-error" role="alert">
+            {isDuplicateName ? t('app.serverExists') : t('app.serverFieldsInvalid')}
+          </p>
+        )}
         <Field label={t('editor.transport')}>
           <NativeSelect
             value={editor.type}
@@ -183,16 +420,16 @@ export const ServerEditor = ({
               />
             </Field>
             <Field label={t('editor.args')}>
-              <JsonEditor
-                value={editor.args}
+              <ArgsListEditor
+                args={editor.args}
                 readOnly={configurationLocked}
                 onChange={(args) => onChange({ args })}
               />
             </Field>
             <div className="form-grid">
               <Field label={t('editor.env')}>
-                <JsonEditor
-                  value={editor.env}
+                <KeyValueTableEditor
+                  rows={editor.env}
                   readOnly={configurationLocked}
                   onChange={(env) => onChange({ env })}
                 />
@@ -206,6 +443,16 @@ export const ServerEditor = ({
                 />
               </Field>
             </div>
+            {hasInvalidEnv && (
+              <p className="inline-error" role="alert">
+                {t('app.environmentInvalid')}
+              </p>
+            )}
+            {sensitiveKeys.length > 0 && dismissedEnvSignature !== envSignature && (
+              <Alert kind="warning" onDismiss={() => setDismissedEnvSignature(envSignature)}>
+                {`Overrides sensitive execution environment variable(s): ${sensitiveKeys.join(', ')}`}
+              </Alert>
+            )}
             <div className="preset-row">
               <Button
                 disabled={configurationLocked}
@@ -232,12 +479,17 @@ export const ServerEditor = ({
               // biome-ignore lint/suspicious/noTemplateCurlyInString: a literal environment reference.
               help={t('editor.headersHelp', { example: '${API_TOKEN}' })}
             >
-              <JsonEditor
-                value={editor.headers}
+              <KeyValueTableEditor
+                rows={editor.headers}
                 readOnly={configurationLocked}
                 onChange={(headers) => onChange({ headers })}
               />
             </Field>
+            {hasInvalidHeaders && (
+              <p className="inline-error" role="alert">
+                {t('app.headersInvalid')}
+              </p>
+            )}
           </>
         )}
         <Field label={t('editor.auth')} help={t('editor.authHelp')}>
@@ -309,7 +561,17 @@ export const ServerEditor = ({
         />
         <div className="dialog-actions">
           <Button onClick={onClose}>{t('common.cancel')}</Button>
-          <Button type="submit" variant="default" disabled={configurationLocked}>
+          <Button
+            type="submit"
+            variant="default"
+            disabled={
+              configurationLocked ||
+              isDuplicateName ||
+              isInvalidName ||
+              hasInvalidEnv ||
+              hasInvalidHeaders
+            }
+          >
             {t('editor.apply')}
           </Button>
         </div>

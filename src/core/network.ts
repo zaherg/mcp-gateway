@@ -13,23 +13,34 @@ import {
 } from '@mcp-gateway/core/ipv4';
 import type { GatewayConfig, InterfaceChoice, NetworkKind } from '@mcp-gateway/shared/types';
 
+export type CompiledPeerRange = NonNullable<ReturnType<typeof parseIpv4Range>>;
+
+export const compileAllowedPeers = (
+  allowedPeers?: readonly string[],
+): readonly CompiledPeerRange[] | undefined => {
+  if (!allowedPeers) return undefined;
+  return allowedPeers.flatMap((text) => {
+    const range = parseIpv4Range(text);
+    return range ? [range] : [];
+  });
+};
+
 const ipv4 = (value: string): string | null => {
   if (isIP(value) === 4) return value;
   if (/^::ffff:/i.test(value)) {
     const suffix = value.slice(7);
     if (isIP(suffix) === 4) return suffix;
     if (/^[0-9a-f]{1,4}:[0-9a-f]{1,4}$/i.test(suffix)) {
-      const [high, low] = suffix.split(':').map((part) => Number.parseInt(part, 16));
+      const [high = 0, low = 0] = suffix.split(':').map((part) => Number.parseInt(part, 16));
       return `${high >>> 8}.${high & 255}.${low >>> 8}.${low & 255}`;
     }
   }
   return null;
 };
-const numeric = (address: string) =>
-  address.split('.').reduce((n, part) => (n * 256 + Number(part)) >>> 0, 0);
-const isLoopback = (address: string) => ipv4(address)?.startsWith('127.') === true;
+const isLoopback = (address: string) =>
+  address === '::1' || ipv4(address)?.startsWith('127.') === true;
 const isLocal = (address: string): boolean => {
-  const value = ipv4Number(ipv4(address) ?? '');
+  const value = ipv4Number(address);
   return value !== null && isLocalIpv4(value);
 };
 
@@ -70,26 +81,55 @@ export const selectInterface = (host: string): InterfaceChoice => {
 export const peerAllowed = (
   peer: string,
   selected: InterfaceChoice,
-  allowedPeers?: readonly string[],
+  allowedPeers?: readonly (string | CompiledPeerRange)[],
 ): boolean => {
+  if (peer === '::1') return selected.kind === 'loopback';
   const ip = ipv4(peer);
   if (!ip) return false;
   if (isLoopback(ip)) return true;
+  const value = ipv4Number(ip);
   // A broad local netmask must not admit public addresses or other networks.
-  if (selected.kind === 'loopback' || !isLocal(ip)) return false;
+  if (value === null || selected.kind === 'loopback' || !isLocalIpv4(value)) return false;
   // Configured ranges replace the interface netmask, which a tunnel may report as /32.
   if (allowedPeers) {
-    const value = ipv4Number(ip);
+    return allowedPeers.some((entry) => {
+      const range = typeof entry === 'string' ? parseIpv4Range(entry) : entry;
+      return range !== null && inIpv4Range(value, range);
+    });
+  }
+  const mask = ipv4Number(selected.netmask);
+  const selectedAddress = ipv4Number(selected.address);
+  if (mask === null || selectedAddress === null) return false;
+  return (value & mask) >>> 0 === (selectedAddress & mask) >>> 0;
+};
+
+export const validateHostHeader = (
+  hostHeader: string | undefined,
+  listenHost: string,
+  listenPort: number,
+): boolean => {
+  if (typeof hostHeader !== 'string' || hostHeader.length === 0) return false;
+  const bracketedHost =
+    listenHost.includes(':') && !listenHost.startsWith('[') ? `[${listenHost}]` : listenHost;
+  const expectedWithPort = `${bracketedHost}:${listenPort}`;
+  if (bracketedHost.startsWith('[')) {
     return (
-      value !== null &&
-      allowedPeers.some((text) => {
-        const range = parseIpv4Range(text);
-        return range !== null && inIpv4Range(value, range);
-      })
+      hostHeader.toLowerCase() === expectedWithPort.toLowerCase() ||
+      (listenPort === 80 && hostHeader.toLowerCase() === bracketedHost.toLowerCase())
     );
   }
-  const mask = numeric(selected.netmask);
-  return (numeric(ip) & mask) === (numeric(selected.address) & mask);
+  return hostHeader === expectedWithPort || (listenPort === 80 && hostHeader === listenHost);
+};
+
+export const validateOriginHeader = (
+  originHeader: string | undefined,
+  listenHost: string,
+  listenPort: number,
+): boolean => {
+  if (originHeader === undefined) return true;
+  const expectedOrigin =
+    listenPort === 80 ? `http://${listenHost}` : `http://${listenHost}:${listenPort}`;
+  return originHeader === expectedOrigin;
 };
 
 /** One budget for every self-proxy hostname lookup an operation performs. */

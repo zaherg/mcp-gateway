@@ -1,14 +1,24 @@
 import { Eye, EyeOff } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
 import { Input } from '@mcp-gateway/mainview/components/mac/input';
-import { Field, Toggle } from '@mcp-gateway/mainview/components/ui';
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from '@mcp-gateway/mainview/components/mac/native-select';
+import { Alert, Field, Toggle } from '@mcp-gateway/mainview/components/ui';
+import { useGatewayView } from '@mcp-gateway/mainview/context/GatewayViewContext';
 import { useI18n } from '@mcp-gateway/mainview/i18n';
 import { generateToken } from '@mcp-gateway/mainview/lib/token';
-import type { MessageKey } from '@mcp-gateway/shared/i18n';
-import type { AppSnapshot } from '@mcp-gateway/shared/rpc';
-import type { ConfigFile, GatewaySnapshot, NetworkKind } from '@mcp-gateway/shared/types';
+import {
+  languageName,
+  localeTag,
+  type MessageKey,
+  parseLanguagePreference,
+} from '@mcp-gateway/shared/i18n';
+import { needsLoginRetry } from '@mcp-gateway/shared/rpc';
+import type { ConfigFile, NetworkKind } from '@mcp-gateway/shared/types';
 
 const NETWORK_LABELS: Record<NetworkKind, MessageKey> = {
   loopback: 'settings.networkKind.loopback',
@@ -30,44 +40,112 @@ const peerList = (text: string): string[] | undefined => {
   return text.trim() ? entries : undefined;
 };
 
-interface Settings {
-  config: ConfigFile | null;
-  gateway: GatewaySnapshot | undefined;
-  snapshot: AppSnapshot;
-  configurationLocked: boolean;
-  update: (config: ConfigFile) => void;
-  showToken: boolean;
-  setShowToken: (show: boolean) => void;
-  filename: string;
-  onMoveKeys: () => void;
-}
-
-export const Settings = ({
-  config,
-  gateway,
-  snapshot,
-  configurationLocked,
-  update,
-  showToken,
-  setShowToken,
-  filename,
-  onMoveKeys,
-}: Settings) => {
+export const Settings = () => {
+  const {
+    config,
+    gateway,
+    snapshot,
+    dirty,
+    busy,
+    error,
+    clearError,
+    configurationLocked,
+    commitConfig,
+    showToken,
+    setShowToken,
+    filename,
+    openKeyMigration,
+    changeLanguage,
+    revealConfig,
+    openConfigInEditor,
+    importExternalServers,
+  } = useGatewayView();
   const { t } = useI18n();
   const movable = gateway?.keyMigration;
   const setGateway = (patch: Partial<ConfigFile['gateway']>) => {
-    if (config) update({ ...config, gateway: { ...config.gateway, ...patch } });
+    if (config) void commitConfig({ ...config, gateway: { ...config.gateway, ...patch } });
   };
-  const [peersText, setPeersText] = useState('');
-  const peers = config?.gateway.allowedPeers;
-  // The typed text stays while it still means the configured list, so separators are not
-  // rewritten under the caret; a discard, reset or raw edit shows the configured list.
-  const peersShown =
-    JSON.stringify(peerList(peersText)) === JSON.stringify(peers)
-      ? peersText
-      : (peers?.join(', ') ?? '');
+  const [hostInput, setHostInput] = useState(config?.gateway.host ?? '');
+  const [portInput, setPortInput] = useState(
+    config ? (config.gateway.port === 0 ? '' : String(config.gateway.port)) : '',
+  );
+  const [peersText, setPeersText] = useState(config?.gateway.allowedPeers?.join(', ') ?? '');
+  const [tokenInput, setTokenInput] = useState(config?.gateway.token ?? '');
+  const [dismissedOpErrorId, setDismissedOpErrorId] = useState<string | null>(null);
+  const [importStatus, setImportStatus] = useState<string | null>(null);
+
+  const revision = gateway?.revision;
+  const savedHost = config?.gateway.host ?? '';
+  const savedPort = config ? (config.gateway.port === 0 ? '' : String(config.gateway.port)) : '';
+  const savedPeers = config?.gateway.allowedPeers?.join(', ') ?? '';
+  const savedToken = config?.gateway.token ?? '';
+
+  // Sync local input drafts whenever the authoritative config revision or saved fields advance.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `revision` triggers resync even if a field matches a previous revision.
+  useEffect(() => {
+    setHostInput(savedHost);
+    setPortInput(savedPort);
+    setPeersText(savedPeers);
+    setTokenInput(savedToken);
+  }, [revision, savedHost, savedPort, savedPeers, savedToken]);
+
+  if (!snapshot) return null;
+
+  const commitHost = () => {
+    if (!config || configurationLocked || hostInput === config.gateway.host) return;
+    setGateway({ host: hostInput });
+  };
+
+  const commitPort = () => {
+    if (!config || configurationLocked) return;
+    const nextPort = portInput.trim() === '' ? 0 : Number(portInput);
+    if (Number.isNaN(nextPort) || nextPort === config.gateway.port) return;
+    setGateway({ port: nextPort });
+  };
+
+  const commitPeers = () => {
+    if (!config || configurationLocked) return;
+    const nextPeers = peerList(peersText);
+    if (JSON.stringify(nextPeers) === JSON.stringify(config.gateway.allowedPeers)) return;
+    setGateway({ allowedPeers: nextPeers });
+  };
+
+  const commitToken = () => {
+    if (!config || configurationLocked || tokenInput === (config.gateway.token ?? '')) return;
+    setGateway({ token: tokenInput });
+  };
+
+  const handleImportExternal = async () => {
+    if (configurationLocked || busy || dirty) return;
+    const count = await importExternalServers();
+    if (count === null) return;
+    setImportStatus(
+      count > 0
+        ? `Imported ${count} server${count === 1 ? '' : 's'} from Claude Desktop / Cursor.`
+        : 'No new servers found in Claude Desktop or Cursor.',
+    );
+  };
+
+  const retryLogin = Boolean(
+    config &&
+      !gateway?.configError &&
+      needsLoginRetry(snapshot.login, config.gateway.launchAtLogin ?? false),
+  );
+  const operationalError =
+    gateway?.operationalError &&
+    gateway.operationalError.occurrenceId !== dismissedOpErrorId &&
+    !error
+      ? gateway.operationalError
+      : null;
+
   return (
     <section className="panel settings-panel">
+      {error && <Alert onDismiss={clearError}>{error}</Alert>}
+      {operationalError && (
+        <Alert onDismiss={() => setDismissedOpErrorId(operationalError.occurrenceId)}>
+          {operationalError.code}: {operationalError.message}
+        </Alert>
+      )}
       <div className="section-heading">
         <div>
           <h2>{t('settings.preferences')}</h2>
@@ -75,93 +153,9 @@ export const Settings = ({
         </div>
       </div>
       {config ? (
-        <>
-          <div className="form-grid">
-            <Field label={t('settings.address')} help={t('settings.addressHelp')}>
-              <Input
-                aria-label={t('settings.address')}
-                readOnly={configurationLocked}
-                list="interfaces"
-                value={config.gateway.host}
-                onChange={(event) => setGateway({ host: event.target.value })}
-              />
-              <datalist id="interfaces">
-                {gateway?.interfaces.map((item) => (
-                  <option key={`${item.name}-${item.address}`} value={item.address}>
-                    {item.name} · {t(NETWORK_LABELS[item.kind])}
-                  </option>
-                ))}
-              </datalist>
-            </Field>
-            <Field label={t('settings.port')}>
-              <Input
-                type="number"
-                readOnly={configurationLocked}
-                min="1"
-                max="65535"
-                value={config.gateway.port === 0 ? '' : config.gateway.port}
-                // Keep an empty port editable; zero is explicitly rejected by native validation.
-                onChange={(event) =>
-                  setGateway({ port: event.target.value === '' ? 0 : event.target.valueAsNumber })
-                }
-              />
-            </Field>
-          </div>
-          <Field label={t('settings.peers')} help={t('settings.peersHelp')}>
-            <Input
-              autoComplete="off"
-              readOnly={configurationLocked}
-              spellCheck={false}
-              placeholder={t('settings.peersPlaceholder')}
-              value={peersShown}
-              // Native validation checks every entry on save.
-              onChange={(event) => {
-                setPeersText(event.target.value);
-                setGateway({ allowedPeers: peerList(event.target.value) });
-              }}
-            />
-          </Field>
-          <Field label={t('settings.token')} help={t('settings.tokenHelp')}>
-            {config.gateway.tokenRef !== undefined ? (
-              <p className="m-0 text-[13px]">{t('keys.stored')}</p>
-            ) : (
-              <div className="token-input">
-                <Input
-                  autoComplete="off"
-                  readOnly={configurationLocked}
-                  spellCheck={false}
-                  type={showToken ? 'text' : 'password'}
-                  value={config.gateway.token ?? ''}
-                  onChange={(event) => setGateway({ token: event.target.value })}
-                />
-                <Button
-                  variant="ghost"
-                  size="icon-lg"
-                  aria-label={showToken ? t('settings.hideToken') : t('settings.showToken')}
-                  onClick={() => setShowToken(!showToken)}
-                >
-                  {showToken ? <EyeOff /> : <Eye />}
-                </Button>
-              </div>
-            )}
-          </Field>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              size="lg"
-              disabled={configurationLocked}
-              // A new literal replaces a Keychain reference; that is also the repair for an unreadable item.
-              onClick={() => setGateway({ token: generateToken(), tokenRef: undefined })}
-            >
-              {t('settings.generateToken')}
-            </Button>
-            {/* Removed, not disabled, once no literal key remains. */}
-            {movable && (movable.gateway || movable.servers.length > 0) && (
-              <Button size="lg" disabled={configurationLocked} onClick={onMoveKeys}>
-                {t('keys.title')}
-              </Button>
-            )}
-          </div>
-          <div className="startup-settings">
+        <div className="grid gap-4">
+          <div className="settings-group">
+            <h3>General</h3>
             <Toggle
               label={t('settings.launchAtLogin')}
               description={t('settings.launchAtLoginDescription')}
@@ -181,6 +175,19 @@ export const Settings = ({
                     : t('settings.loginItemDisabled')}
               </p>
               {snapshot.login.error && <p className="inline-error">{snapshot.login.error}</p>}
+              {retryLogin && (
+                <div className="mt-1">
+                  <Button
+                    size="lg"
+                    disabled={configurationLocked}
+                    onClick={() =>
+                      setGateway({ launchAtLogin: config.gateway.launchAtLogin ?? false })
+                    }
+                  >
+                    {t('draft.retryLogin')}
+                  </Button>
+                </div>
+              )}
               <small>{t('settings.loginItemNote')}</small>
             </div>
             <Toggle
@@ -197,8 +204,177 @@ export const Settings = ({
               checked={config.gateway.keepAwake ?? false}
               onChange={(value) => setGateway({ keepAwake: value || undefined })}
             />
+            <Field label={t('shell.languageLabel')} help={t('shell.languageHelp')}>
+              <NativeSelect
+                value={snapshot.language.preference}
+                disabled={configurationLocked || busy}
+                onChange={(event) => {
+                  const preference = parseLanguagePreference(
+                    event.target.value,
+                    snapshot.language.available,
+                  );
+                  if (preference) changeLanguage(preference);
+                }}
+              >
+                <NativeSelectOption value="system">{t('shell.languageSystem')}</NativeSelectOption>
+                {snapshot.language.available.map((locale) => (
+                  <NativeSelectOption key={locale} value={locale} lang={localeTag(locale)}>
+                    {languageName(locale)}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            </Field>
           </div>
-        </>
+          <div className="settings-group">
+            <h3>Network</h3>
+            <div className="form-grid">
+              <Field label={t('settings.address')} help={t('settings.addressHelp')}>
+                <Input
+                  aria-label={t('settings.address')}
+                  readOnly={configurationLocked}
+                  list="interfaces"
+                  value={hostInput}
+                  onChange={(event) => setHostInput(event.target.value)}
+                  onBlur={commitHost}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      commitHost();
+                    }
+                  }}
+                />
+                <datalist id="interfaces">
+                  {gateway?.interfaces.map((item) => (
+                    <option key={`${item.name}-${item.address}`} value={item.address}>
+                      {item.name} · {t(NETWORK_LABELS[item.kind])}
+                    </option>
+                  ))}
+                </datalist>
+              </Field>
+              <Field label={t('settings.port')}>
+                <Input
+                  type="number"
+                  readOnly={configurationLocked}
+                  min="1"
+                  max="65535"
+                  value={portInput}
+                  // Keep an empty port editable; zero is explicitly rejected by native validation.
+                  onChange={(event) => setPortInput(event.target.value)}
+                  onBlur={commitPort}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      commitPort();
+                    }
+                  }}
+                />
+              </Field>
+            </div>
+            <Field label={t('settings.peers')} help={t('settings.peersHelp')}>
+              <Input
+                autoComplete="off"
+                readOnly={configurationLocked}
+                spellCheck={false}
+                placeholder={t('settings.peersPlaceholder')}
+                value={peersText}
+                // Native validation checks every entry on save.
+                onChange={(event) => setPeersText(event.target.value)}
+                onBlur={commitPeers}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    commitPeers();
+                  }
+                }}
+              />
+            </Field>
+          </div>
+          <div className="settings-group">
+            <h3>Security</h3>
+            <Field label={t('settings.token')} help={t('settings.tokenHelp')}>
+              {config.gateway.tokenRef !== undefined ? (
+                <p className="m-0 text-[13px]">{t('keys.stored')}</p>
+              ) : (
+                <div className="token-input">
+                  <Input
+                    autoComplete="off"
+                    readOnly={configurationLocked}
+                    spellCheck={false}
+                    type={showToken ? 'text' : 'password'}
+                    value={tokenInput}
+                    onChange={(event) => setTokenInput(event.target.value)}
+                    onBlur={commitToken}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault();
+                        commitToken();
+                      }
+                    }}
+                  />
+                  <Button
+                    variant="ghost"
+                    size="icon-lg"
+                    aria-label={showToken ? t('settings.hideToken') : t('settings.showToken')}
+                    onClick={() => setShowToken(!showToken)}
+                  >
+                    {showToken ? <EyeOff /> : <Eye />}
+                  </Button>
+                </div>
+              )}
+            </Field>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="lg"
+                disabled={configurationLocked}
+                // A new literal replaces a Keychain reference; that is also the repair for an unreadable item.
+                onClick={() => {
+                  const nextToken = generateToken();
+                  setTokenInput(nextToken);
+                  setGateway({ token: nextToken, tokenRef: undefined });
+                }}
+              >
+                {t('settings.generateToken')}
+              </Button>
+              {/* Removed, not disabled, once no literal key remains. */}
+              {movable && (movable.gateway || movable.servers.length > 0) && (
+                <Button size="lg" disabled={configurationLocked} onClick={openKeyMigration}>
+                  {t('keys.title')}
+                </Button>
+              )}
+            </div>
+          </div>
+          <div className="settings-group">
+            <h3>Advanced</h3>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="secondary"
+                disabled={configurationLocked || busy}
+                onClick={revealConfig}
+              >
+                {t('raw.showInFinder')}
+              </Button>
+              <Button
+                variant="secondary"
+                disabled={configurationLocked || busy}
+                onClick={openConfigInEditor}
+              >
+                Open in External Editor
+              </Button>
+              <Button
+                variant="secondary"
+                disabled={configurationLocked || busy || dirty}
+                onClick={() => void handleImportExternal()}
+              >
+                Import Servers from Claude Desktop / Cursor
+              </Button>
+            </div>
+            {importStatus && (
+              <p role="status" className="m-0 mt-2 text-[12px] text-mac-label-secondary">
+                {importStatus}
+              </p>
+            )}
+          </div>
+        </div>
       ) : (
         <p>{t('settings.paused')}</p>
       )}

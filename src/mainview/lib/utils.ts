@@ -6,36 +6,9 @@ import { extendTailwindMerge } from 'tailwind-merge';
 const twMerge = extendTailwindMerge({
   extend: {
     theme: {
-      text: [
-        'mac-large-title',
-        'mac-title-1',
-        'mac-title-2',
-        'mac-title-3',
-        'mac-headline',
-        'mac-body',
-        'mac-callout',
-        'mac-subheadline',
-        'mac-footnote',
-        'mac-caption',
-      ],
-      radius: [
-        'mac-control',
-        'mac-menu',
-        'mac-item',
-        'mac-group',
-        'mac-popover',
-        'mac-alert',
-        'mac-window',
-      ],
-      shadow: [
-        'mac-menu',
-        'mac-popover',
-        'mac-tooltip',
-        'mac-dock',
-        'mac-window',
-        'mac-window-inactive',
-        'mac-focus',
-      ],
+      text: ['mac-title-1', 'mac-headline', 'mac-body', 'mac-subheadline'],
+      radius: ['mac-control', 'mac-popover'],
+      shadow: ['mac-popover'],
     },
   },
 });

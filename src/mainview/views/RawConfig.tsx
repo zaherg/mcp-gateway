@@ -1,23 +1,21 @@
 import { Compartment, EditorState, type Extension } from '@codemirror/state';
 import { EditorView, lineNumbers } from '@codemirror/view';
-import { ChevronRight } from 'lucide-react';
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { ChevronRight, CircleHelp } from 'lucide-react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
+import { useGatewayView } from '@mcp-gateway/mainview/context/GatewayViewContext';
 import type { Document } from '@mcp-gateway/mainview/dialogs/ServerEditor';
 import { useI18n } from '@mcp-gateway/mainview/i18n';
 import { jsonEditing } from '@mcp-gateway/mainview/lib/json-editing';
 import {
   CONFIG_TOO_LARGE,
-  type ConfigFormat,
   type ConfigIssue,
   formatConfigDocument,
   MAX_CONFIG_BYTES,
   parseConfigTree,
 } from '@mcp-gateway/shared/config-document';
 import type { Translate } from '@mcp-gateway/shared/i18n';
-import type { AppClient } from '@mcp-gateway/shared/rpc';
-import type { GatewaySnapshot } from '@mcp-gateway/shared/types';
 
 // Proposed interaction values, not measured limits.
 const PREVIEW_DEBOUNCE_MS = 300;
@@ -30,21 +28,16 @@ type Feedback =
   | { kind: 'unavailable'; text: string }
   | { kind: 'issue'; text: string; message: string; at?: { line: number; column: number } };
 
-interface Pending {
-  text: string;
-  revision: string;
-  format: ConfigFormat;
-  attempt: number;
-}
-
-interface EditTarget {
+interface SyncState {
   text: string;
   revision: string;
   dirty: boolean;
   locked: boolean;
   invalid: boolean;
   setDoc: (doc: Document) => void;
-  setNotice: (notice: string) => void;
+  lastEmitted: string | null;
+  lastSynced: { text: string; revision: string; dirty: boolean };
+  listener: Extension | null;
 }
 
 const staticExtensions: Extension[] = [...jsonEditing, lineNumbers()];
@@ -114,93 +107,82 @@ const feedbackText = (feedback: Feedback, t: Translate): string => {
 const tooLarge = (text: string): boolean =>
   new TextEncoder().encode(text).length > MAX_CONFIG_BYTES;
 
-interface RawConfig {
-  client: AppClient;
+interface RawConfigProps {
   visible: boolean;
-  doc: Document;
-  setDoc: (doc: Document) => void;
-  configurationLocked: boolean;
-  format: ConfigFormat;
-  filename: string;
-  gateway: GatewaySnapshot | undefined;
-  dirty: boolean;
-  retryLogin: boolean;
-  save: () => Promise<boolean>;
-  discard: () => Promise<void>;
-  reveal: () => void;
-  rawOpen: boolean;
-  setRawOpen: (open: boolean) => void;
-  setNotice: (notice: string) => void;
 }
 
-export const RawConfig = ({
-  client,
-  visible,
-  doc,
-  setDoc,
-  configurationLocked,
-  format,
-  filename,
-  gateway,
-  dirty,
-  retryLogin,
-  save,
-  discard,
-  reveal,
-  rawOpen,
-  setRawOpen,
-  setNotice,
-}: RawConfig) => {
+export const RawConfig = ({ visible }: RawConfigProps) => {
+  const {
+    client,
+    doc,
+    setDoc,
+    configurationLocked,
+    busy,
+    format,
+    filename,
+    gateway,
+    dirty,
+    saveRawConfig,
+    discardRawConfig,
+    revealConfig,
+    openConfigInEditor,
+    importExternalServers,
+    rawOpen,
+    setRawOpen,
+  } = useGatewayView();
   const { t } = useI18n();
+  const locked = configurationLocked || busy;
   const previewOpen = visible && rawOpen;
   const fieldId = useId();
   const [feedback, setFeedback] = useState<Feedback>({ kind: 'idle' });
-  // A result applies only to its own text generation: open state, lock, text, revision, format.
-  const generation = useRef(0);
-  const inFlight = useRef(false);
-  const pending = useRef<Pending | null>(null);
-  const unmounted = useRef(false);
-  const displayTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const live = useRef({ open: previewOpen, locked: configurationLocked });
-  live.current = { open: previewOpen, locked: configurationLocked };
-  const revisionRef = useRef(doc.revision);
-  revisionRef.current = doc.revision;
+  const [schemaOpen, setSchemaOpen] = useState(false);
+  const [importNotice, setImportNotice] = useState<string | null>(null);
 
+  const validationSeq = useRef(0);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const compartmentRef = useRef<Compartment | null>(null);
   if (compartmentRef.current === null) compartmentRef.current = new Compartment();
-  // The editor's own emitted text, so the sync effect can tell an echo from an external replacement.
-  const lastEmitted = useRef<string | null>(null);
-  const lastSynced = useRef({ text: doc.text, revision: doc.revision, dirty: doc.dirty });
-  const editRef = useRef<EditTarget>({
-    text: doc.text,
-    revision: doc.revision,
-    dirty: doc.dirty,
-    locked: configurationLocked,
+
+  const currentDocText = doc?.text ?? '';
+  const currentDocRevision = doc?.revision ?? '';
+  const currentDocDirty = doc?.dirty ?? false;
+
+  const syncStateRef = useRef<SyncState>({
+    text: currentDocText,
+    revision: currentDocRevision,
+    dirty: currentDocDirty,
+    locked,
     invalid: false,
     setDoc,
-    setNotice,
+    lastEmitted: null,
+    lastSynced: { text: currentDocText, revision: currentDocRevision, dirty: currentDocDirty },
+    listener: null,
   });
-  const listenerRef = useRef<Extension | null>(null);
-  if (listenerRef.current === null) {
-    listenerRef.current = EditorView.updateListener.of((update) => {
+
+  if (syncStateRef.current.listener === null) {
+    syncStateRef.current.listener = EditorView.updateListener.of((update) => {
       if (!update.docChanged) return;
-      const edit = editRef.current;
-      if (edit.locked) return;
+      const sync = syncStateRef.current;
+      if (sync.locked) return;
       const text = update.state.sliceDoc();
-      if (text === (lastEmitted.current ?? edit.text)) return;
-      lastEmitted.current = text;
+      if (text === (sync.lastEmitted ?? sync.text)) return;
+      sync.lastEmitted = text;
       setFeedback({ kind: 'idle' });
-      edit.setDoc({ text, revision: edit.revision, dirty: true });
-      edit.setNotice('');
+      setImportNotice(null);
+      sync.setDoc({ text, revision: sync.revision, dirty: true });
     });
   }
 
-  const check = useCallback(
-    function check(text: string, revision: string, format: ConfigFormat, attempt: number): void {
-      if (unmounted.current || attempt !== generation.current) return;
-      if (!live.current.open || live.current.locked) return;
+  useEffect(() => {
+    const seq = ++validationSeq.current;
+    setFeedback({ kind: 'idle' });
+    if (!previewOpen || locked || !doc) return;
+
+    const text = doc.text;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const debounceId = setTimeout(() => {
+      if (seq !== validationSeq.current) return;
       if (tooLarge(text)) {
         setFeedback({ kind: 'issue', text, message: CONFIG_TOO_LARGE });
         return;
@@ -210,24 +192,13 @@ export const RawConfig = ({
         setFeedback(feedbackOf(parsed.issue, text));
         return;
       }
-      // One native request at a time; only the latest pending document is retained.
-      const armUnavailable = () => {
-        if (displayTimer.current !== null) clearTimeout(displayTimer.current);
-        displayTimer.current = setTimeout(() => {
-          displayTimer.current = null;
-          if (unmounted.current || attempt !== generation.current) return;
-          if (live.current.open && !live.current.locked) setFeedback({ kind: 'unavailable', text });
-        }, PREVIEW_DISPLAY_TIMEOUT_MS);
-      };
-      if (inFlight.current) {
-        pending.current = { text, revision, format, attempt };
-        setFeedback({ kind: 'checking' });
-        armUnavailable();
-        return;
-      }
-      inFlight.current = true;
       setFeedback({ kind: 'checking' });
-      armUnavailable();
+      timeoutId = setTimeout(() => {
+        if (seq === validationSeq.current) {
+          setFeedback({ kind: 'unavailable', text });
+        }
+      }, PREVIEW_DISPLAY_TIMEOUT_MS);
+
       void (async () => {
         let result: Feedback = { kind: 'unavailable', text };
         try {
@@ -236,98 +207,58 @@ export const RawConfig = ({
         } catch {
           // A bridge failure is not a configuration result; keep the unavailable state.
         }
-        if (displayTimer.current !== null) {
-          clearTimeout(displayTimer.current);
-          displayTimer.current = null;
+        if (timeoutId !== null) clearTimeout(timeoutId);
+        if (seq === validationSeq.current) {
+          setFeedback(result);
         }
-        inFlight.current = false;
-        const next = pending.current;
-        pending.current = null;
-        const current =
-          !unmounted.current &&
-          live.current.open &&
-          !live.current.locked &&
-          attempt === generation.current &&
-          revision === revisionRef.current;
-        if (current) setFeedback(result);
-        if (next && !unmounted.current && next.attempt === generation.current)
-          check(next.text, next.revision, next.format, next.attempt);
       })();
-    },
-    [client],
-  );
+    }, PREVIEW_DEBOUNCE_MS);
 
-  useEffect(() => {
-    generation.current += 1;
-    const attempt = generation.current;
-    pending.current = null;
-    setFeedback({ kind: 'idle' });
-    if (!previewOpen || configurationLocked) {
-      if (displayTimer.current !== null) {
-        clearTimeout(displayTimer.current);
-        displayTimer.current = null;
-      }
-      return;
-    }
-    const timer = setTimeout(
-      () => check(doc.text, doc.revision, format, attempt),
-      PREVIEW_DEBOUNCE_MS,
-    );
-    return () => clearTimeout(timer);
-  }, [check, doc.text, doc.revision, format, previewOpen, configurationLocked]);
-
-  useEffect(() => {
-    unmounted.current = false;
     return () => {
-      unmounted.current = true;
-      generation.current += 1;
-      pending.current = null;
-      if (displayTimer.current !== null) clearTimeout(displayTimer.current);
+      clearTimeout(debounceId);
+      if (timeoutId !== null) clearTimeout(timeoutId);
     };
-  }, []);
+  }, [client, doc, format, locked, previewOpen]);
 
   // A result never describes a draft that has since been replaced outside the editor.
   const current: Feedback =
-    'text' in feedback && feedback.text !== doc.text ? { kind: 'idle' } : feedback;
+    'text' in feedback && feedback.text !== currentDocText ? { kind: 'idle' } : feedback;
   // Native Save stays authoritative; this only blocks a flagged or not-yet-checked draft.
   const saveReady = current.kind === 'ok' || current.kind === 'unavailable';
   const invalid = current.kind === 'issue';
 
-  editRef.current = {
-    text: doc.text,
-    revision: doc.revision,
-    dirty: doc.dirty,
-    locked: configurationLocked,
-    invalid,
-    setDoc,
-    setNotice,
-  };
+  syncStateRef.current.text = currentDocText;
+  syncStateRef.current.revision = currentDocRevision;
+  syncStateRef.current.dirty = currentDocDirty;
+  syncStateRef.current.locked = locked;
+  syncStateRef.current.invalid = invalid;
+  syncStateRef.current.setDoc = setDoc;
 
   // The view exists only while its host is mounted; live values are read through stable refs.
   useLayoutEffect(() => {
     if (!previewOpen) return;
     const host = hostRef.current;
     const compartment = compartmentRef.current;
-    const listener = listenerRef.current;
+    const sync = syncStateRef.current;
+    const listener = sync.listener;
     if (!host || !compartment || !listener) return;
-    const edit = editRef.current;
-    const separator = lineSeparatorOf(edit.text);
+    const separator = lineSeparatorOf(sync.text);
     const view = new EditorView({
-      doc: edit.text,
+      doc: sync.text,
       extensions: [
         ...staticExtensions,
         ...(separator === null ? [] : [EditorState.lineSeparator.of(separator)]),
-        compartment.of(fieldBehavior(fieldId, edit.locked, edit.invalid)),
+        compartment.of(fieldBehavior(fieldId, sync.locked, sync.invalid)),
         listener,
       ],
       parent: host,
     });
     viewRef.current = view;
-    lastSynced.current = { text: edit.text, revision: edit.revision, dirty: edit.dirty };
+    sync.lastSynced = { text: sync.text, revision: sync.revision, dirty: sync.dirty };
     return () => {
       view.destroy();
       viewRef.current = null;
-      lastEmitted.current = null;
+      sync.lastEmitted = null;
     };
   }, [previewOpen, fieldId]);
 
@@ -336,49 +267,64 @@ export const RawConfig = ({
     const compartment = compartmentRef.current;
     if (!view || !compartment) return;
     view.dispatch({
-      effects: compartment.reconfigure(fieldBehavior(fieldId, configurationLocked, invalid)),
+      effects: compartment.reconfigure(fieldBehavior(fieldId, locked, invalid)),
     });
-  }, [configurationLocked, fieldId, invalid]);
+  }, [locked, fieldId, invalid]);
 
   useLayoutEffect(() => {
     const view = viewRef.current;
     const compartment = compartmentRef.current;
-    const listener = listenerRef.current;
+    const sync = syncStateRef.current;
+    const listener = sync.listener;
     if (!compartment || !listener) return;
     if (!view) {
-      lastSynced.current = { text: doc.text, revision: doc.revision, dirty: doc.dirty };
+      sync.lastSynced = {
+        text: currentDocText,
+        revision: currentDocRevision,
+        dirty: currentDocDirty,
+      };
       return;
     }
-    const previous = lastSynced.current;
+    const previous = sync.lastSynced;
+    const viewText = view.state.doc.toString();
+    const cleanOutOfSync = !currentDocDirty && viewText !== currentDocText;
     if (
-      previous.text === doc.text &&
-      previous.revision === doc.revision &&
-      previous.dirty === doc.dirty
+      !cleanOutOfSync &&
+      previous.text === currentDocText &&
+      previous.revision === currentDocRevision &&
+      previous.dirty === currentDocDirty
     )
       return;
-    lastSynced.current = { text: doc.text, revision: doc.revision, dirty: doc.dirty };
+    sync.lastSynced = {
+      text: currentDocText,
+      revision: currentDocRevision,
+      dirty: currentDocDirty,
+    };
     const isEditorEcho =
-      lastEmitted.current !== null &&
-      doc.text === lastEmitted.current &&
-      doc.dirty &&
-      previous.revision === doc.revision;
-    lastEmitted.current = null;
+      currentDocDirty === true &&
+      previous.revision === currentDocRevision &&
+      sync.lastEmitted !== null &&
+      currentDocText === sync.lastEmitted;
+    sync.lastEmitted = null;
     if (isEditorEcho) return;
-    const sameText = previous.text === doc.text;
+    const sameText = previous.text === currentDocText && !cleanOutOfSync;
     const resetHistory =
-      !sameText || previous.revision !== doc.revision || (previous.dirty && !doc.dirty);
+      cleanOutOfSync ||
+      !sameText ||
+      previous.revision !== currentDocRevision ||
+      (previous.dirty && !currentDocDirty);
     if (!resetHistory) return;
     // External replacement or a clean/revision boundary: fresh state and history.
     const scrollTop = view.scrollDOM.scrollTop;
     const scrollLeft = view.scrollDOM.scrollLeft;
     const main = view.state.selection.main;
-    const separator = lineSeparatorOf(doc.text);
+    const separator = lineSeparatorOf(currentDocText);
     const base = EditorState.create({
-      doc: doc.text,
+      doc: currentDocText,
       extensions: [
         ...staticExtensions,
         ...(separator === null ? [] : [EditorState.lineSeparator.of(separator)]),
-        compartment.of(fieldBehavior(fieldId, configurationLocked, invalid)),
+        compartment.of(fieldBehavior(fieldId, locked, invalid)),
         listener,
       ],
     });
@@ -395,10 +341,22 @@ export const RawConfig = ({
       view.scrollDOM.scrollTop = scrollTop;
       view.scrollDOM.scrollLeft = scrollLeft;
     }
-  }, [doc.text, doc.revision, doc.dirty, configurationLocked, fieldId, invalid]);
+  }, [currentDocText, currentDocRevision, currentDocDirty, locked, fieldId, invalid]);
+
+  const jumpToIssueLine = (lineNumber: number) => {
+    const view = viewRef.current;
+    if (!view) return;
+    const clampedLine = Math.max(1, Math.min(lineNumber, view.state.doc.lines));
+    const line = view.state.doc.line(clampedLine);
+    view.dispatch({
+      selection: { anchor: line.from },
+      effects: EditorView.scrollIntoView(line.from, { y: 'center' }),
+    });
+    view.focus();
+  };
 
   const formatDraft = () => {
-    if (configurationLocked) return;
+    if (locked || !doc) return;
     if (tooLarge(doc.text)) {
       setFeedback({ kind: 'issue', text: doc.text, message: CONFIG_TOO_LARGE });
       return;
@@ -422,11 +380,20 @@ export const RawConfig = ({
     if (text === doc.text) return;
     setFeedback({ kind: 'idle' });
     setDoc({ ...doc, text, dirty: true });
-    setNotice('');
   };
 
-  // Keep the single-flight guard alive while another tab hides the editor.
-  if (!visible) return null;
+  const handleImportExternal = async () => {
+    if (locked || dirty) return;
+    const count = await importExternalServers();
+    if (count === null) return;
+    setImportNotice(
+      count > 0
+        ? `Imported ${count} server${count === 1 ? '' : 's'} from Claude Desktop / Cursor.`
+        : 'No new servers found in Claude Desktop or Cursor.',
+    );
+  };
+
+  if (!visible || !doc) return null;
 
   return (
     <section className="panel raw-panel">
@@ -444,10 +411,47 @@ export const RawConfig = ({
       </button>
       {rawOpen && (
         <div className="raw-body">
-          <p className="mono config-path">{gateway?.configPath}</p>
-          <p>
-            {t('raw.intro')} {format === 'jsonc' ? t('raw.jsonc') : t('raw.json')} {t('raw.rename')}
-          </p>
+          <div className="mt-3 mb-2 flex items-center justify-between gap-2">
+            <p className="mono config-path m-0 text-[12px] text-mac-label-secondary">
+              {gateway?.configPath}
+            </p>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Schema reference"
+              aria-expanded={schemaOpen}
+              onClick={() => setSchemaOpen((previous) => !previous)}
+            >
+              <CircleHelp size={15} />
+            </Button>
+          </div>
+          {schemaOpen && (
+            <div className="schema-popover">
+              <p className="m-0 mb-1.5 text-[12px] text-mac-label-secondary">
+                {t('raw.intro')} {format === 'jsonc' ? t('raw.jsonc') : t('raw.json')}
+              </p>
+              <pre className="mono m-0 overflow-x-auto text-[11px] leading-[1.5]">{`{
+  "gateway": {
+    "host": "127.0.0.1",
+    "port": 8765,
+    "token": "<32..512 ASCII chars>",
+    "autoStart": false,
+    "launchAtLogin": false
+  },
+  "mcpServers": {
+    "stdio-example": {
+      "command": "/usr/local/bin/server",
+      "args": ["--flag"],
+      "env": { "API_KEY": "\${API_KEY}" }
+    },
+    "http-example": {
+      "url": "https://example.com/mcp",
+      "headers": { "Authorization": "Bearer \${TOKEN}" }
+    }
+  }
+}`}</pre>
+            </div>
+          )}
           <div className="field">
             <span
               id={`${fieldId}-label`}
@@ -459,35 +463,57 @@ export const RawConfig = ({
               ref={hostRef}
               className={invalid ? 'raw-code-editor raw-code-editor-error' : 'raw-code-editor'}
             />
-            <small
-              id={`${fieldId}-feedback`}
-              className={
-                current.kind === 'issue' ? 'raw-feedback raw-feedback-error' : 'raw-feedback'
-              }
-              role="status"
-            >
-              {feedbackText(current, t)}
-            </small>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <small
+                id={`${fieldId}-feedback`}
+                className={
+                  current.kind === 'issue' ? 'raw-feedback raw-feedback-error' : 'raw-feedback'
+                }
+                role="status"
+              >
+                {importNotice || feedbackText(current, t)}
+              </small>
+              {current.kind === 'issue' && current.at?.line && (
+                <Button
+                  variant="link"
+                  onClick={() => {
+                    if (current.at?.line) jumpToIssueLine(current.at.line);
+                  }}
+                >
+                  Line {current.at.line}
+                </Button>
+              )}
+            </div>
           </div>
           <div className="raw-actions">
-            <Button variant="secondary" disabled={configurationLocked} onClick={reveal}>
+            <Button variant="secondary" disabled={locked} onClick={revealConfig}>
               {t('raw.showInFinder')}
             </Button>
-            <Button variant="secondary" disabled={configurationLocked} onClick={formatDraft}>
+            <Button variant="secondary" disabled={locked} onClick={openConfigInEditor}>
+              Open in External Editor
+            </Button>
+            <Button
+              variant="secondary"
+              disabled={locked || dirty}
+              onClick={() => void handleImportExternal()}
+            >
+              Import from Claude / Cursor
+            </Button>
+            <Button variant="secondary" disabled={locked} onClick={formatDraft}>
               {t('raw.format')}
             </Button>
             <Button
               variant="secondary"
-              disabled={configurationLocked || doc.text === gateway?.configText}
-              onClick={() => void discard()}
+              disabled={locked || doc.text === gateway?.configText}
+              onClick={() => void discardRawConfig()}
             >
               {t('raw.reset')}
             </Button>
             <Button
               variant="default"
               aria-describedby={`${fieldId}-feedback`}
-              disabled={configurationLocked || (!dirty && !retryLogin) || !saveReady}
-              onClick={() => void save()}
+              disabled={locked || !dirty || !saveReady}
+              onClick={() => void saveRawConfig()}
             >
               {t('raw.save', { filename })}
             </Button>

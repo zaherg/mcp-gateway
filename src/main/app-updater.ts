@@ -1,16 +1,20 @@
-import { randomBytes } from 'node:crypto';
-import { lstat, open, readFile, rename, unlink } from 'node:fs/promises';
-import { join } from 'node:path';
+import { lstat, readFile } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
 
 import { Updater, type UpdateStatusEntry } from 'electrobun/main';
 
-import { ensureParent } from '@mcp-gateway/core/config';
-import { RequestError } from '@mcp-gateway/core/errors';
+import { RequestError, sanitizeErrorText } from '@mcp-gateway/core/errors';
+import { runCommand } from '@mcp-gateway/core/process';
 import type { QuitCoordinator } from '@mcp-gateway/main/lifecycle';
+import { readPrivateJson, writePrivateJsonAtomic } from '@mcp-gateway/main/preferences-store';
 import type { QuitStatus, UpdateStatus } from '@mcp-gateway/shared/rpc';
+import type { UpdateDownloadProgress } from '@mcp-gateway/shared/types';
 
 const PREFERENCE_FILE = 'updates.json';
 const STABLE_VERSION = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
+const SAFE_HASH = /^[a-z0-9]{1,13}$/;
+const SHA256_HEX = /^[a-f0-9]{64}$/;
+const MAX_ARCHIVE_BYTES = 512 * 1024 * 1024;
 const STARTUP_DELAY_MS = 10_000;
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1_000;
 const POLL_INTERVAL_MS = 60 * 60 * 1_000;
@@ -21,6 +25,7 @@ export interface UpdateRuntime {
   status(): UpdateStatus;
   check(): Promise<UpdateStatus>;
   download(): Promise<UpdateStatus>;
+  installUpdate(): Promise<UpdateStatus>;
   setAutomatic(enabled: boolean): Promise<UpdateStatus>;
   restart(): Promise<QuitStatus>;
   start(): Promise<UpdateStatus>;
@@ -40,6 +45,146 @@ export const resolveUpdateSupport = async (): Promise<{
   };
 };
 
+const extractTeamIdentifier = (output: string): string | null =>
+  /^TeamIdentifier=(.+)$/m.exec(output)?.[1]?.trim() ?? null;
+
+export const verifyStagedAppBundleSignature = async (
+  stagedAppPath: string,
+  installedAppPath = resolve(dirname(process.execPath), '..', '..'),
+): Promise<void> => {
+  const verified = await runCommand('/usr/bin/codesign', [
+    '--verify',
+    '--deep',
+    '--strict',
+    '--verbose=2',
+    stagedAppPath,
+  ]);
+  if (verified.exitCode !== 0)
+    throw new Error('Staged update failed codesign integrity verification.');
+  const stagedDisplay = await runCommand('/usr/bin/codesign', [
+    '-dv',
+    '--verbose=4',
+    stagedAppPath,
+  ]);
+  if (stagedDisplay.exitCode !== 0)
+    throw new Error('Could not inspect staged update signing identity.');
+  try {
+    const installedStat = await lstat(installedAppPath);
+    if (
+      installedStat.isDirectory() &&
+      !installedStat.isSymbolicLink() &&
+      installedAppPath.endsWith('.app')
+    ) {
+      const installedDisplay = await runCommand('/usr/bin/codesign', [
+        '-dv',
+        '--verbose=4',
+        installedAppPath,
+      ]);
+      if (installedDisplay.exitCode === 0) {
+        const installedTeam = extractTeamIdentifier(
+          `${installedDisplay.stdout}\n${installedDisplay.stderr}`,
+        );
+        const stagedTeam = extractTeamIdentifier(
+          `${stagedDisplay.stdout}\n${stagedDisplay.stderr}`,
+        );
+        if (
+          installedTeam &&
+          installedTeam !== 'not set' &&
+          (!stagedTeam || stagedTeam !== installedTeam)
+        )
+          throw new Error('Staged update signing TeamIdentifier does not match the installed app.');
+      }
+    }
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === 'Staged update signing TeamIdentifier does not match the installed app.'
+    )
+      throw error;
+  }
+};
+
+export const verifyDownloadedUpdate = async (expected: {
+  version: string;
+  hash?: string;
+}): Promise<void> => {
+  const localInfo = await Updater.getLocalInfo();
+  const baseUrl = localInfo.baseUrl?.replace(/\/+$/, '');
+  if (baseUrl) {
+    let response: Response | undefined;
+    try {
+      response = await fetch(`${baseUrl}/stable-macos-arm64-update-v2.json`, {
+        redirect: 'error',
+        signal: AbortSignal.timeout(30_000),
+      });
+    } catch {
+      response = undefined;
+    }
+    if (response && response.status !== 404) {
+      if (!response.ok) {
+        await response.body?.cancel().catch(() => undefined);
+        throw new Error(`Update integrity manifest check failed (HTTP ${response.status}).`);
+      }
+      let document: unknown;
+      try {
+        document = await response.json();
+      } catch {
+        throw new Error('Update integrity manifest contains invalid JSON.');
+      }
+      if (typeof document !== 'object' || document === null || Array.isArray(document))
+        throw new Error('Update integrity manifest must be an object.');
+      const manifest = document as Record<string, unknown>;
+      const artifact =
+        typeof manifest.artifact === 'object' &&
+        manifest.artifact !== null &&
+        !Array.isArray(manifest.artifact)
+          ? (manifest.artifact as Record<string, unknown>)
+          : null;
+      if (
+        manifest.schemaVersion !== 1 ||
+        (localInfo.identifier && manifest.identifier !== localInfo.identifier) ||
+        manifest.channel !== 'stable' ||
+        manifest.version !== expected.version ||
+        typeof manifest.hash !== 'string' ||
+        !SAFE_HASH.test(manifest.hash) ||
+        (expected.hash && manifest.hash !== expected.hash) ||
+        !artifact ||
+        typeof artifact.tarSha256 !== 'string' ||
+        !SHA256_HEX.test(artifact.tarSha256) ||
+        typeof artifact.tarSize !== 'number' ||
+        !Number.isSafeInteger(artifact.tarSize) ||
+        artifact.tarSize <= 0 ||
+        artifact.tarSize > MAX_ARCHIVE_BYTES
+      )
+        throw new Error('Downloaded update failed integrity manifest verification.');
+    } else if (response) {
+      await response.body?.cancel().catch(() => undefined);
+    }
+  }
+
+  let channelRoot: string | undefined;
+  try {
+    channelRoot = await Updater.appDataFolder();
+  } catch {
+    channelRoot = undefined;
+  }
+  if (!channelRoot) return;
+  const preparedPath = join(channelRoot, 'self-extraction', '.electrobun-prepared-update.json');
+  try {
+    const stat = await lstat(preparedPath);
+    if (!stat.isFile() || stat.isSymbolicLink()) return;
+    const prepared = JSON.parse(await readFile(preparedPath, 'utf8')) as Record<string, unknown>;
+    if (typeof prepared.staging_path === 'string' && prepared.staging_path.length > 0) {
+      const stagedStat = await lstat(prepared.staging_path);
+      if (stagedStat.isDirectory() && !stagedStat.isSymbolicLink())
+        await verifyStagedAppBundleSignature(prepared.staging_path);
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw error;
+  }
+};
+
 interface Preference {
   automaticUpdates: boolean;
   error: string | null;
@@ -49,52 +194,78 @@ const invalidPreference = (): Preference => ({ automaticUpdates: false, error: P
 
 const readPreference = async (dataDirectory: string): Promise<Preference> => {
   const path = join(dataDirectory, PREFERENCE_FILE);
-  try {
-    const stat = await lstat(path);
-    if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0)
-      return invalidPreference();
-    const document = JSON.parse(await readFile(path, 'utf8')) as unknown;
-    if (typeof document !== 'object' || document === null || Array.isArray(document))
-      return invalidPreference();
-    const record = document as Record<string, unknown>;
+  const result = await readPrivateJson(path, (record) => {
     const keys = Object.keys(record).sort();
     if (
       keys.length !== 2 ||
       keys[0] !== 'automaticUpdates' ||
       keys[1] !== 'schema_version' ||
-      record.schema_version !== 1 ||
       typeof record.automaticUpdates !== 'boolean'
     )
-      return invalidPreference();
-    return { automaticUpdates: record.automaticUpdates, error: null };
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT')
-      return { automaticUpdates: true, error: null };
-    return invalidPreference();
-  }
+      return;
+    return record.automaticUpdates;
+  });
+  if (result.status === 'missing') return { automaticUpdates: true, error: null };
+  if (result.status === 'invalid') return invalidPreference();
+  return { automaticUpdates: result.value, error: null };
 };
 
 const writePreference = async (dataDirectory: string, automaticUpdates: boolean): Promise<void> => {
   const path = join(dataDirectory, PREFERENCE_FILE);
-  await ensureParent(path);
-  const temporary = `${path}.${randomBytes(8).toString('hex')}.tmp`;
-  const handle = await open(temporary, 'wx', 0o600);
-  try {
-    await handle.writeFile(JSON.stringify({ schema_version: 1, automaticUpdates }));
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-  try {
-    await rename(temporary, path);
-  } catch (error) {
-    await unlink(temporary).catch(() => undefined);
-    throw error;
-  }
+  await writePrivateJsonAtomic(path, { automaticUpdates });
 };
 
-const errorMessage = (error: unknown): string =>
-  error instanceof Error && error.message ? error.message : 'The update operation failed.';
+const errorMessage = (error: unknown, fallback = 'The update operation failed.'): string =>
+  sanitizeErrorText(error, fallback, 240);
+
+const extractDownloadProgress = (
+  entry?: UpdateStatusEntry,
+  previous?: UpdateDownloadProgress | null,
+): UpdateDownloadProgress => {
+  const details = entry?.details;
+  const info = Updater.updateInfo() as unknown as Record<string, unknown>;
+  const rawBytes =
+    typeof details?.bytesDownloaded === 'number' &&
+    Number.isFinite(details.bytesDownloaded) &&
+    details.bytesDownloaded >= 0
+      ? Math.floor(details.bytesDownloaded)
+      : typeof info.bytesDownloaded === 'number' &&
+          Number.isFinite(info.bytesDownloaded) &&
+          info.bytesDownloaded >= 0
+        ? Math.floor(info.bytesDownloaded)
+        : null;
+  const rawTotal =
+    typeof details?.totalBytes === 'number' &&
+    Number.isFinite(details.totalBytes) &&
+    details.totalBytes > 0
+      ? Math.floor(details.totalBytes)
+      : typeof info.totalBytes === 'number' &&
+          Number.isFinite(info.totalBytes) &&
+          info.totalBytes > 0
+        ? Math.floor(info.totalBytes)
+        : null;
+  const rawProgress =
+    typeof details?.progress === 'number' && Number.isFinite(details.progress)
+      ? details.progress
+      : typeof info.progress === 'number' && Number.isFinite(info.progress)
+        ? info.progress
+        : null;
+
+  const bytesDownloaded = rawBytes ?? previous?.bytesDownloaded ?? 0;
+  const totalBytes = rawTotal ?? previous?.totalBytes ?? null;
+  const computedPercent =
+    rawProgress !== null
+      ? Math.min(100, Math.max(0, Math.floor(rawProgress)))
+      : totalBytes !== null && totalBytes > 0 && (rawBytes !== null || bytesDownloaded > 0)
+        ? Math.min(100, Math.max(0, Math.floor((bytesDownloaded / totalBytes) * 100)))
+        : (previous?.percent ?? null);
+
+  return {
+    percent: computedPercent,
+    bytesDownloaded,
+    totalBytes,
+  };
+};
 
 interface UpdaterOptions {
   dataDirectory: string;
@@ -108,7 +279,6 @@ export class AppUpdater implements UpdateRuntime {
   private readonly listeners = new Set<(status: UpdateStatus) => void>();
   private started = false;
   private stopped = false;
-  private restartApproved = false;
   private startupTimer: ReturnType<typeof setTimeout> | undefined;
   private intervalTimer: ReturnType<typeof setInterval> | undefined;
   private lastCheckAt = 0;
@@ -120,13 +290,28 @@ export class AppUpdater implements UpdateRuntime {
       installedVersion: options.installedVersion,
       availableVersion: null,
       phase: 'idle',
+      progressPercent: null,
+      downloadedBytes: null,
+      totalBytes: null,
+      downloadProgress: null,
       error: null,
       checkedAt: null,
     };
   }
 
   status(): UpdateStatus {
-    return { ...this.value };
+    const dp = this.value.downloadProgress ? { ...this.value.downloadProgress } : null;
+    const isReady = this.value.phase === 'ready';
+    const progressPercent = isReady ? 100 : (dp?.percent ?? (dp ? 0 : null));
+    const downloadedBytes = dp?.bytesDownloaded ?? null;
+    const totalBytes = dp?.totalBytes ?? null;
+    return {
+      ...this.value,
+      progressPercent,
+      downloadedBytes,
+      totalBytes,
+      downloadProgress: dp,
+    };
   }
 
   subscribe(listener: (status: UpdateStatus) => void): () => void {
@@ -178,8 +363,34 @@ export class AppUpdater implements UpdateRuntime {
       throw new RequestError('No eligible update is available to download.');
     // The download can outlive the window's request limit; its phase is polled.
     void this.performDownload().catch((error: unknown) =>
-      this.update({ phase: 'error', error: errorMessage(error) }),
+      this.update({ phase: 'error', downloadProgress: null, error: errorMessage(error) }),
     );
+    return this.status();
+  }
+
+  async installUpdate(): Promise<UpdateStatus> {
+    this.assertAvailable();
+    if (this.value.phase === 'restarting')
+      throw new RequestError('An update restart is already in progress.');
+    if (this.value.phase === 'checking')
+      throw new RequestError('An update check is already in progress.');
+    if (this.value.phase === 'downloading') return this.status();
+    if (this.value.phase === 'ready') {
+      await this.restart();
+      return this.status();
+    }
+    if (!this.value.availableVersion || !this.eligible(this.value.availableVersion))
+      throw new RequestError('No eligible update is available to download.');
+    void (async () => {
+      try {
+        const downloaded = await this.performDownload();
+        if (downloaded.phase === 'ready' && !this.stopped) {
+          await this.restart();
+        }
+      } catch (error: unknown) {
+        this.update({ phase: 'error', downloadProgress: null, error: errorMessage(error) });
+      }
+    })();
     return this.status();
   }
 
@@ -201,6 +412,13 @@ export class AppUpdater implements UpdateRuntime {
     const info = Updater.updateInfo();
     if (!info.updateReady || !info.version || !this.eligible(info.version))
       throw new RequestError('No verified update is ready to install.');
+    try {
+      await verifyDownloadedUpdate({ version: info.version, hash: info.hash });
+    } catch (error) {
+      const message = errorMessage(error);
+      this.update({ phase: 'error', downloadProgress: null, error: message });
+      throw new RequestError(message);
+    }
     let cleaned: boolean;
     try {
       cleaned = await this.options.quit.beginUpdateRestart();
@@ -210,9 +428,8 @@ export class AppUpdater implements UpdateRuntime {
       );
     }
     if (!cleaned) throw new RequestError('Quit cleanup has started. Retry Quit to close the app.');
-    this.update({ phase: 'restarting', error: null });
+    this.update({ phase: 'restarting', downloadProgress: null, error: null });
     const mark = Updater.getStatusHistory().length;
-    this.restartApproved = true;
     this.options.quit.approveUpdateRestart();
     let applyError: string | undefined;
     try {
@@ -220,7 +437,6 @@ export class AppUpdater implements UpdateRuntime {
     } catch (error) {
       applyError = errorMessage(error);
     } finally {
-      this.restartApproved = false;
       this.options.quit.clearUpdateRestart();
     }
     const entries = Updater.getStatusHistory().slice(mark);
@@ -232,8 +448,12 @@ export class AppUpdater implements UpdateRuntime {
         (entry) =>
           entry.status === 'error' || entry.status === 'idle' || entry.status === 'no-update',
       );
-    const message = applyError ?? failure?.message ?? 'The update restart reported no outcome.';
-    this.update({ phase: 'error', error: message });
+    const message =
+      applyError ??
+      (failure?.message
+        ? errorMessage(failure.message, 'The update restart reported no outcome.')
+        : 'The update restart reported no outcome.');
+    this.update({ phase: 'error', downloadProgress: null, error: message });
     this.options.quit.updateRestartFailed(
       `Update handoff failed. The gateway is stopped. Quit and reopen the app to retry the update. ${message}`,
     );
@@ -241,7 +461,7 @@ export class AppUpdater implements UpdateRuntime {
   }
 
   private async performCheck(): Promise<UpdateStatus> {
-    this.update({ phase: 'checking', error: null });
+    this.update({ phase: 'checking', downloadProgress: null, error: null });
     this.lastCheckAt = Date.now();
     try {
       const info = await Updater.checkForUpdate();
@@ -250,8 +470,9 @@ export class AppUpdater implements UpdateRuntime {
       this.update({
         availableVersion: eligible ? info.version : null,
         phase: eligible ? 'available' : info.updateAvailable || info.error ? 'error' : 'idle',
+        downloadProgress: null,
         error: info.error
-          ? info.error
+          ? errorMessage(info.error)
           : info.updateAvailable && !eligible
             ? 'The offered update version is not eligible.'
             : null,
@@ -261,29 +482,43 @@ export class AppUpdater implements UpdateRuntime {
       return this.status();
     } catch (error) {
       if (this.stopped) return this.status();
-      this.update({ phase: 'error', error: errorMessage(error) });
+      this.update({ phase: 'error', downloadProgress: null, error: errorMessage(error) });
       return this.status();
     }
   }
 
   private async performDownload(): Promise<UpdateStatus> {
-    this.update({ phase: 'downloading', error: null });
+    this.update({
+      phase: 'downloading',
+      downloadProgress: extractDownloadProgress(undefined, this.value.downloadProgress),
+      error: null,
+    });
     try {
       await Updater.downloadUpdate();
       if (this.stopped) return this.status();
       const info = Updater.updateInfo();
-      this.update(
-        info.updateReady && info.version && this.eligible(info.version)
-          ? { availableVersion: info.version, phase: 'ready', error: null }
-          : {
-              phase: 'error',
-              error: info.error || 'The update download did not complete.',
-            },
-      );
+      if (info.updateReady && info.version && this.eligible(info.version)) {
+        await verifyDownloadedUpdate({ version: info.version, hash: info.hash });
+        if (this.stopped) return this.status();
+        this.update({
+          availableVersion: info.version,
+          phase: 'ready',
+          downloadProgress: null,
+          error: null,
+        });
+      } else {
+        this.update({
+          phase: 'error',
+          downloadProgress: null,
+          error: info.error
+            ? errorMessage(info.error, 'The update download did not complete.')
+            : 'The update download did not complete.',
+        });
+      }
       return this.status();
     } catch (error) {
       if (this.stopped) return this.status();
-      this.update({ phase: 'error', error: errorMessage(error) });
+      this.update({ phase: 'error', downloadProgress: null, error: errorMessage(error) });
       return this.status();
     }
   }
@@ -292,44 +527,69 @@ export class AppUpdater implements UpdateRuntime {
     const info = Updater.updateInfo();
     switch (entry.status) {
       case 'checking':
-        this.update({ phase: 'checking', error: null });
+        this.update({ phase: 'checking', downloadProgress: null, error: null });
         return;
       case 'update-available':
         this.update(
           this.eligible(info.version)
-            ? { phase: 'available', availableVersion: info.version, error: null }
+            ? {
+                phase: 'available',
+                availableVersion: info.version,
+                downloadProgress: null,
+                error: null,
+              }
             : {
                 phase: 'error',
                 availableVersion: null,
+                downloadProgress: null,
                 error: 'The offered update version is not eligible.',
               },
         );
         return;
       case 'no-update':
-        this.update({ phase: 'idle', error: null });
+        this.update({ phase: 'idle', downloadProgress: null, error: null });
         return;
       case 'download-starting':
       case 'downloading':
-        this.update({ phase: 'downloading', error: null });
+      case 'downloading-patch':
+      case 'downloading-full-bundle':
+      case 'download-progress':
+      case 'applying-patch':
+      case 'decompressing':
+        this.update({
+          phase: 'downloading',
+          downloadProgress: extractDownloadProgress(entry, this.value.downloadProgress),
+          error: null,
+        });
         return;
       case 'download-complete':
         this.update(
           info.version && this.eligible(info.version)
-            ? { phase: 'ready', availableVersion: info.version, error: null }
-            : { phase: 'error', error: 'The offered update version is not eligible.' },
+            ? {
+                phase: 'ready',
+                availableVersion: info.version,
+                downloadProgress: null,
+                error: null,
+              }
+            : {
+                phase: 'error',
+                downloadProgress: null,
+                error: 'The offered update version is not eligible.',
+              },
         );
         return;
       case 'applying':
-        this.update({ phase: 'restarting', error: null });
-        return;
-      case 'launching-new-version':
-        if (this.restartApproved) this.update({ phase: 'restarting', error: null });
+        this.update({ phase: 'restarting', downloadProgress: null, error: null });
         return;
       case 'error':
-        this.update({ phase: 'error', error: entry.message });
+        this.update({
+          phase: 'error',
+          downloadProgress: null,
+          error: errorMessage(entry.message),
+        });
         return;
       case 'idle':
-        this.update({ phase: 'idle', error: null });
+        this.update({ phase: 'idle', downloadProgress: null, error: null });
         return;
       default:
         return;
@@ -337,6 +597,7 @@ export class AppUpdater implements UpdateRuntime {
   }
 
   private seedFromSdk(): void {
+    const info = Updater.updateInfo();
     const terminal = [...Updater.getStatusHistory()]
       .reverse()
       .find(
@@ -347,24 +608,27 @@ export class AppUpdater implements UpdateRuntime {
           entry.status === 'update-available' ||
           entry.status === 'idle',
       );
-    if (terminal?.status === 'error') this.set({ phase: 'error', error: terminal.message });
+    if (terminal?.status === 'error')
+      this.set({
+        phase: 'error',
+        downloadProgress: null,
+        error: errorMessage(terminal.message),
+      });
     else if (terminal?.status === 'no-update' || terminal?.status === 'idle')
-      this.set({ phase: 'idle', error: null });
+      this.set({ phase: 'idle', downloadProgress: null, error: null });
     else if (terminal?.status === 'download-complete') {
-      const info = Updater.updateInfo();
       if (info.version && this.eligible(info.version))
-        this.set({ phase: 'ready', availableVersion: info.version });
+        this.set({ phase: 'ready', availableVersion: info.version, downloadProgress: null });
     } else if (terminal?.status === 'update-available') {
-      const info = Updater.updateInfo();
       if (info.version && this.eligible(info.version))
-        this.set({ phase: 'available', availableVersion: info.version });
+        this.set({ phase: 'available', availableVersion: info.version, downloadProgress: null });
     }
-    const info = Updater.updateInfo();
     if (info.updateReady && info.version && this.eligible(info.version))
-      this.set({ phase: 'ready', availableVersion: info.version });
+      this.set({ phase: 'ready', availableVersion: info.version, downloadProgress: null });
     else if (info.updateAvailable && info.version && this.eligible(info.version))
-      this.set({ phase: 'available', availableVersion: info.version });
-    if (info.error) this.set({ phase: 'error', error: info.error });
+      this.set({ phase: 'available', availableVersion: info.version, downloadProgress: null });
+    if (info.error)
+      this.set({ phase: 'error', downloadProgress: null, error: errorMessage(info.error) });
   }
 
   private scheduleChecks(): void {

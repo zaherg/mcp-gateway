@@ -10,7 +10,6 @@ import {
   useRef,
 } from 'react';
 
-import { JsonEditor } from '@mcp-gateway/mainview/components/JsonEditor';
 import { Alert as MacAlert } from '@mcp-gateway/mainview/components/mac/alert';
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
 import { Checkbox } from '@mcp-gateway/mainview/components/mac/checkbox';
@@ -57,8 +56,8 @@ export const Alert = ({ children, kind = 'error', onDismiss, label, role }: Aler
   );
 };
 
-// Controls a Field can label: the macOS input and select, and the JSON editor.
-const FIELD_CONTROLS: unknown[] = [Input, NativeSelect, JsonEditor];
+// Controls a Field can label: the macOS input and select.
+const FIELD_CONTROLS: unknown[] = [Input, NativeSelect];
 
 export const Field = ({ label, help, children }: Field) => {
   const id = useId();
@@ -72,7 +71,6 @@ export const Field = ({ label, help, children }: Field) => {
       ? cloneElement(node, { children: Children.map(node.props.children, associate) })
       : node;
   };
-  // htmlFor focuses inputs and selects natively, but not the JSON editor's contenteditable.
   const focusUnlabelable = () => {
     const control = document.getElementById(id);
     if (control && !('labels' in control)) control.focus();
@@ -144,9 +142,10 @@ interface Modal {
   children: ReactNode;
   onClose: () => void;
   fallbackFocus: RefObject<HTMLElement | null>;
+  busy?: boolean;
 }
 
-export const Modal = ({ title, children, onClose, fallbackFocus }: Modal) => {
+export const Modal = ({ title, children, onClose, fallbackFocus, busy = false }: Modal) => {
   const { t } = useI18n();
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
@@ -156,6 +155,7 @@ export const Modal = ({ title, children, onClose, fallbackFocus }: Modal) => {
     dialog?.showModal();
     return () => {
       dialog?.close();
+      if (document.querySelector('dialog[open]')) return;
       if (opener instanceof HTMLElement && opener.isConnected && !opener.matches(':disabled'))
         opener.focus();
       else fallbackFocus.current?.focus();
@@ -166,7 +166,7 @@ export const Modal = ({ title, children, onClose, fallbackFocus }: Modal) => {
       ref={ref}
       onCancel={(event) => {
         event.preventDefault();
-        onClose();
+        if (!busy) onClose();
       }}
       aria-labelledby={titleId}
     >
@@ -176,7 +176,10 @@ export const Modal = ({ title, children, onClose, fallbackFocus }: Modal) => {
           variant="ghost"
           size="icon-lg"
           aria-label={t('common.closeDialog')}
-          onClick={onClose}
+          disabled={busy}
+          onClick={() => {
+            if (!busy) onClose();
+          }}
         >
           <X />
         </Button>

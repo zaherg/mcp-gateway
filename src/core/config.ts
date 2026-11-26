@@ -1,14 +1,23 @@
+import { dlopen, FFIType } from 'bun:ffi';
 import { createHash, randomUUID } from 'node:crypto';
 import { constants, type Stats } from 'node:fs';
 import * as fs from 'node:fs/promises';
 import { validateHeaderName, validateHeaderValue } from 'node:http';
+import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, parse, resolve } from 'node:path';
 
-import { getNodeValue, type JSONPath } from 'jsonc-parser';
+import { getNodeValue, type JSONPath, type Node } from 'jsonc-parser';
 import * as z from 'zod/v4';
 
 import { failure, GatewayError } from '@mcp-gateway/core/errors';
-import { ipv4Number, isLocalRange, isSharedIpv4, parseIpv4Range } from '@mcp-gateway/core/ipv4';
+import {
+  ipv4Number,
+  isLinkLocalIpv4,
+  isLocalRange,
+  isSharedIpv4,
+  parseIpv4Range,
+} from '@mcp-gateway/core/ipv4';
+import { isBlockedEnvironmentKey } from '@mcp-gateway/core/process';
 import { anyNumber, ownRecord } from '@mcp-gateway/core/schema';
 import {
   CONFIG_TOO_LARGE,
@@ -16,6 +25,7 @@ import {
   type ConfigIssue,
   configFormat,
   configRange,
+  hasUnmigratedSecretLiterals,
   isRecord,
   MAX_CONFIG_BYTES,
   parseConfigDocument,
@@ -31,14 +41,16 @@ import type {
   StdioServerConfig,
 } from '@mcp-gateway/shared/types';
 
-// Re-exported for existing main-process callers; the renderer imports the shared definition.
-export { MAX_CONFIG_BYTES, SAFE_NAME };
+export { hasUnmigratedSecretLiterals } from '@mcp-gateway/shared/config-document';
+
+const LOCK_EX_NB = 6;
+const libSystem = dlopen('libSystem.B.dylib', {
+  flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
+});
 
 const missing = (error: unknown) => (error as NodeJS.ErrnoException)?.code === 'ENOENT';
 
 const AMBIGUOUS_CONFIG = 'Both configuration files exist; keep only one and reopen the app.';
-// A lock with no readable pid is only treated as abandoned after this long.
-const STALE_UNOWNED_LOCK_MS = 10_000;
 const StringMap = ownRecord(z.string());
 const StdioSchema = z.strictObject({
   command: z.string(),
@@ -76,6 +88,16 @@ const invalid: (message?: string) => never = (
   message = 'Configuration does not match the supported schema.',
 ) => {
   throw failure('InvalidConfig', message);
+};
+
+/** Whether a URL hostname targets link-local (169.254.0.0/16, fe80::/10) or unspecified (0.0.0.0/8). */
+export const isDisallowedUpstreamUrl = (url: URL): boolean => {
+  const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  const v4 = ipv4Number(host);
+  if (v4 !== null) {
+    return isLinkLocalIpv4(v4) || (v4 & 0xff000000) >>> 0 === 0;
+  }
+  return /^fe[89ab][0-9a-f]:/i.test(host) || host === '::';
 };
 
 /** A fixed, range-bearing explanation of the first structural configuration problem. */
@@ -284,6 +306,11 @@ const validateConfig = (value: unknown, environment: NodeJS.ProcessEnv): ConfigF
       }
       if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash)
         invalid('Upstreams require HTTP(S) URLs without userinfo or fragments.');
+      if (isDisallowedUpstreamUrl(url))
+        throw failure(
+          'NetworkPolicy',
+          'Link-local and cloud metadata upstream addresses are not allowed.',
+        );
       if (server.headers) {
         const names = new Set<string>();
         server.headers = Object.fromEntries(
@@ -321,6 +348,8 @@ const validateConfig = (value: unknown, environment: NodeJS.ProcessEnv): ConfigF
         for (const [key, value] of Object.entries(server.env)) {
           if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key))
             invalid('A command environment key is invalid.');
+          if (isBlockedEnvironmentKey(key))
+            invalid('A command environment key is not allowed for security reasons.');
           server.env[key] = map(value);
         }
       }
@@ -346,6 +375,23 @@ export const parseConfig = (
     invalid();
   }
   return validateConfig(value, environment);
+};
+
+/**
+ * Single-pass parse and literal-key inspection: parses the syntax tree once, extracts literal
+ * key slots from the unexpanded AST, and validates the expanded configuration.
+ */
+export const parseConfigWithSlots = (
+  text: string,
+  environment: NodeJS.ProcessEnv = process.env,
+  format: ConfigFormat = 'json',
+): { file: ConfigFile; slots: KeyMigration } => {
+  if (Buffer.byteLength(text) > MAX_CONFIG_BYTES) invalid(CONFIG_TOO_LARGE);
+  const parsed = parseConfigTree(text, format);
+  if (!parsed.ok) invalid();
+  const slots = literalKeySlots(parsed.root, format);
+  const file = validateConfig(getNodeValue(parsed.root), environment);
+  return { file, slots };
 };
 
 /**
@@ -408,23 +454,15 @@ export const resolveKeys = (
   };
 };
 
-const isLiteralKey = (slot: unknown): boolean =>
-  isRecord(slot) &&
-  slot.tokenRef === undefined &&
-  typeof slot.token === 'string' &&
-  !REFERENCE.test(slot.token) &&
-  TOKEN_PATTERN.test(slot.token);
-
-/** Slots whose saved key is a literal, read from the unexpanded file. Names only, never values. */
-export const literalKeySlots = (text: string, format: ConfigFormat): KeyMigration => {
-  const parsed = parseConfigTree(text, format);
-  const value: unknown = parsed.ok ? getNodeValue(parsed.root) : undefined;
-  if (!isRecord(value) || !isRecord(value.mcpServers)) return { gateway: false, servers: [] };
+/** Slots whose saved configuration contains literal secrets, read from the unexpanded file or pre-parsed tree. Names only, never values. */
+export const literalKeySlots = (
+  source: string | Node,
+  format: ConfigFormat = 'json',
+): KeyMigration => {
+  const detected = hasUnmigratedSecretLiterals(source, format);
   return {
-    gateway: isLiteralKey(value.gateway),
-    servers: Object.entries(value.mcpServers).flatMap(([name, server]) =>
-      isLiteralKey(server) ? [name] : [],
-    ),
+    gateway: detected.gateway,
+    servers: detected.servers,
   };
 };
 
@@ -472,7 +510,12 @@ const newConfigText = (gateway: KeySlot & { port: number }): string => {
     2,
   )}\n`;
 };
-const assertPlainDirectory = (stat: Stats): void => {
+const SYSTEM_TMP_SYMLINKS = new Set(
+  ['/tmp', '/var', '/etc', tmpdir().replace(/\/+$/, '')].filter(Boolean),
+);
+
+const assertPlainDirectory = (stat: Stats, dirPath?: string): void => {
+  if (stat.isSymbolicLink() && dirPath && SYSTEM_TMP_SYMLINKS.has(dirPath)) return;
   if (!stat.isDirectory() || stat.isSymbolicLink())
     throw failure('UnsafeFile', 'Configuration paths must not contain symlinks.');
 };
@@ -482,7 +525,7 @@ const safeParent = async (path: string): Promise<void> => {
   let current = parse(parent).root;
   for (const part of parent.slice(current.length).split('/').filter(Boolean)) {
     current = join(current, part);
-    assertPlainDirectory(await fs.lstat(current));
+    assertPlainDirectory(await fs.lstat(current), current);
   }
   const stat = await fs.lstat(parent);
   if ((stat.mode & 0o022) !== 0 || (process.getuid && stat.uid !== process.getuid()))
@@ -510,7 +553,7 @@ export const ensureParent = async (path: string): Promise<void> => {
       }
       stat = await fs.lstat(current);
     }
-    assertPlainDirectory(stat);
+    assertPlainDirectory(stat, current);
   }
   await safeParent(path);
 };
@@ -549,6 +592,89 @@ const safeFile = (stat: Stats): void => {
       'UnsafeFile',
       'The configuration must be an owner-only regular file with no hard links.',
     );
+};
+
+/**
+ * Descriptor-verified private file read (`O_NOFOLLOW` + `fstat`), eliminating pre-open
+ * `lstat` -> `readFile` TOCTOU windows.
+ */
+export const readPrivateText = async (
+  path: string,
+  maxBytes = MAX_CONFIG_BYTES,
+): Promise<{ text: string; bytes: Buffer }> => {
+  await safeParent(path);
+  let handle: fs.FileHandle;
+  try {
+    handle = await fs.open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ELOOP')
+      throw failure('UnsafeFile', 'Symlinked configuration files are refused.');
+    throw error;
+  }
+  try {
+    const before = await handle.stat();
+    safeFile(before);
+    if (before.size > maxBytes) throw failure('InvalidConfig', CONFIG_TOO_LARGE);
+    const buffer = Buffer.alloc(maxBytes + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, length, buffer.length - length, null);
+      if (!bytesRead) break;
+      length += bytesRead;
+    }
+    const after = await handle.stat();
+    if (length > maxBytes) throw failure('InvalidConfig', CONFIG_TOO_LARGE);
+    if (
+      before.size !== after.size ||
+      before.mtimeMs !== after.mtimeMs ||
+      before.ctimeMs !== after.ctimeMs
+    )
+      throw failure('ConfigIO', 'The configuration changed during access.');
+    const bytes = buffer.subarray(0, length);
+    let text: string;
+    try {
+      text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    } catch {
+      throw failure('InvalidConfig', 'Configuration must contain valid UTF-8.');
+    }
+    return { text, bytes };
+  } finally {
+    await handle.close();
+  }
+};
+
+/**
+ * Atomic owner-only file write via a sibling `0o600` temporary file (`O_EXCL | O_NOFOLLOW`),
+ * `fsync`, and `rename`.
+ */
+export const writePrivateTextAtomic = async (path: string, text: string): Promise<void> => {
+  await ensureParent(path);
+  const temp = join(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`);
+  const file = await fs.open(
+    temp,
+    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+    0o600,
+  );
+  let failed: { error: unknown } | undefined;
+  try {
+    try {
+      await file.chmod(0o600);
+      await file.writeFile(text, 'utf8');
+      await file.sync();
+    } finally {
+      await file.close();
+    }
+    await fs.rename(temp, path);
+  } catch (error) {
+    failed = { error };
+  } finally {
+    try {
+      await fs.unlink(temp);
+    } catch (error) {
+      if (!missing(error) && !failed) failed = { error };
+    }
+  }
+  if (failed) throw failed.error;
 };
 
 export class ConfigStore {
@@ -595,110 +721,38 @@ export class ConfigStore {
     return guarded(async () => {
       await safeParent(this.path);
       await this.checkSelection();
-      const entry = await fs.lstat(this.path);
-      if (entry.isSymbolicLink())
-        throw failure('UnsafeFile', 'Symlinked configuration files are refused.');
-      const handle = await fs.open(
-        this.path,
-        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-      );
-      try {
-        const before = await handle.stat();
-        safeFile(before);
-        if (before.ino !== entry.ino || before.dev !== entry.dev)
-          throw failure('UnsafeFile', 'The configuration file changed during access.');
-        if (before.size > MAX_CONFIG_BYTES) throw failure('InvalidConfig', CONFIG_TOO_LARGE);
-        const buffer = Buffer.alloc(MAX_CONFIG_BYTES + 1);
-        let length = 0;
-        while (length < buffer.length) {
-          const { bytesRead } = await handle.read(buffer, length, buffer.length - length, null);
-          if (!bytesRead) break;
-          length += bytesRead;
-        }
-        const after = await handle.stat();
-        if (length > MAX_CONFIG_BYTES) throw failure('InvalidConfig', CONFIG_TOO_LARGE);
-        if (
-          before.size !== after.size ||
-          before.mtimeMs !== after.mtimeMs ||
-          before.ctimeMs !== after.ctimeMs
-        )
-          throw failure('ConfigIO', 'The configuration changed during access.');
-        const bytes = buffer.subarray(0, length);
-        let text: string;
-        try {
-          text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-        } catch {
-          throw failure('InvalidConfig', 'Configuration must contain valid UTF-8.');
-        }
-        await this.checkSelection();
-        return { text, revision: revisionOf(bytes) };
-      } finally {
-        await handle.close();
-      }
+      const { text, bytes } = await readPrivateText(this.path, MAX_CONFIG_BYTES);
+      await this.checkSelection();
+      return { text, revision: revisionOf(bytes) };
     });
   }
 
-  // A lock left behind by a process that died is recognizable: it names its pid.
-  // Only a lock whose owner is gone (or whose pid was never written and that is
-  // old) is removed; a live or unknown owner keeps the refusal.
-  private async lockIsStale(lockPath: string): Promise<boolean> {
-    let handle: fs.FileHandle;
-    try {
-      handle = await fs.open(
-        lockPath,
-        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-      );
-    } catch {
-      return false;
-    }
-    try {
-      const stat = await handle.stat();
-      if (!stat.isFile() || (process.getuid && stat.uid !== process.getuid())) return false;
-      const pid = Number((await handle.readFile('utf8')).trim());
-      if (!Number.isSafeInteger(pid) || pid <= 0)
-        return Date.now() - stat.mtimeMs > STALE_UNOWNED_LOCK_MS;
-      if (pid === process.pid) return false;
-      try {
-        process.kill(pid, 0);
-        return false;
-      } catch (error) {
-        return (error as NodeJS.ErrnoException).code === 'ESRCH';
-      }
-    } finally {
-      await handle.close();
-    }
-  }
-
   private async acquireLock(lockPath: string): Promise<fs.FileHandle> {
-    for (let attempt = 0; ; attempt++) {
-      let lock: fs.FileHandle;
-      try {
-        lock = await fs.open(
-          lockPath,
-          constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
-          0o600,
-        );
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-        if (attempt === 0 && (await this.lockIsStale(lockPath))) {
-          await fs.unlink(lockPath).catch((failed) => {
-            if (!missing(failed)) throw failed;
-          });
-          continue;
-        }
+    const lock = await fs.open(
+      lockPath,
+      constants.O_RDWR | constants.O_CREAT | constants.O_NOFOLLOW,
+      0o600,
+    );
+    try {
+      await lock.chmod(0o600);
+      const stat = await lock.stat();
+      if (
+        !stat.isFile() ||
+        (stat.mode & 0o077) !== 0 ||
+        (process.getuid && stat.uid !== process.getuid())
+      ) {
+        throw failure('UnsafeFile', 'The configuration lock file must be an owner-only file.');
+      }
+      if (libSystem.symbols.flock(lock.fd, LOCK_EX_NB) !== 0) {
         throw failure(
           'ConfigLocked',
           'Configuration is locked by another running writer. If mcp.json.lock beside the configuration is stale, quit every app instance and confirm no writer is active before removing it and retrying.',
         );
       }
-      try {
-        await lock.writeFile(String(process.pid));
-      } catch (error) {
-        await lock.close();
-        await fs.unlink(lockPath).catch(() => undefined);
-        throw error;
-      }
       return lock;
+    } catch (error) {
+      await lock.close();
+      throw error;
     }
   }
 
@@ -709,11 +763,7 @@ export class ConfigStore {
     try {
       return await work();
     } finally {
-      try {
-        await lock.close();
-      } finally {
-        await fs.unlink(lockPath);
-      }
+      await lock.close();
     }
   }
 
@@ -786,11 +836,11 @@ export class ConfigStore {
     });
   }
 
-  save(text: string, expectedRevision: string): Promise<ConfigDocument> {
+  save(text: string, expectedRevision: string, preValidated = false): Promise<ConfigDocument> {
     return guarded(() =>
       this.locked(async () => {
         await this.checkSelection();
-        parseConfig(text, process.env, this.format);
+        if (!preValidated) parseConfig(text, process.env, this.format);
         const current = await this.read();
         if (current.revision !== expectedRevision)
           throw failure('StaleRevision', 'Configuration changed on disk; reload before saving.');

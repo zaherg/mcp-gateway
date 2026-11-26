@@ -23,6 +23,59 @@ export const releaseFiles = (identifier: string) => {
 };
 const MAX_ARCHIVE_BYTES = 512 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 64 * 1024;
+const APPLE_SECRET_ENV_NAMES = ['APPLE_ID', 'APPLE_TEAM_ID', 'APPLE_APP_PASSWORD'] as const;
+
+export const watchCancelSignals = (
+  reason: string,
+  onCancel?: (signal: 'SIGINT' | 'SIGTERM') => void,
+): { signal: AbortSignal; dispose: () => void } => {
+  const controller = new AbortController();
+  const handle = (signal: 'SIGINT' | 'SIGTERM') => {
+    if (controller.signal.aborted) return;
+    onCancel?.(signal);
+    process.exitCode = signal === 'SIGTERM' ? 143 : 130;
+    controller.abort(new Error(reason));
+  };
+  const onSigint = () => handle('SIGINT');
+  const onSigterm = () => handle('SIGTERM');
+  process.on('SIGINT', onSigint);
+  process.on('SIGTERM', onSigterm);
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      process.removeListener('SIGINT', onSigint);
+      process.removeListener('SIGTERM', onSigterm);
+    },
+  };
+};
+
+export const redactSecrets = (
+  text: string,
+  extraSecrets: ReadonlyArray<string | undefined> = [],
+): string => {
+  let output = text;
+  for (const secret of [
+    ...APPLE_SECRET_ENV_NAMES.map((name) => process.env[name]),
+    ...extraSecrets,
+  ]) {
+    if (secret) output = output.split(secret).join('[redacted]');
+  }
+  return output
+    .replace(
+      /^(Authority|origin)=Developer ID Application:.*$/gm,
+      '$1=Developer ID Application [redacted]',
+    )
+    .replace(/^TeamIdentifier=.*$/gm, 'TeamIdentifier=[redacted]');
+};
+
+export const redactedUrl = (raw: string): string => {
+  try {
+    const url = new URL(raw);
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return redactSecrets(raw);
+  }
+};
 
 interface UpdateManifest {
   schemaVersion: 1;
@@ -39,6 +92,36 @@ const record = (value: unknown): Record<string, unknown> => {
   if (typeof value !== 'object' || value === null || Array.isArray(value))
     throw new Error('Update metadata must be an object.');
   return value as Record<string, unknown>;
+};
+
+export const verifyEmbeddedMetadata = (
+  text: string,
+  expected: {
+    identifier: string;
+    channel?: string;
+    version?: string;
+    hash?: string;
+    baseUrl?: string;
+  },
+): void => {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw new Error('Embedded metadata contains invalid JSON.');
+  }
+  const metadata = record(value);
+  const channel = expected.channel ?? 'stable';
+  if (
+    metadata.identifier !== expected.identifier ||
+    metadata.channel !== channel ||
+    typeof metadata.hash !== 'string' ||
+    !/^[a-z0-9]{1,13}$/.test(metadata.hash) ||
+    (expected.hash !== undefined && metadata.hash !== expected.hash) ||
+    (expected.version !== undefined && metadata.version !== expected.version) ||
+    (expected.baseUrl !== undefined && metadata.baseUrl !== expected.baseUrl)
+  )
+    throw new Error('Embedded metadata does not match the expected release identity or manifest.');
 };
 
 const parseManifest = (text: string, identifier: string, version?: string): UpdateManifest => {

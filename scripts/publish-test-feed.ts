@@ -7,7 +7,15 @@ import { parseArgs } from 'node:util';
 
 import { createCommandRunner } from '@mcp-gateway/core/process';
 import { TEST_IDENTIFIER, validateFeedUrl } from './build-config';
-import { hashFile, readUpdateArtifacts, releaseFiles } from './update-artifacts';
+import {
+  hashFile,
+  readUpdateArtifacts,
+  redactedUrl,
+  redactSecrets,
+  releaseFiles,
+  verifyEmbeddedMetadata,
+  watchCancelSignals,
+} from './update-artifacts';
 
 const { bundle, updates: UPDATE_FILES } = releaseFiles(TEST_IDENTIFIER);
 
@@ -50,12 +58,7 @@ const parseS3Path = (value: string | undefined): string => {
   return segments.join('/');
 };
 
-const cancellation = new AbortController();
-const interrupt = (signal: NodeJS.Signals) => {
-  cancellation.abort(new Error('Test feed publication cancelled.'));
-  process.exitCode = signal === 'SIGTERM' ? 143 : 130;
-};
-for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, interrupt);
+const cancellation = watchCancelSignals('Test feed publication cancelled.');
 
 // Every anonymous request refuses redirects and honors both cancellation and its own timeout.
 const anonymous = (url: string, timeoutMs: number, init: RequestInit = {}) =>
@@ -166,7 +169,7 @@ const publish = async () => {
         throw new Error(`${name} is still readable anonymously (HTTP ${response.status}).`);
       console.log(`Removed ${name}`);
     }
-    console.log(`Removed the updater files under ${publicBase}`);
+    console.log(`Removed the updater files under ${redactedUrl(publicBase)}`);
     return;
   }
   // Every later step reads this private copy, so writes to the candidate
@@ -177,8 +180,11 @@ const publish = async () => {
       const info = await lstat(file.path);
       if (info.isSymbolicLink() || !info.isFile())
         throw new Error('Update artifact is missing, unsafe, or exceeds its size limit.');
+      const resolvedFile = await realpath(file.path);
+      if (resolvedFile !== file.path || !resolvedFile.startsWith(`${directory}/`))
+        throw new Error('Update artifact is missing, unsafe, or exceeds its size limit.');
       const staged = join(staging, file.name);
-      await copyFile(file.path, staged, constants.COPYFILE_EXCL);
+      await copyFile(resolvedFile, staged, constants.COPYFILE_EXCL);
       file.path = staged;
     }
     const { manifest } = await readUpdateArtifacts(
@@ -194,25 +200,13 @@ const publish = async () => {
       cancellation.signal,
     );
     if (extracted.exitCode !== 0) throw new Error('Could not read candidate version metadata.');
-    let embedded: Record<string, unknown>;
-    try {
-      const value = JSON.parse(extracted.stdout);
-      if (!value || typeof value !== 'object' || Array.isArray(value))
-        throw new Error('Invalid object.');
-      embedded = value;
-    } catch {
-      throw new Error('Candidate version metadata is invalid.');
-    }
-    if (
-      embedded.identifier !== TEST_IDENTIFIER ||
-      embedded.channel !== 'stable' ||
-      embedded.version !== manifest.version ||
-      embedded.hash !== manifest.hash ||
-      embedded.baseUrl !== feed
-    )
-      throw new Error(
-        'Candidate identity or embedded feed does not match the selected test build.',
-      );
+    verifyEmbeddedMetadata(extracted.stdout, {
+      identifier: TEST_IDENTIFIER,
+      channel: 'stable',
+      version: manifest.version,
+      hash: manifest.hash,
+      baseUrl: feed,
+    });
 
     const hashes = new Map<string, string>();
     for (const file of files) hashes.set(file.name, await hashFile(file.path, cancellation.signal));
@@ -227,6 +221,7 @@ const publish = async () => {
         '--metadata-set',
         `content-type=${file.contentType}`,
       ];
+      if (!file.noCache) args.push('--metadata-set', 'content-disposition=attachment');
       if (file.noCache) args.push('--metadata-set', 'cache-control=no-cache');
       await rclone(args);
       console.log(`Uploaded ${file.name}`);
@@ -270,7 +265,7 @@ const publish = async () => {
         throw new Error('Local candidate changed during publication.');
       console.log(`Verified anonymous readback: ${name}`);
     }
-    console.log(`Published test version ${manifest.version} at ${publicBase}`);
+    console.log(`Published test version ${manifest.version} at ${redactedUrl(publicBase)}`);
   } finally {
     await rm(staging, { recursive: true, force: true });
   }
@@ -279,12 +274,14 @@ const publish = async () => {
 try {
   await publish();
 } catch (error) {
-  console.error(error instanceof Error ? error.message : 'Test feed publication failed.');
+  console.error(
+    redactSecrets(error instanceof Error ? error.message : 'Test feed publication failed.'),
+  );
   if (!process.argv.includes('--cleanup'))
     console.error(
       'Publication is not atomic; if any upload completed, republish a verified candidate directory.',
     );
   process.exitCode ||= 1;
 } finally {
-  for (const signal of ['SIGINT', 'SIGTERM'] as const) process.removeListener(signal, interrupt);
+  cancellation.dispose();
 }

@@ -1,5 +1,5 @@
 /** One block of a changelog section: the Markdown subset that CHANGELOG.md uses. */
-export type ChangelogBlock =
+type ChangelogBlock =
   | { kind: 'heading' | 'paragraph'; text: string }
   | { kind: 'list'; items: string[] };
 

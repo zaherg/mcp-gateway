@@ -1,7 +1,7 @@
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
-import { MODERN_VERSION } from 'supergateway/dist/lib/upstreamModernChild.js';
 
-import { isHttpServer } from '@mcp-gateway/core/config';
+import { MODERN_VERSION } from '@mcp-gateway/core/adapter';
+import { isDisallowedUpstreamUrl, isHttpServer } from '@mcp-gateway/core/config';
 import { failure, type GatewayError } from '@mcp-gateway/core/errors';
 import { boundedBackendResponse } from '@mcp-gateway/core/limits';
 import type {
@@ -97,6 +97,24 @@ export const checkEndpoint = async ({
   server,
   stopped,
 }: EndpointCheck): Promise<ServerCheckResult> => {
+  if (isDisallowedUpstreamUrl(url))
+    throw failure(
+      'NetworkPolicy',
+      'Link-local and cloud metadata upstream addresses are not allowed.',
+    );
+  if (isHttpServer(server)) {
+    let upstreamUrl: URL;
+    try {
+      upstreamUrl = new URL(server.url);
+    } catch {
+      throw failure('InvalidConfig', 'An upstream URL is invalid.');
+    }
+    if (isDisallowedUpstreamUrl(upstreamUrl))
+      throw failure(
+        'NetworkPolicy',
+        'Link-local and cloud metadata upstream addresses are not allowed.',
+      );
+  }
   const deadline = AbortSignal.timeout(CHECK_MS);
   const lifetime = AbortSignal.any([stopped, deadline]);
   const reply: HandshakeReply = { status: undefined, code: undefined };
@@ -134,7 +152,6 @@ export const checkEndpoint = async ({
       reply.code = jsonRpcErrorCode(text);
       return new Response(text, {
         status: response.status,
-        statusText: response.statusText,
         headers: response.headers,
       });
     },

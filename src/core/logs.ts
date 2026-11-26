@@ -2,6 +2,35 @@ import { LOG_LIMITS, type LogEntry, type LogPage, type LogQuery } from '@mcp-gat
 
 const TRUNCATION_MARKER = '\n[entry truncated]';
 
+const AUTH_HEADER_PATTERN =
+  /(authorization\s*[:=]\s*(?:(?:bearer|basic|token|digest)\s+)?)([^\s"',;}\]]+)/gi;
+const API_KEY_HEADER_PATTERN =
+  /((?:x-api-key|[a-z0-9_-]*-api-key|[a-z0-9_-]*-secret|[a-z0-9_-]*-token)\s*[:=]\s*)([^\s"',;}\]]+)/gi;
+const JSON_SECRET_PROP_PATTERN =
+  /("(?:token|authorization|apiKey|api_key|secret|password|client_secret|access_token|refresh_token|x-api-key)"\s*:\s*")([^"]*)(")/gi;
+const URL_QUERY_SECRET_PATTERN =
+  /([?&](?:token|api_key|apikey|key|secret|access_token|password)=)([^&#\s"',;}\]]+)/gi;
+const WELL_KNOWN_TOKEN_PATTERN =
+  /\b(?:sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{16,})\b/g;
+
+export const redactText = (input: string, secrets?: Iterable<string>): string => {
+  let output = input
+    .replace(AUTH_HEADER_PATTERN, '$1[REDACTED]')
+    .replace(API_KEY_HEADER_PATTERN, '$1[REDACTED]')
+    .replace(JSON_SECRET_PROP_PATTERN, '$1[REDACTED]$3')
+    .replace(URL_QUERY_SECRET_PATTERN, '$1[REDACTED]')
+    .replace(WELL_KNOWN_TOKEN_PATTERN, '[REDACTED]');
+  if (secrets) {
+    const sorted = [...new Set(secrets)]
+      .filter((secret) => typeof secret === 'string' && secret.length >= 8)
+      .sort((a, b) => b.length - a.length);
+    for (const secret of sorted) {
+      if (output.includes(secret)) output = output.replaceAll(secret, '[REDACTED]');
+    }
+  }
+  return output;
+};
+
 /** Reads data descriptors only: diagnostic capture must never invoke custom inspection or getters. */
 const diagnosticText = (values: readonly unknown[]): string => {
   let remaining = LOG_LIMITS.entryBytes;
@@ -57,15 +86,24 @@ export class LogBuffer {
   private entries: LogEntry[] = [];
   // Serialized size of each retained entry (plus separator), measured once on append.
   private readonly sizes = new WeakMap<LogEntry, number>();
+  private readonly secrets = new Set<string>();
   private bytes = 0;
   private sequence = 0;
   private generation = 0;
+
+  registerSecrets(values: Iterable<string>): void {
+    for (const value of values) {
+      if (typeof value === 'string' && value.length >= 8) {
+        this.secrets.add(value);
+      }
+    }
+  }
 
   append(
     metadata: Pick<LogEntry, 'server' | 'level' | 'source'>,
     values: readonly unknown[],
   ): void {
-    let text = diagnosticText(values);
+    let text = redactText(diagnosticText(values), this.secrets);
     const truncated = Buffer.byteLength(text) >= LOG_LIMITS.entryBytes;
     if (truncated) {
       text =

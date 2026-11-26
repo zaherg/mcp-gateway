@@ -75,13 +75,21 @@ interface SidebarUpdates {
   updateState: UpdateStatus | undefined;
   disabled: boolean;
   onOpen: () => void;
+  onRestart?: () => void;
   triggerRef: RefObject<HTMLButtonElement | null>;
 }
 
-export const SidebarUpdates = ({ updateState, disabled, onOpen, triggerRef }: SidebarUpdates) => {
+export const SidebarUpdates = ({
+  updateState,
+  disabled,
+  onOpen,
+  onRestart,
+  triggerRef,
+}: SidebarUpdates) => {
   const { t } = useI18n();
   if (!updateState?.supported) return null;
   const { title, detail, ariaLabel, announcement } = describeUpdate(updateState, t);
+  const isReady = updateState.phase === 'ready';
   return (
     <div className="sidebar-updates electrobun-webkit-app-region-no-drag">
       <span className="sr-only" role="status">
@@ -93,10 +101,10 @@ export const SidebarUpdates = ({ updateState, disabled, onOpen, triggerRef }: Si
         variant="ghost"
         className="sidebar-updates-button"
         data-phase={updateState.phase}
-        aria-haspopup="dialog"
+        aria-haspopup={isReady && onRestart ? undefined : 'dialog'}
         aria-label={ariaLabel}
         disabled={disabled || updateState.phase === 'restarting'}
-        onClick={onOpen}
+        onClick={isReady && onRestart ? onRestart : onOpen}
       >
         <span className="sidebar-updates-title">{title}</span>
         {detail && <span className="sidebar-updates-detail">{detail}</span>}

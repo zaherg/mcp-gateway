@@ -1,14 +1,26 @@
 /** An IPv4 network as unsigned 32-bit integers; `network` has no host bits set. */
-export interface Ipv4Range {
+interface Ipv4Range {
   network: number;
   mask: number;
 }
 
 const OCTET = /^(0|[1-9][0-9]{0,2})$/;
 
-/** A strict dotted-quad IPv4 address as an unsigned integer, or null. */
+const normalizeIpv4Text = (text: string): string => {
+  if (/^::ffff:/i.test(text)) {
+    const suffix = text.slice(7);
+    if (/^[0-9a-f]{1,4}:[0-9a-f]{1,4}$/i.test(suffix)) {
+      const [high = 0, low = 0] = suffix.split(':').map((part) => Number.parseInt(part, 16));
+      return `${high >>> 8}.${high & 255}.${low >>> 8}.${low & 255}`;
+    }
+    return suffix;
+  }
+  return text;
+};
+
+/** A strict dotted-quad IPv4 address (or IPv4-mapped IPv6 `::ffff:...`) as an unsigned integer, or null. */
 export const ipv4Number = (text: string): number | null => {
-  const parts = text.split('.');
+  const parts = normalizeIpv4Text(text).split('.');
   if (parts.length !== 4) return null;
   let value = 0;
   for (const part of parts) {
@@ -43,8 +55,13 @@ const SHARED_RANGE = knownRange('100.64.0.0/10');
 
 export const isSharedIpv4 = (address: number): boolean => inIpv4Range(address, SHARED_RANGE);
 
+/** Link-local / cloud-metadata IPv4 address space (169.254.0.0/16). */
+const LINK_LOCAL_RANGE = knownRange('169.254.0.0/16');
+
+export const isLinkLocalIpv4 = (address: number): boolean => inIpv4Range(address, LINK_LOCAL_RANGE);
+
 /** Private-use space (RFC 1918) and shared space. Listener addresses and allowed peers stay inside these. */
-export const LOCAL_RANGES: readonly Ipv4Range[] = [
+const LOCAL_RANGES: readonly Ipv4Range[] = [
   ...['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'].map(knownRange),
   SHARED_RANGE,
 ];

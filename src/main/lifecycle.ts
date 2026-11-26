@@ -29,17 +29,9 @@ export class QuitCoordinator {
   async beginUpdateRestart(): Promise<boolean> {
     if (this.approved || this.state.phase === 'ready') return false;
     if (this.intent === 'quit') return false;
-    if (this.cleanupDone) {
-      if (this.intent !== 'update') {
-        this.intent = 'update';
-        this.state = { attempt: ++this.sequence, phase: 'pending', error: null };
-      }
-      return true;
-    }
     if (this.intent !== 'update') {
       this.intent = 'update';
       this.state = { attempt: ++this.sequence, phase: 'pending', error: null };
-      this.cleanupDone = false;
     }
     await this.ensureCleanup();
     return this.intent === 'update' && this.cleanupDone;
@@ -94,7 +86,6 @@ export class QuitCoordinator {
   private ensureCleanup(): Promise<void> {
     if (this.cleanupDone) return Promise.resolve();
     if (this.cleanupInFlight) return this.cleanupInFlight;
-    this.cleanupDone = false;
     const operation = Promise.resolve()
       .then(this.cleanup)
       .then(() => {
@@ -138,15 +129,15 @@ export class QuitCoordinator {
   }
 }
 
-/** A renderer acknowledgement only confirms delivery, never consent to discard a draft. */
+/** Quits immediately unless `RawConfig` currently holds unapplied raw text edits. */
 export class InteractiveQuitGate {
   private pending: Promise<void> | undefined;
 
   constructor(
     private readonly lifecycle: QuitCoordinator,
-    private readonly requestRenderer: () => Promise<boolean> | undefined,
+    private readonly hasUnsavedRawConfig: () => Promise<boolean> | undefined,
+    private readonly confirmDiscardQuit: () => Promise<boolean>,
     private readonly quit: () => void,
-    private readonly onUnavailable: (error: unknown) => void,
     private readonly signalRequested: () => boolean = () => false,
   ) {}
 
@@ -161,22 +152,20 @@ export class InteractiveQuitGate {
       this.lifecycle.handle(veto);
       return;
     }
+    const unsavedCheck = this.hasUnsavedRawConfig();
+    if (unsavedCheck === undefined) {
+      this.lifecycle.handle(veto);
+      return;
+    }
     veto();
     if (this.pending) return;
     this.pending = Promise.resolve()
       .then(async () => {
-        const acknowledgement = this.requestRenderer();
-        if (acknowledgement === undefined) {
-          // No window means no retained renderer draft. Cmd+W persistence is unchanged.
+        const hasUnsaved = await unsavedCheck.catch(() => false);
+        if (!hasUnsaved || (await this.confirmDiscardQuit())) {
           this.lifecycle.armQuit();
           this.quit();
-        } else if ((await acknowledgement) !== true) {
-          throw new Error('The window did not acknowledge the interactive Quit request.');
         }
-      })
-      .catch((error) => {
-        // A lost acknowledgement after an approved request must not interrupt cleanup.
-        if (this.lifecycle.status().phase === 'idle') this.onUnavailable(error);
       })
       .finally(() => {
         this.pending = undefined;

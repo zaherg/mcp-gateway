@@ -1,6 +1,5 @@
 # Rules for this project
 
-1. Never write tests.
 2. Never create, edit, or consider GitHub CI or workflow files.
 3. If a plan exists, follow it exactly.
    - If a plan step is wrong or blocked, stop and ask.

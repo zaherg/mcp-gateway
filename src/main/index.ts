@@ -7,7 +7,6 @@ import Electrobun, {
   BrowserWindow,
   BuildConfig,
   PATHS,
-  Screen,
   Tray,
   Utils,
 } from 'electrobun/main';
@@ -27,16 +26,48 @@ import {
   openLoginManager,
   openMinimumWindowSize,
   openTrayIndicator,
+  postNativeNotification,
   preventIdleSleep,
   readPreferredLanguages,
   restoreWindow,
 } from '@mcp-gateway/main/native';
 import { AppService } from '@mcp-gateway/main/service';
 import { WhatsNewStore } from '@mcp-gateway/main/whats-new';
-import { clampWindowSize, MIN_WINDOW_SIZE, WindowSizeStore } from '@mcp-gateway/main/window-size';
+import { editConfigDocument, SAFE_NAME } from '@mcp-gateway/shared/config-document';
 import { CATALOG_LOCALES, resolveLocale } from '@mcp-gateway/shared/i18n';
 import { appNameFor, TEST_IDENTIFIER } from '@mcp-gateway/shared/identity';
-import type { AppRPC } from '@mcp-gateway/shared/rpc';
+import type { AppRPC, MenuCommand, UpdateStatus } from '@mcp-gateway/shared/rpc';
+
+const MIN_WINDOW_SIZE = { width: 1120, height: 820 } as const;
+const MENU_COMMANDS: ReadonlySet<MenuCommand> = new Set([
+  'tab:overview',
+  'tab:logs',
+  'tab:settings',
+  'tab:raw-config',
+  'server:add',
+  'updates:open',
+  'gateway:reload',
+]);
+
+const isMenuCommand = (value: string): value is MenuCommand =>
+  MENU_COMMANDS.has(value as MenuCommand);
+
+const originalBunServe = Bun.serve.bind(Bun);
+Bun.serve = ((options: Parameters<typeof Bun.serve>[0]) => {
+  if (
+    options &&
+    typeof options === 'object' &&
+    !('unix' in options && options.unix) &&
+    !('hostname' in options && options.hostname)
+  ) {
+    return originalBunServe({
+      ...options,
+      unix: undefined,
+      hostname: '127.0.0.1',
+    } as Parameters<typeof Bun.serve>[0]);
+  }
+  return originalBunServe(options);
+}) as typeof Bun.serve;
 
 const buildConfig = BuildConfig.getSync();
 const isDevelopment = buildConfig.channel === 'dev';
@@ -53,25 +84,32 @@ const nativeLibrary = join(PATHS.RESOURCES_FOLDER, 'app/native/login.dylib');
 const nativeQuitSignal = observeNativeQuitSignals(nativeLibrary);
 const login = openLoginManager(nativeLibrary);
 const setMinimumWindowSize = openMinimumWindowSize(nativeLibrary);
-const windowSize = await WindowSizeStore.open(dataDirectory);
 // Opening the controller creates the folder on a first launch, so look before it does.
 const existingInstall = existsSync(dataDirectory);
+const defaultPort = identifier === TEST_IDENTIFIER ? 8766 : 8765;
 const controller = await McpGatewayController.open(
   join(dataDirectory, 'mcp.json'),
   () => preventIdleSleep(nativeLibrary),
   // Unsigned development builds share the real configuration folder but never touch Keychain.
   isDevelopment ? undefined : openKeychain(identifier),
   // A different first-run port lets the Dev app run beside the production app.
-  identifier === TEST_IDENTIFIER ? 8766 : 8765,
+  defaultPort,
 );
+const notifyBackground = (body: string): void => {
+  postNativeNotification(appName, body, nativeLibrary, (error) =>
+    controller.recordLocalError(error),
+  );
+};
 const keyReminder = await KeyReminderStore.open(dataDirectory, existingInstall);
-let preferredLanguages: string[] = [];
-try {
-  preferredLanguages = readPreferredLanguages(nativeLibrary);
-} catch (error) {
-  // The default locale is a working fallback; the failure stays visible in Logs.
-  controller.recordLocalError(error);
-}
+const preferredLanguages = (() => {
+  try {
+    return readPreferredLanguages(nativeLibrary);
+  } catch (error) {
+    // The default locale is a working fallback; the failure stays visible in Logs.
+    controller.recordLocalError(error);
+    return [];
+  }
+})();
 const language = await LanguageStore.open(dataDirectory, resolveLocale(preferredLanguages), [
   ...CATALOG_LOCALES,
 ]);
@@ -89,14 +127,32 @@ const setTrayRunning = openTrayIndicator(
   TRAY_SIZE,
   nativeLibrary,
 );
-let window: BrowserWindow | undefined;
-let pendingShowUpdates = false;
-let windowReady = false;
-let menuState = '';
-let trayRunning = false;
-let trayIndicatorFailed = false;
-let trayRemoved = false;
-let requestInteractiveRendererQuit: (() => Promise<boolean>) | undefined;
+
+type WindowRPC = ReturnType<typeof BrowserView.defineRPC<AppRPC>>;
+
+const desktopState: {
+  window: BrowserWindow | undefined;
+  rpc: WindowRPC | undefined;
+  pendingMenuCommand: MenuCommand | undefined;
+  windowReady: boolean;
+  menuState: string;
+  lastSnapshotKey: string;
+  trayRunning: boolean;
+  trayIndicatorFailed: boolean;
+  trayRemoved: boolean;
+  hasUnsavedRawConfig: (() => Promise<boolean>) | undefined;
+} = {
+  window: undefined,
+  rpc: undefined,
+  pendingMenuCommand: undefined,
+  windowReady: false,
+  menuState: '',
+  lastSnapshotKey: '',
+  trayRunning: false,
+  trayIndicatorFailed: false,
+  trayRemoved: false,
+  hasUnsavedRawConfig: undefined,
+};
 
 const menuAction = (event: unknown): string | undefined => {
   if (typeof event !== 'object' || event === null || !('data' in event)) return;
@@ -105,50 +161,141 @@ const menuAction = (event: unknown): string | undefined => {
   return typeof data.action === 'string' ? data.action : undefined;
 };
 
+const removeTray = (): void => {
+  if (!desktopState.trayRemoved) {
+    tray.remove();
+    desktopState.trayRemoved = true;
+  }
+};
+
+const gatewayBaseEndpoint = (): string => {
+  const active = controller.activeConfig();
+  const host = active?.gateway.host ?? '127.0.0.1';
+  const port = active?.gateway.port ?? defaultPort;
+  return `http://${host}:${port}`;
+};
+
+const pushSnapshot = (): void => {
+  if (!desktopState.window || !desktopState.windowReady || !desktopState.rpc) return;
+  try {
+    desktopState.rpc.send.snapshotChanged(service.currentSnapshot());
+  } catch (error) {
+    controller.recordLocalError(error);
+  }
+};
+
+const sendMenuCommand = (command: MenuCommand): void => {
+  desktopState.pendingMenuCommand = command;
+  openWindow();
+  if (desktopState.windowReady && desktopState.rpc) {
+    desktopState.pendingMenuCommand = undefined;
+    try {
+      desktopState.rpc.send.menuCommand({ command });
+    } catch (error) {
+      controller.recordLocalError(error);
+    }
+  }
+};
+
 const updateMenu = (): void => {
-  if (trayRemoved) return;
+  if (desktopState.trayRemoved) return;
   const quitFailed = quit.status().phase === 'failed';
   const snapshot = controller.snapshot();
-  if (snapshot.running !== trayRunning) {
+  if (snapshot.running !== desktopState.trayRunning) {
     try {
       setTrayRunning(snapshot.running);
-      trayRunning = snapshot.running;
-      trayIndicatorFailed = false;
+      desktopState.trayRunning = snapshot.running;
+      desktopState.trayIndicatorFailed = false;
     } catch (error) {
       // Keep the old state so the next refresh retries; report once per failure streak.
-      if (!trayIndicatorFailed) controller.recordLocalError(error);
-      trayIndicatorFailed = true;
+      if (!desktopState.trayIndicatorFailed) controller.recordLocalError(error);
+      desktopState.trayIndicatorFailed = true;
     }
   }
   const update = updater.status();
   const t = language.translate;
-  const state = `${language.state.locale}:${snapshot.running}:${snapshot.configError?.code ?? ''}:${quitFailed}:${update.supported}:${update.phase}:${update.availableVersion ?? ''}`;
-  if (state === menuState) return;
-  menuState = state;
-  const updateLabel =
-    update.phase === 'ready'
-      ? t('native.tray.updateReady', {
-          version: update.availableVersion ?? t('native.tray.review'),
-        })
-      : update.phase === 'available'
-        ? t('native.tray.updateAvailable', {
-            version: update.availableVersion ?? t('native.tray.review'),
-          })
-        : t('native.menu.checkForUpdates');
+  const active = controller.activeConfig();
+  const hostPort = `${active?.gateway.host ?? '127.0.0.1'}:${active?.gateway.port ?? defaultPort}`;
+  const serversKey = snapshot.servers
+    .map((server) => `${server.name}:${server.status}:${server.enabled}`)
+    .join(',');
+  const state = [
+    language.state.locale,
+    snapshot.running,
+    hostPort,
+    snapshot.revision,
+    snapshot.configError?.occurrenceId ?? '',
+    snapshot.operationalError?.occurrenceId ?? '',
+    serversKey,
+    quitFailed,
+    update.supported,
+    update.phase,
+    update.availableVersion ?? '',
+    update.progressPercent ?? '',
+    update.error ?? '',
+  ].join('|');
+
+  if (state !== desktopState.lastSnapshotKey) {
+    desktopState.lastSnapshotKey = state;
+    pushSnapshot();
+  }
+
+  if (state === desktopState.menuState) return;
+  desktopState.menuState = state;
+
+  const statusHeader = quitFailed
+    ? t('native.tray.cleanupFailed')
+    : snapshot.running
+      ? `${t('common.gatewayRunning')} — ${hostPort}`
+      : t('common.gatewayStopped');
+
+  const serverItems = snapshot.servers.map((server) => {
+    const icon = server.status === 'mounted' ? '●' : server.status === 'error' ? '⚠' : '○';
+    const statusLabel =
+      server.status === 'mounted'
+        ? t('overview.status.mounted')
+        : server.status === 'error'
+          ? t('overview.status.error')
+          : server.status === 'disabled'
+            ? t('overview.status.disabled')
+            : t('overview.status.stopped');
+    return {
+      type: 'normal' as const,
+      label: `${icon} ${server.name} (${statusLabel})`,
+      action: `toggle-server:${server.name}`,
+      enabled: !snapshot.configError,
+    };
+  });
+
+  const updateItem = !update.supported
+    ? []
+    : update.phase === 'ready'
+      ? [
+          {
+            type: 'normal' as const,
+            label: `Restart to Update (${update.availableVersion ?? t('native.tray.review')})`,
+            action: 'update-restart',
+          },
+        ]
+      : [
+          {
+            type: 'normal' as const,
+            label:
+              update.phase === 'available'
+                ? t('native.tray.updateAvailable', {
+                    version: update.availableVersion ?? t('native.tray.review'),
+                  })
+                : t('native.menu.checkForUpdates'),
+            action: 'updates',
+          },
+        ];
+
   tray.setMenu([
     {
       type: 'normal',
-      label: quitFailed
-        ? t('native.tray.cleanupFailed')
-        : snapshot.running
-          ? t('common.gatewayRunning')
-          : t('common.gatewayStopped'),
+      label: statusHeader,
       enabled: false,
     },
-    { type: 'normal', label: t('native.tray.open'), action: 'open' },
-    ...(update.supported
-      ? [{ type: 'normal' as const, label: updateLabel, action: 'updates' }]
-      : []),
     {
       type: 'normal',
       label: snapshot.running ? t('common.stopGateway') : t('common.startGateway'),
@@ -156,6 +303,17 @@ const updateMenu = (): void => {
       // Start retries an unreadable stored key, for example after unlocking Keychain.
       enabled: !snapshot.configError || snapshot.configError.code === 'KeyUnavailable',
     },
+    {
+      type: 'normal',
+      label: 'Copy Gateway Endpoint URL',
+      action: 'copy-gateway-endpoint',
+      enabled: snapshot.running,
+    },
+    { type: 'divider' },
+    ...serverItems,
+    ...(serverItems.length > 0 ? [{ type: 'divider' as const }] : []),
+    ...updateItem,
+    { type: 'normal', label: `Open ${appName}`, action: 'open' },
     { type: 'divider' },
     { type: 'normal', label: t('common.quitApp', { app: appName }), action: 'quit' },
   ]);
@@ -163,34 +321,33 @@ const updateMenu = (): void => {
 
 const showUpdatesSection = (): void => {
   if (!support.supported) return;
-  pendingShowUpdates = true;
-  openWindow();
-  void service.handlers.updatesCheck();
-  if (windowReady) {
-    pendingShowUpdates = false;
-    dispatchShowUpdates();
-  }
+  sendMenuCommand('updates:open');
+  void service.handlers
+    .updatesCheck()
+    .then(() => {
+      updateMenu();
+      pushSnapshot();
+    })
+    .catch((error) => controller.recordLocalError(error));
 };
 
-const dispatchShowUpdates = (): void => {
-  window?.webview.executeJavascript('window.dispatchEvent(new Event("mcp-gateway:show-updates"))');
-};
-
-// A saved size from a larger display must not open beyond the current one.
-const initialWindowSize = (): { width: number; height: number } => {
-  const saved = windowSize.current;
-  if (!saved) return MIN_WINDOW_SIZE;
-  const area = Screen.getPrimaryDisplay().workArea;
-  if (area.width <= 0 || area.height <= 0) return saved;
-  return {
-    width: Math.max(MIN_WINDOW_SIZE.width, Math.min(saved.width, area.width)),
-    height: Math.max(MIN_WINDOW_SIZE.height, Math.min(saved.height, area.height)),
+const wrapHandler = <Args extends unknown[], Res>(
+  handler: (...args: Args) => Promise<Res>,
+  notifiesSnapshot = true,
+): ((...args: Args) => Promise<Res>) => {
+  return async (...args: Args): Promise<Res> => {
+    const result = await handler(...args);
+    if (notifiesSnapshot) {
+      updateMenu();
+      pushSnapshot();
+    }
+    return result;
   };
 };
 
 const openWindow = (): void => {
-  if (window) {
-    restoreWindow(window);
+  if (desktopState.window) {
+    restoreWindow(desktopState.window);
     return;
   }
   Utils.setDockIconVisible(true);
@@ -199,15 +356,36 @@ const openWindow = (): void => {
     handlers: {
       requests: {
         ...service.handlers,
+        start: wrapHandler(service.handlers.start),
+        stop: wrapHandler(service.handlers.stop),
+        restartServer: wrapHandler(service.handlers.restartServer),
+        saveConfig: wrapHandler(service.handlers.saveConfig),
+        importExternalServers: wrapHandler(service.handlers.importExternalServers),
+        migrateKeys: wrapHandler(service.handlers.migrateKeys),
+        dismissKeyReminder: wrapHandler(service.handlers.dismissKeyReminder),
+        dismissWhatsNew: wrapHandler(service.handlers.dismissWhatsNew),
+        updatesCheck: wrapHandler(service.handlers.updatesCheck),
+        updatesDownload: wrapHandler(service.handlers.updatesDownload),
+        updatesInstall: wrapHandler(service.handlers.updatesInstall),
+        updatesSetAutomatic: wrapHandler(service.handlers.updatesSetAutomatic),
+        setLanguage: wrapHandler(service.handlers.setLanguage),
+        updatesRestart: wrapHandler(service.handlers.updatesRestart),
         snapshot: async (input: unknown) => {
           const result = await service.handlers.snapshot(input);
           if (!ready) {
             ready = true;
-            windowReady = true;
+            desktopState.windowReady = true;
           }
-          if (pendingShowUpdates) {
-            pendingShowUpdates = false;
-            dispatchShowUpdates();
+          if (desktopState.pendingMenuCommand) {
+            const command = desktopState.pendingMenuCommand;
+            desktopState.pendingMenuCommand = undefined;
+            queueMicrotask(() => {
+              try {
+                rpc.send.menuCommand({ command });
+              } catch (error) {
+                controller.recordLocalError(error);
+              }
+            });
           }
           return result;
         },
@@ -215,51 +393,32 @@ const openWindow = (): void => {
       messages: {},
     },
   });
-  requestInteractiveRendererQuit = () =>
-    rpc.request.interactiveQuit(undefined, { maxRequestTime: 5_000 });
+  desktopState.rpc = rpc;
+  desktopState.hasUnsavedRawConfig = () =>
+    rpc.request.hasUnsavedRawConfig(undefined, { maxRequestTime: 1_500 });
   const created = new BrowserWindow({
     title: appName,
     url: viewUrl,
     rpc,
-    frame: initialWindowSize(),
+    frame: MIN_WINDOW_SIZE,
     titleBarStyle: 'hiddenInset',
     renderer: 'native',
     allowedProtocols: { views: true, appData: false },
     // Pinned native matcher uses last-match-wins; unmatched URLs otherwise default allow.
     navigationRules: JSON.stringify(['^*', viewUrl]),
   });
-  window = created;
+  desktopState.window = created;
   try {
     setMinimumWindowSize(created, MIN_WINDOW_SIZE.width, MIN_WINDOW_SIZE.height);
   } catch (error) {
     controller.recordLocalError(error);
   }
-  created.on('resize', () => {
-    if (window !== created) return;
-    try {
-      // Events can arrive after a newer resize; always constrain the live size.
-      const current = created.getSize();
-      if (
-        !Number.isFinite(current.width) ||
-        !Number.isFinite(current.height) ||
-        current.width <= 0 ||
-        current.height <= 0
-      )
-        return;
-      const size = clampWindowSize(current);
-      if (size.width !== current.width || size.height !== current.height)
-        created.setSize(size.width, size.height);
-      windowSize.schedule(size);
-    } catch (error) {
-      controller.recordLocalError(error);
-    }
-  });
   created.on('close', () => {
-    void windowSize.flush();
-    if (window === created) {
-      window = undefined;
-      windowReady = false;
-      requestInteractiveRendererQuit = undefined;
+    if (desktopState.window === created) {
+      desktopState.window = undefined;
+      desktopState.rpc = undefined;
+      desktopState.windowReady = false;
+      desktopState.hasUnsavedRawConfig = undefined;
       Utils.setDockIconVisible(false);
     }
   });
@@ -271,13 +430,8 @@ const quit = new QuitCoordinator(
   async () => {
     updater.stop();
     clearInterval(refresh);
-    await windowSize.flush();
     await controller.close();
-    if (!trayRemoved) {
-      tray.remove();
-      trayRemoved = true;
-    }
-    login.close();
+    removeTray();
   },
   () => {
     Utils.quit();
@@ -290,6 +444,7 @@ const quit = new QuitCoordinator(
         : 'Gateway cleanup failed; the app has not quit.',
     );
     updateMenu();
+    pushSnapshot();
     // Cleanup may already have removed the tray; retain a visible retry path.
     openWindow();
   },
@@ -300,7 +455,17 @@ const updater = new AppUpdater({
   installedVersion: support.installedVersion,
   quit,
 });
-updater.subscribe(updateMenu);
+let previousUpdatePhase = updater.status().phase;
+updater.subscribe((status: UpdateStatus) => {
+  const transitionedToReady = previousUpdatePhase !== 'ready' && status.phase === 'ready';
+  previousUpdatePhase = status.phase;
+  updateMenu();
+  pushSnapshot();
+  if (transitionedToReady && !desktopState.window) {
+    const version = status.availableVersion ?? language.translate('native.tray.review');
+    notifyBackground(language.translate('native.tray.updateReady', { version }));
+  }
+});
 const service = new AppService(
   controller,
   login.manager,
@@ -312,9 +477,9 @@ const service = new AppService(
       return quit.status();
     },
     quitStatus: () => quit.status(),
-    openExternal: Utils.openExternal,
+    openExternal: (url) => Boolean(Utils.openExternal(url)),
     showItemInFolder: Utils.showItemInFolder,
-    openPath: Utils.openPath,
+    openPath: (path) => Boolean(Utils.openPath(path)),
     confirmDiscard: async () => {
       const t = language.translate;
       const { response } = await Utils.showMessageBox({
@@ -323,6 +488,19 @@ const service = new AppService(
         message: t('native.discard.message'),
         detail: t('native.discard.detail'),
         buttons: [t('common.cancel'), t('native.discard.confirm')],
+        defaultId: 0,
+        cancelId: 0,
+      });
+      return response === 1;
+    },
+    confirmDeleteServer: async (name) => {
+      const t = language.translate;
+      const { response } = await Utils.showMessageBox({
+        type: 'warning',
+        title: t('confirm.deleteTitle'),
+        message: t('confirm.deleteTitle'),
+        detail: t('confirm.deleteBody', { name }),
+        buttons: [t('common.cancel'), t('confirm.deleteAction')],
         defaultId: 0,
         cancelId: 0,
       });
@@ -338,32 +516,32 @@ const service = new AppService(
       // The tray key includes the locale, so the tray rebuilds; the app menu is rebuilt here.
       updateMenu();
       setApplicationMenu();
+      pushSnapshot();
     },
   },
   updater,
 );
 const interactiveQuit = new InteractiveQuitGate(
   quit,
-  () => {
-    if (!window) return undefined;
-    restoreWindow(window);
-    return windowReady && requestInteractiveRendererQuit
-      ? requestInteractiveRendererQuit()
-      : Promise.resolve(false);
+  () =>
+    desktopState.window && desktopState.windowReady && desktopState.hasUnsavedRawConfig
+      ? desktopState.hasUnsavedRawConfig()
+      : undefined,
+  async () => {
+    if (desktopState.window) restoreWindow(desktopState.window);
+    const t = language.translate;
+    const { response } = await Utils.showMessageBox({
+      type: 'question',
+      title: t('confirm.quitTitle', { app: appName }),
+      message: 'Quit with unsaved raw configuration edits?',
+      detail: t('confirm.quitBody'),
+      buttons: [t('common.cancel'), 'Quit and Discard'],
+      defaultId: 0,
+      cancelId: 0,
+    });
+    return response === 1;
   },
   () => Utils.quit(),
-  (error) => {
-    controller.recordLocalError(error);
-    openWindow();
-    const t = language.translate;
-    void Utils.showMessageBox({
-      type: 'error',
-      title: t('native.quitAck.title'),
-      message: t('native.quitAck.message'),
-      detail: t('native.quitAck.detail'),
-      buttons: [t('native.quitAck.ok')],
-    }).catch((failure) => controller.recordLocalError(failure));
-  },
   nativeQuitSignal,
 );
 Electrobun.events.on('before-quit', (event) =>
@@ -378,34 +556,97 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const)
     Utils.quit();
   });
 
+const toggleServerFromTray = async (name: string): Promise<void> => {
+  if (!SAFE_NAME.test(name)) return;
+  const snapshot = controller.snapshot();
+  if (snapshot.configError) return;
+  let parsed: ReturnType<typeof parseConfig>;
+  try {
+    parsed = parseConfig(snapshot.configText, process.env, snapshot.configFormat);
+  } catch {
+    return;
+  }
+  const server = Object.hasOwn(parsed.mcpServers, name) ? parsed.mcpServers[name] : undefined;
+  if (!server) return;
+  const nextText = editConfigDocument(
+    snapshot.configText,
+    {
+      ...parsed,
+      mcpServers: {
+        ...parsed.mcpServers,
+        [name]: { ...server, disabled: !server.disabled },
+      },
+    },
+    snapshot.configFormat,
+  );
+  const result = await service.handlers.saveConfig({
+    text: nextText,
+    expectedRevision: snapshot.revision,
+  });
+  if (!result.ok && !desktopState.window) notifyBackground(result.error.message);
+  updateMenu();
+  pushSnapshot();
+};
+
 const dispatch = async (event: unknown): Promise<void> => {
-  switch (menuAction(event)) {
+  const action = menuAction(event);
+  if (!action) return;
+  if (action.startsWith('toggle-server:')) {
+    const name = action.slice('toggle-server:'.length);
+    await toggleServerFromTray(name);
+    return;
+  }
+  if (action.startsWith('menu:')) {
+    const command = action.slice('menu:'.length);
+    if (isMenuCommand(command)) sendMenuCommand(command);
+    return;
+  }
+  switch (action) {
     case 'open':
+    case 'about':
       openWindow();
       break;
     case 'updates':
       showUpdatesSection();
       break;
+    case 'update-restart': {
+      const result = await service.handlers.updatesRestart();
+      if (!result.ok) {
+        if (!desktopState.window) notifyBackground(result.error.message);
+      }
+      updateMenu();
+      pushSnapshot();
+      break;
+    }
+    case 'copy-gateway-endpoint':
+      Utils.clipboardWriteText(gatewayBaseEndpoint());
+      break;
     case 'toggle': {
       const result = await (controller.snapshot().running
         ? service.handlers.stop()
         : service.handlers.start());
-      if (!result.ok) openWindow();
+      if (!result.ok && !desktopState.window) notifyBackground(result.error.message);
       updateMenu();
+      pushSnapshot();
       break;
     }
     case 'open-devtools':
       if (isDevelopment) {
         openWindow();
         // The pinned native toggle can crash when closing an open inspector.
-        window?.webview.openDevTools();
+        desktopState.window?.webview.openDevTools();
       }
       break;
     case 'close-window':
-      window?.close();
+      desktopState.window?.close();
       break;
     case 'open-docs': {
       const result = await service.handlers.openSocialLink({ target: 'docs' });
+      if (!result.ok) controller.recordLocalError(`${result.error.code}: ${result.error.message}`);
+      break;
+    }
+    case 'open-github': {
+      const result = await service.handlers.openSocialLink({ target: 'github' });
       if (!result.ok) controller.recordLocalError(`${result.error.code}: ${result.error.message}`);
       break;
     }
@@ -420,7 +661,10 @@ const dispatch = async (event: unknown): Promise<void> => {
   }
 };
 tray.on('tray-clicked', (event) => {
-  void dispatch(event).catch(() => console.error('Tray action failed.'));
+  void dispatch(event).catch((error) => {
+    controller.recordLocalError(error);
+    console.error('Tray action failed.');
+  });
 });
 const setApplicationMenu = (): void => {
   const t = language.translate;
@@ -428,18 +672,18 @@ const setApplicationMenu = (): void => {
     {
       label: appName,
       submenu: [
-        { label: t('native.menu.settings'), action: 'open', accelerator: 'Cmd+,' },
+        { role: 'about', label: `About ${appName}` },
+        { type: 'divider' },
+        { label: t('native.menu.settings'), action: 'menu:tab:settings', accelerator: 'Cmd+,' },
         ...(support.supported
           ? [{ label: t('native.menu.checkForUpdates'), action: 'updates' }]
           : []),
         { type: 'divider' },
+        { role: 'hide', label: `Hide ${appName}`, accelerator: 'Cmd+H' },
+        { role: 'hideOthers', label: 'Hide Others', accelerator: 'Cmd+Option+H' },
+        { role: 'unhide', label: 'Show All' },
+        { type: 'divider' },
         { label: t('common.quitApp', { app: appName }), action: 'quit', accelerator: 'Cmd+Q' },
-      ],
-    },
-    {
-      label: t('native.menu.file'),
-      submenu: [
-        { label: t('native.menu.closeWindow'), action: 'close-window', accelerator: 'Cmd+W' },
       ],
     },
     {
@@ -452,6 +696,42 @@ const setApplicationMenu = (): void => {
         { role: 'copy', label: t('native.menu.copy') },
         { role: 'paste', label: t('native.menu.paste') },
         { role: 'selectAll', label: t('native.menu.selectAll') },
+      ],
+    },
+    {
+      label: 'View',
+      submenu: [
+        { label: t('overview.servers'), action: 'menu:tab:overview', accelerator: 'Cmd+1' },
+        { label: t('shell.tab.logs'), action: 'menu:tab:logs', accelerator: 'Cmd+2' },
+        { label: t('shell.tab.settings'), action: 'menu:tab:settings', accelerator: 'Cmd+3' },
+        {
+          label: t('raw.title'),
+          action: 'menu:tab:raw-config',
+          accelerator: 'Cmd+4',
+        },
+        { type: 'divider' },
+        {
+          label: 'Reload Configuration',
+          action: 'menu:gateway:reload',
+          accelerator: 'Cmd+R',
+        },
+      ],
+    },
+    {
+      label: 'Server',
+      submenu: [
+        {
+          label: `${t('overview.addServer')}…`,
+          action: 'menu:server:add',
+          accelerator: 'Cmd+N',
+        },
+      ],
+    },
+    {
+      label: 'Window',
+      submenu: [
+        { role: 'minimize', label: 'Minimize', accelerator: 'Cmd+M' },
+        { label: t('native.menu.closeWindow'), action: 'close-window', accelerator: 'Cmd+W' },
       ],
     },
     ...(isDevelopment
@@ -471,38 +751,47 @@ const setApplicationMenu = (): void => {
     {
       label: t('native.menu.help'),
       submenu: [
-        { label: t('native.menu.guide'), action: 'open-docs' },
+        { label: 'Documentation', action: 'open-docs' },
         { label: t('native.menu.revealConfig'), action: 'reveal-config' },
+        { label: 'GitHub Repository', action: 'open-github' },
       ],
     },
   ]);
 };
 setApplicationMenu();
 ApplicationMenu.on('application-menu-clicked', (event) => {
-  void dispatch(event).catch(() => console.error('Menu action failed.'));
+  void dispatch(event).catch((error) => {
+    controller.recordLocalError(error);
+    console.error('Menu action failed.');
+  });
 });
 Utils.setDockIconVisible(false);
 updateMenu();
-try {
-  await updater.start();
-  updateMenu();
-} catch (error) {
-  controller.recordLocalError(error);
-}
-let savedLoginPreference = false;
-try {
-  savedLoginPreference =
-    parseConfig(controller.snapshot().configText, process.env, controller.snapshot().configFormat)
-      .gateway.launchAtLogin === true;
-} catch (error) {
-  // Expected invalid config is already visible in the controller snapshot.
-  if (!(error instanceof GatewayError)) throw error;
-}
+await updater.start().catch((error) => controller.recordLocalError(error));
+updateMenu();
+const initialSnapshot = controller.snapshot();
+const savedLoginPreference = (() => {
+  try {
+    return (
+      parseConfig(initialSnapshot.configText, process.env, initialSnapshot.configFormat).gateway
+        .launchAtLogin === true
+    );
+  } catch (error) {
+    // Expected invalid config is already visible in the controller snapshot.
+    if (!(error instanceof GatewayError)) throw error;
+    return false;
+  }
+})();
 const background =
   process.argv.includes('--background') || login.manager.status().enabled || savedLoginPreference;
-// Unread release notes take precedence over background startup until dismissed.
-const showReleaseNotes = whatsNew.pending !== null;
-if (!background || showReleaseNotes) {
+if (background) {
+  const startupError = initialSnapshot.configError ?? initialSnapshot.operationalError;
+  if (startupError) {
+    notifyBackground(startupError.message);
+    updateMenu();
+  }
+} else {
+  const showReleaseNotes = whatsNew.pending !== null;
   openWindow();
-  if (showReleaseNotes && window) restoreWindow(window);
+  if (showReleaseNotes && desktopState.window) restoreWindow(desktopState.window);
 }

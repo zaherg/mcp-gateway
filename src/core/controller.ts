@@ -9,7 +9,7 @@ import {
   isHttpServer,
   keyRefs,
   literalKeySlots,
-  parseConfig,
+  parseConfigWithSlots,
   resolveKeys,
 } from '@mcp-gateway/core/config';
 import { failure, GatewayError, visible } from '@mcp-gateway/core/errors';
@@ -25,6 +25,7 @@ import {
 } from '@mcp-gateway/core/network';
 import { createSerialQueue } from '@mcp-gateway/core/serial-queue';
 import {
+  type ConfigFormat,
   editConfigDocument,
   isRecord,
   parseConfigDocument,
@@ -52,10 +53,157 @@ const createKeyRef = async (keys: KeyStore, token: string): Promise<string> => {
   return ref;
 };
 
+// Resolved mode: the only parse that reads Keychain, once per load and within one deadline.
+const resolveGatewayKeys = async (
+  text: string,
+  format: ConfigFormat,
+  keys: KeyStore | undefined,
+): Promise<{ config: GatewayConfig; slots: KeyMigration }> => {
+  const { file, slots } = parseConfigWithSlots(text, process.env, format);
+  const refs = keyRefs(file);
+  if (refs.length === 0) return { config: resolveKeys(file, new Map()), slots };
+  if (!keys)
+    throw failure(
+      'KeyUnavailable',
+      'Keys stored in Keychain need the signed MCP Gateway app. Generate a new key to use this build.',
+    );
+  return { config: resolveKeys(file, await keys.get(refs)), slots };
+};
+
+const performKeyMigration = async (
+  document: ConfigDocument,
+  format: ConfigFormat,
+  keys: KeyStore,
+  slots: KeyMigration,
+  eligible: KeyMigration,
+  expectedRevision: string,
+): Promise<string> => {
+  if (expectedRevision !== document.revision)
+    throw failure('StaleRevision', 'Configuration changed on disk; review the keys again.');
+  if (
+    (!slots.gateway && slots.servers.length === 0) ||
+    (slots.gateway && !eligible.gateway) ||
+    slots.servers.some((name) => !eligible.servers.includes(name))
+  )
+    throw failure('InvalidConfig', 'These keys can no longer be moved; review them again.');
+  const file = parseConfigDocument(document.text, format);
+  if (!isRecord(file) || !isRecord(file.mcpServers))
+    throw failure('InvalidConfig', 'Configuration does not match the supported schema.');
+  const servers = file.mcpServers;
+  const chosen = [
+    ...(slots.gateway ? [file.gateway] : []),
+    ...slots.servers.map((name) => servers[name]),
+  ];
+  // Every item is created and read back before the file changes. A failure leaves the file
+  // as it was; created items stay as unused copies because the app never deletes one.
+  for (const slot of chosen) {
+    if (!isRecord(slot) || typeof slot.token !== 'string')
+      throw failure('InvalidConfig', 'These keys can no longer be moved; review them again.');
+    slot.tokenRef = await createKeyRef(keys, slot.token);
+    delete slot.token;
+  }
+  return editConfigDocument(document.text, file, format);
+};
+
+class KeySlotCache {
+  private revision = '';
+  private slots: KeyMigration = { gateway: false, servers: [] };
+
+  record(revision: string, slots: KeyMigration): void {
+    this.revision = revision;
+    this.slots = slots;
+  }
+
+  eligible(document: ConfigDocument, format: ConfigFormat, enabled: boolean): KeyMigration {
+    if (!enabled) return { gateway: false, servers: [] };
+    if (this.revision !== document.revision) {
+      this.revision = document.revision;
+      this.slots = literalKeySlots(document.text, format);
+    }
+    return { gateway: this.slots.gateway, servers: [...this.slots.servers] };
+  }
+}
+
+class ConfigDirectoryWatch {
+  private watcher: FSWatcher | undefined;
+  private timer: ReturnType<typeof setTimeout> | undefined;
+  healthy = false;
+
+  constructor(
+    private readonly directory: string,
+    private readonly isInactive: () => boolean,
+    private readonly captureLifetime: () => AbortSignal,
+    private readonly onChanged: (signal: AbortSignal, verify: () => Promise<boolean>) => void,
+    private readonly onFailed: () => void,
+  ) {}
+
+  start(): VisibleError | null {
+    try {
+      const identity = lstatSync(this.directory);
+      if (!identity.isDirectory() || identity.isSymbolicLink())
+        throw failure('UnsafeFile', 'The configuration directory is unsafe.');
+      const verify = async (): Promise<boolean> => {
+        try {
+          const current = await lstat(this.directory);
+          if (
+            !current.isDirectory() ||
+            current.isSymbolicLink() ||
+            current.dev !== identity.dev ||
+            current.ino !== identity.ino
+          ) {
+            this.fail();
+            return false;
+          }
+          return true;
+        } catch {
+          this.fail();
+          return false;
+        }
+      };
+      this.watcher = watch(this.directory, () => {
+        if (this.isInactive() || !this.healthy) return;
+        // Capture cancellation ownership when the event is admitted, before the
+        // debounce and controller queue. A Stop that arrives while this event
+        // waits must cancel it instead of letting it start a fresh lifetime.
+        const signal = this.captureLifetime();
+        if (this.timer) clearTimeout(this.timer);
+        this.timer = setTimeout(() => {
+          this.timer = undefined;
+          this.onChanged(signal, verify);
+        }, 20);
+      });
+      this.healthy = true;
+      this.watcher.on('error', this.fail);
+      this.watcher.on('close', this.fail);
+      return null;
+    } catch {
+      this.healthy = false;
+      this.watcher?.close();
+      return visible(failure('ConfigIO', 'The configuration directory could not be watched.'));
+    }
+  }
+
+  private fail = (): void => {
+    if (!this.healthy || this.isInactive()) return;
+    this.healthy = false;
+    this.onFailed();
+  };
+
+  close(): void {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = undefined;
+    this.healthy = false;
+    this.watcher?.close();
+    this.watcher = undefined;
+  }
+}
+
 /** Local native/UI API. Snapshots contain explicit config credentials; do not log them. */
 export class McpGatewayController implements GatewayController {
   private readonly queue = createSerialQueue();
   private readonly store: ConfigStore;
+  private readonly keySlots = new KeySlotCache();
+  private readonly directoryWatch: ConfigDirectoryWatch;
   private document: ConfigDocument = { text: '', revision: '' };
   private config: GatewayConfig | undefined;
   private ingress: GatewayIngress | undefined;
@@ -78,20 +226,11 @@ export class McpGatewayController implements GatewayController {
     ]);
   }
 
-  private watcher: FSWatcher | undefined;
-  private watchHealthy = false;
-  private watchTimer: ReturnType<typeof setTimeout> | undefined;
   private closed = false;
   private closing = false;
   private validation = new AbortController();
   private closePromise: Promise<void> | undefined;
-  private closeWatcher: (() => void) | undefined;
   private interfaceRecovery: ReturnType<typeof setInterval> | undefined;
-
-  private eligible: { revision: string; slots: KeyMigration } = {
-    revision: '',
-    slots: { gateway: false, servers: [] },
-  };
 
   private constructor(
     configPath: string,
@@ -100,6 +239,26 @@ export class McpGatewayController implements GatewayController {
     private readonly keys?: KeyStore,
   ) {
     this.store = new ConfigStore(configPath);
+    this.directoryWatch = new ConfigDirectoryWatch(
+      dirname(this.store.path),
+      () => this.closed || this.closing,
+      () => this.validationLifetime(),
+      (signal, verify) => {
+        void this.cancellable(signal, async (control) => {
+          if (this.closed || this.closing || !this.directoryWatch.healthy) return;
+          if (!(await verify())) return;
+          await this.refresh(control);
+        }).catch((error) => {
+          if (!isSelfProxyCancelled(error)) this.report(visible(error));
+        });
+      },
+      () => {
+        void this.serial(async () => {
+          this.configError = visible(this.watchFailure());
+          await this.stopOwned();
+        }).catch((error) => this.report(visible(error)));
+      },
+    );
   }
 
   static async open(
@@ -125,8 +284,9 @@ export class McpGatewayController implements GatewayController {
             );
           }
         });
-        controller.config = await controller.parse(controller.document.text);
-        await controller.validate(controller.config, control);
+        const parsed = await controller.parse(controller.document.text);
+        controller.config = await controller.validate(parsed.config, control);
+        controller.keySlots.record(controller.document.revision, parsed.slots);
         controller.event('info', 'Configuration loaded.');
       } catch (error) {
         controller.logs.append({ server: null, level: 'error', source: 'controller' }, [error]);
@@ -135,7 +295,8 @@ export class McpGatewayController implements GatewayController {
         // No file exists to watch; preference writes must not replace the setup error.
         if (controller.configError.code === 'KeySetupFailed') return;
       }
-      controller.observe();
+      const watchError = controller.directoryWatch.start();
+      if (watchError) controller.configError = watchError;
       if (controller.config?.gateway.autoStart && !controller.configError) {
         try {
           await controller.startOwned(control);
@@ -179,27 +340,16 @@ export class McpGatewayController implements GatewayController {
     return this.config;
   }
 
-  // Resolved mode: the only parse that reads Keychain, once per load and within one deadline.
-  private async parse(text: string): Promise<GatewayConfig> {
-    const file = parseConfig(text, process.env, this.store.format);
-    const refs = keyRefs(file);
-    if (refs.length === 0) return resolveKeys(file, new Map());
-    if (!this.keys)
-      throw failure(
-        'KeyUnavailable',
-        'Keys stored in Keychain need the signed MCP Gateway app. Generate a new key to use this build.',
-      );
-    return resolveKeys(file, await this.keys.get(refs));
+  private parse(text: string): Promise<{ config: GatewayConfig; slots: KeyMigration }> {
+    return resolveGatewayKeys(text, this.store.format, this.keys);
   }
 
   private keyMigration(): KeyMigration {
-    if (!this.keys || !this.config || this.configError) return { gateway: false, servers: [] };
-    if (this.eligible.revision !== this.document.revision)
-      this.eligible = {
-        revision: this.document.revision,
-        slots: literalKeySlots(this.document.text, this.store.format),
-      };
-    return { gateway: this.eligible.slots.gateway, servers: [...this.eligible.slots.servers] };
+    return this.keySlots.eligible(
+      this.document,
+      this.store.format,
+      Boolean(this.keys && this.config && !this.configError),
+    );
   }
 
   private async validate(config: GatewayConfig, control: SelfProxyOptions): Promise<GatewayConfig> {
@@ -270,7 +420,7 @@ export class McpGatewayController implements GatewayController {
   }
 
   private requireWatchHealthy(): void {
-    if (!this.watchHealthy) throw this.watchFailure();
+    if (!this.directoryWatch.healthy) throw this.watchFailure();
   }
 
   private report = (error: VisibleError): void => {
@@ -435,11 +585,13 @@ export class McpGatewayController implements GatewayController {
       this.ensureOpen();
       // No file exists yet; a failed save would replace the setup remedy with a generic error.
       if (this.configError?.code === 'KeySetupFailed') throw new GatewayError(this.configError);
-      const next = await this.validate(await this.parse(text), control);
-      const document = await this.store.save(text, expectedRevision).catch(async (error) => {
+      const parsed = await this.parse(text);
+      const next = await this.validate(parsed.config, control);
+      const document = await this.store.save(text, expectedRevision, true).catch(async (error) => {
         await this.refresh(control);
         throw error;
       });
+      this.keySlots.record(document.revision, parsed.slots);
       await this.apply(document, next, control);
       return this.snapshot();
     });
@@ -452,43 +604,23 @@ export class McpGatewayController implements GatewayController {
   ): Promise<GatewaySnapshot> {
     return this.cancellable(this.operationSignal(operation), async (control) => {
       this.ensureOpen();
-      const keys = this.keys;
-      const config = this.config;
-      if (!keys || !config)
+      if (!this.keys || !this.config)
         throw failure('InvalidConfig', 'Keys can move to Keychain only in the signed app.');
-      if (expectedRevision !== this.document.revision)
-        throw failure('StaleRevision', 'Configuration changed on disk; review the keys again.');
-      const eligible = this.keyMigration();
-      if (
-        (!slots.gateway && slots.servers.length === 0) ||
-        (slots.gateway && !eligible.gateway) ||
-        slots.servers.some((name) => !eligible.servers.includes(name))
-      )
-        throw failure('InvalidConfig', 'These keys can no longer be moved; review them again.');
-      const file = parseConfigDocument(this.document.text, this.store.format);
-      if (!isRecord(file) || !isRecord(file.mcpServers))
-        throw failure('InvalidConfig', 'Configuration does not match the supported schema.');
-      const servers = file.mcpServers;
-      const chosen = [
-        ...(slots.gateway ? [file.gateway] : []),
-        ...slots.servers.map((name) => servers[name]),
-      ];
-      // Every item is created and read back before the file changes. A failure leaves the file
-      // as it was; created items stay as unused copies because the app never deletes one.
-      for (const slot of chosen) {
-        if (!isRecord(slot) || typeof slot.token !== 'string')
-          throw failure('InvalidConfig', 'These keys can no longer be moved; review them again.');
-        slot.tokenRef = await createKeyRef(keys, slot.token);
-        delete slot.token;
-      }
-      const text = editConfigDocument(this.document.text, file, this.store.format);
+      const text = await performKeyMigration(
+        this.document,
+        this.store.format,
+        this.keys,
+        slots,
+        this.keyMigration(),
+        expectedRevision,
+      );
       const document = await this.store.save(text, expectedRevision).catch(async (error) => {
         await this.refresh(control);
         throw error;
       });
       // Same keys, new references: no fingerprint or listener setting changes, so open
       // sessions continue and nothing is read back from Keychain.
-      await this.apply(document, config, control);
+      await this.apply(document, this.config, control);
       this.event('info', 'Keys were moved to Keychain.');
       return this.snapshot();
     });
@@ -503,7 +635,7 @@ export class McpGatewayController implements GatewayController {
     const running = this.ingress?.running ?? false;
     this.document = document;
     this.config = next;
-    this.configError = this.watchHealthy ? null : visible(this.watchFailure());
+    this.configError = this.directoryWatch.healthy ? null : visible(this.watchFailure());
     if (!running) return;
     try {
       if (
@@ -530,20 +662,22 @@ export class McpGatewayController implements GatewayController {
     if (!candidate) return;
     // A valid document that cannot be applied (for example a busy port) is an
     // operational error; apply() reports it and stops the listener.
+    this.keySlots.record(candidate.document.revision, candidate.slots);
     await this.apply(candidate.document, candidate.config, control);
   }
 
   private async validated(
     control: SelfProxyOptions,
-  ): Promise<{ document: ConfigDocument; config: GatewayConfig } | null> {
+  ): Promise<{ document: ConfigDocument; config: GatewayConfig; slots: KeyMigration } | null> {
     let document: ConfigDocument | undefined;
     try {
       document = await this.store.read();
       if (document.revision === this.document.revision && !this.configError) return null;
       // Validate the candidate before publishing its text/revision. A cancelled
       // refresh must leave document/config consistent so the next Start retries it.
-      const next = await this.validate(await this.parse(document.text), control);
-      return { document, config: next };
+      const parsed = await this.parse(document.text);
+      const next = await this.validate(parsed.config, control);
+      return { document, config: next, slots: parsed.slots };
     } catch (error) {
       // A superseded operation leaves the authoritative config and configError alone.
       if (control.signal?.aborted || isSelfProxyCancelled(error)) throw error;
@@ -558,69 +692,6 @@ export class McpGatewayController implements GatewayController {
     }
   }
 
-  private failWatcher = (): void => {
-    if (!this.watchHealthy || this.closed || this.closing) return;
-    this.watchHealthy = false;
-    void this.serial(async () => {
-      this.configError = visible(this.watchFailure());
-      await this.stopOwned();
-    }).catch((error) => this.report(visible(error)));
-  };
-
-  private observe(): void {
-    try {
-      const identity = lstatSync(dirname(this.store.path));
-      if (!identity.isDirectory() || identity.isSymbolicLink())
-        throw failure('UnsafeFile', 'The configuration directory is unsafe.');
-      this.watcher = watch(dirname(this.store.path), () => {
-        if (this.closed || this.closing || !this.watchHealthy) return;
-        // Capture cancellation ownership when the event is admitted, before the
-        // debounce and controller queue. A Stop that arrives while this event
-        // waits must cancel it instead of letting it start a fresh lifetime.
-        const signal = this.validationLifetime();
-        if (this.watchTimer) clearTimeout(this.watchTimer);
-        this.watchTimer = setTimeout(() => {
-          this.watchTimer = undefined;
-          void this.cancellable(signal, async (control) => {
-            if (this.closed || this.closing || !this.watchHealthy) return;
-            try {
-              const current = await lstat(dirname(this.store.path));
-              if (
-                !current.isDirectory() ||
-                current.isSymbolicLink() ||
-                current.dev !== identity.dev ||
-                current.ino !== identity.ino
-              ) {
-                this.failWatcher();
-                return;
-              }
-            } catch {
-              this.failWatcher();
-              return;
-            }
-            await this.refresh(control);
-          }).catch((error) => {
-            if (!isSelfProxyCancelled(error)) this.report(visible(error));
-          });
-        }, 20);
-      });
-      this.watchHealthy = true;
-      this.watcher.on('error', this.failWatcher);
-      this.watcher.on('close', this.failWatcher);
-      this.closeWatcher = () => {
-        if (this.watchTimer) clearTimeout(this.watchTimer);
-        this.watchHealthy = false;
-        this.watcher?.close();
-      };
-    } catch {
-      this.watchHealthy = false;
-      this.watcher?.close();
-      this.configError = visible(
-        failure('ConfigIO', 'The configuration directory could not be watched.'),
-      );
-    }
-  }
-
   close(): Promise<void> {
     if (this.closePromise) return this.closePromise;
     this.closing = true;
@@ -628,8 +699,7 @@ export class McpGatewayController implements GatewayController {
     this.cancelInterfaceRecovery();
     this.closePromise = this.serial(async () => {
       try {
-        this.closeWatcher?.();
-        this.closeWatcher = undefined;
+        this.directoryWatch.close();
         await this.stopOwned();
       } finally {
         this.closed = true;

@@ -1,4 +1,4 @@
-import { history, historyKeymap, standardKeymap } from '@codemirror/commands';
+import { history, historyKeymap, indentWithTab, standardKeymap } from '@codemirror/commands';
 import {
   bracketMatching,
   indentUnit,
@@ -17,7 +17,7 @@ const jsonLanguage = StreamLanguage.define({
   tokenTable: { property: tags.propertyName },
 });
 
-/** Every JSON editor in the app shares this setup. Tab and Escape stay unbound for focus and dialogs. */
+/** Shared JSON/JSONC editor setup with 2-space Tab indentation. */
 export const jsonEditing: Extension[] = [
   jsonLanguage,
   syntaxHighlighting(classHighlighter),
@@ -25,5 +25,5 @@ export const jsonEditing: Extension[] = [
   indentUnit.of('  '),
   EditorState.tabSize.of(2),
   history(),
-  keymap.of([...standardKeymap, ...historyKeymap]),
+  keymap.of([...standardKeymap, ...historyKeymap, indentWithTab]),
 ];

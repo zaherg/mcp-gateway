@@ -19,8 +19,6 @@ const buttonVariants = cva(
         // The standard macOS push button ("Bordered").
         secondary:
           'bg-mac-control text-mac-label active:bg-mac-control-pressed disabled:bg-mac-control-disabled disabled:text-mac-label-tertiary',
-        // An accent-tinted button ("Bordered - Tinted").
-        tinted: 'bg-mac-accent/20 text-mac-accent active:bg-mac-accent/30 disabled:opacity-45',
         // A bordered button without fill, e.g. inside grouped content.
         outline:
           'bg-transparent text-mac-label shadow-[inset_0_0_0_1px_var(--mac-grid)] hover:bg-mac-fill-tertiary active:bg-mac-control-pressed disabled:text-mac-label-tertiary',
@@ -30,15 +28,9 @@ const buttonVariants = cva(
         link: 'h-auto px-0 text-mac-link underline-offset-2 hover:underline disabled:opacity-45',
       },
       size: {
-        default:
-          "h-6 rounded-[6px] px-4 text-mac-body has-[>svg]:px-3 [&_svg:not([class*='size-'])]:size-3.5",
-        xs: "h-4 gap-1 rounded-[4px] px-[7px] text-[10px] [&_svg:not([class*='size-'])]:size-2.5",
-        sm: "h-5 gap-1 rounded-[5px] px-2.5 text-mac-subheadline [&_svg:not([class*='size-'])]:size-3",
         lg: "h-7 rounded-full px-4 text-mac-body [&_svg:not([class*='size-'])]:size-4",
         xl: "h-9 rounded-full px-4 text-mac-body [&_svg:not([class*='size-'])]:size-4",
         icon: "size-6 rounded-[6px] [&_svg:not([class*='size-'])]:size-3.5",
-        'icon-xs': "size-4 rounded-[4px] [&_svg:not([class*='size-'])]:size-2.5",
-        'icon-sm': "size-5 rounded-[5px] [&_svg:not([class*='size-'])]:size-3",
         'icon-lg': "size-7 rounded-full [&_svg:not([class*='size-'])]:size-4",
         'icon-xl': "size-9 rounded-full [&_svg:not([class*='size-'])]:size-[18px]",
       },
@@ -71,4 +63,4 @@ function Button({
   );
 }
 
-export { Button, buttonVariants };
+export { Button };

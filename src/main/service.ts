@@ -1,19 +1,27 @@
-import { lstat } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { constants } from 'node:fs';
+import { lstat, open } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { dirname, isAbsolute, join } from 'node:path';
 
 import * as z from 'zod/v4';
 
 import {
   effectiveServerToken,
-  MAX_CONFIG_BYTES,
+  isDisallowedUpstreamUrl,
   parseConfig,
   previewConfig,
-  SAFE_NAME,
 } from '@mcp-gateway/core/config';
-import { GatewayError, RequestError } from '@mcp-gateway/core/errors';
+import { failure, GatewayError, RequestError } from '@mcp-gateway/core/errors';
+import { isBlockedEnvironmentKey } from '@mcp-gateway/core/process';
 import { anyNumber } from '@mcp-gateway/core/schema';
 import { createSerialQueue } from '@mcp-gateway/core/serial-queue';
 import type { UpdateRuntime } from '@mcp-gateway/main/app-updater';
+import {
+  editConfigDocument,
+  isRecord,
+  MAX_CONFIG_BYTES,
+  SAFE_NAME,
+} from '@mcp-gateway/shared/config-document';
 import {
   type LanguagePreference,
   type LanguageState,
@@ -28,7 +36,11 @@ import {
   SOCIAL_LINK_TARGETS,
   type SocialLinkTarget,
 } from '@mcp-gateway/shared/rpc';
-import type { GatewayController } from '@mcp-gateway/shared/types';
+import type {
+  GatewayController,
+  HttpServerConfig,
+  StdioServerConfig,
+} from '@mcp-gateway/shared/types';
 
 export interface LoginManager {
   status(): LoginStatus;
@@ -48,8 +60,13 @@ interface ReplyFailure {
 let requestSequence = 0;
 const LogRequest = z.strictObject({ after: anyNumber });
 const NameRequest = z.strictObject({ name: z.string() });
+const CopyClientConfigRequest = z.strictObject({
+  name: z.string(),
+  redact: z.boolean().exactOptional(),
+});
 const TestRequest = z.strictObject({ name: z.string(), expectedRevision: z.string() });
 const SaveRequest = z.strictObject({ text: z.string(), expectedRevision: z.string() });
+const ImportExternalRequest = z.strictObject({ expectedRevision: z.string() });
 const MigrateRequest = z.strictObject({
   gateway: z.boolean(),
   servers: z.array(z.string()).max(64),
@@ -80,6 +97,127 @@ const serverName = (input: unknown): string => {
 const missingFile = (error: unknown): boolean =>
   error instanceof Error && 'code' in error && error.code === 'ENOENT';
 
+const readSafeClientFile = async (filePath: string): Promise<string | null> => {
+  try {
+    const stat = await lstat(filePath);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_CONFIG_BYTES) return null;
+  } catch (error) {
+    if (missingFile(error)) return null;
+    return null;
+  }
+  let handle: Awaited<ReturnType<typeof open>>;
+  try {
+    handle = await open(filePath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  } catch {
+    return null;
+  }
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.size > MAX_CONFIG_BYTES) return null;
+    const bytes = await handle.readFile();
+    if (bytes.byteLength > MAX_CONFIG_BYTES) return null;
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    return null;
+  } finally {
+    await handle.close();
+  }
+};
+
+const parseExternalServerEntry = (
+  entry: unknown,
+  gatewayHost: string,
+  gatewayPort: number,
+): StdioServerConfig | HttpServerConfig | null => {
+  if (!isRecord(entry)) return null;
+  const hasUrl = Object.hasOwn(entry, 'url');
+  const hasCommand = Object.hasOwn(entry, 'command');
+  if (hasUrl === hasCommand) return null;
+
+  if (hasUrl) {
+    if (typeof entry.url !== 'string' || !entry.url.trim()) return null;
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(entry.url);
+    } catch {
+      return null;
+    }
+    if (
+      !['http:', 'https:'].includes(parsedUrl.protocol) ||
+      parsedUrl.username ||
+      parsedUrl.password ||
+      parsedUrl.hash ||
+      isDisallowedUpstreamUrl(parsedUrl)
+    ) {
+      return null;
+    }
+    const urlPort = parsedUrl.port
+      ? Number(parsedUrl.port)
+      : parsedUrl.protocol === 'https:'
+        ? 443
+        : 80;
+    const isSelfHost =
+      parsedUrl.hostname === gatewayHost ||
+      parsedUrl.hostname === '127.0.0.1' ||
+      parsedUrl.hostname === 'localhost';
+    if (isSelfHost && urlPort === gatewayPort && parsedUrl.pathname.startsWith('/mcp/')) {
+      return null;
+    }
+    let headers: Record<string, string> | undefined;
+    if (entry.headers !== undefined) {
+      if (!isRecord(entry.headers)) return null;
+      const cleanHeaders: Record<string, string> = {};
+      for (const [key, val] of Object.entries(entry.headers)) {
+        if (typeof val !== 'string') return null;
+        if (
+          /^(host|connection|content-length|transfer-encoding|upgrade|proxy-.*|mcp-session-id)$/i.test(
+            key,
+          )
+        )
+          return null;
+        cleanHeaders[key] = val;
+      }
+      if (Object.keys(cleanHeaders).length > 0) headers = cleanHeaders;
+    }
+    return {
+      url: entry.url,
+      ...(headers ? { headers } : {}),
+      ...(typeof entry.disabled === 'boolean' ? { disabled: entry.disabled } : {}),
+    };
+  }
+
+  if (typeof entry.command !== 'string' || !entry.command.trim()) return null;
+  let args: string[] | undefined;
+  if (entry.args !== undefined) {
+    if (!Array.isArray(entry.args) || !entry.args.every((item) => typeof item === 'string'))
+      return null;
+    args = [...entry.args];
+  }
+  let env: Record<string, string> | undefined;
+  if (entry.env !== undefined) {
+    if (!isRecord(entry.env)) return null;
+    const cleanEnv: Record<string, string> = {};
+    for (const [key, val] of Object.entries(entry.env)) {
+      if (typeof val !== 'string') return null;
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || isBlockedEnvironmentKey(key)) return null;
+      cleanEnv[key] = val;
+    }
+    if (Object.keys(cleanEnv).length > 0) env = cleanEnv;
+  }
+  let cwd: string | undefined;
+  if (entry.cwd !== undefined) {
+    if (typeof entry.cwd !== 'string' || !isAbsolute(entry.cwd)) return null;
+    cwd = entry.cwd;
+  }
+  return {
+    command: entry.command,
+    ...(args ? { args } : {}),
+    ...(env ? { env } : {}),
+    ...(cwd ? { cwd } : {}),
+    ...(typeof entry.disabled === 'boolean' ? { disabled: entry.disabled } : {}),
+  };
+};
+
 // The fixed destinations are native-owned so the renderer cannot pass a URL.
 const SOCIAL_LINKS: Record<SocialLinkTarget, string> = {
   docs: 'https://github.com/zaherg/mcp-gateway/blob/main/docs/README.md',
@@ -94,6 +232,7 @@ interface DesktopActions {
   showItemInFolder: (path: string) => void;
   openPath: (path: string) => boolean;
   confirmDiscard: () => Promise<boolean>;
+  confirmDeleteServer: (name: string) => Promise<boolean>;
   whatsNew: () => string | null;
   dismissWhatsNew: () => Promise<void>;
   keyReminderRetired: () => boolean;
@@ -114,6 +253,15 @@ export class AppService {
     private readonly updates: UpdateRuntime,
   ) {
     this.loginStatus = login.status();
+  }
+
+  private assertIdle(consequence: string): void {
+    if (this.desktop.quitStatus().phase !== 'idle' || this.updates.status().phase === 'restarting')
+      throw new RequestError(`Quit cleanup has started. ${consequence}`);
+  }
+
+  currentSnapshot(): AppSnapshot {
+    return this.snapshot();
   }
 
   private snapshot(): AppSnapshot {
@@ -231,43 +379,32 @@ export class AppService {
         const { name, expectedRevision } = decode(TestRequest, input);
         if (!SAFE_NAME.test(name) || !/^[a-f0-9]{64}$/.test(expectedRevision))
           throw new RequestError('Select a configured server.');
-        if (
-          this.desktop.quitStatus().phase !== 'idle' ||
-          this.updates.status().phase === 'restarting'
-        )
-          throw new RequestError('Quit cleanup has started. The server was not tested.');
+        this.assertIdle('The server was not tested.');
+        if (this.controller.snapshot().revision !== expectedRevision)
+          throw failure(
+            'StaleRevision',
+            'Save or discard configuration changes before testing a server.',
+          );
         return this.controller.testServer(name, expectedRevision);
       }),
     saveConfig: (input: unknown) => {
       const operation = this.controller.operation();
       return this.run(async () => {
-        if (
-          this.desktop.quitStatus().phase !== 'idle' ||
-          this.updates.status().phase === 'restarting'
-        )
-          throw new RequestError('Quit cleanup has started. Retry Quit to close the app.');
+        this.assertIdle('Retry Quit to close the app.');
         const { text, expectedRevision } = decode(SaveRequest, input);
         if (Buffer.byteLength(text) > MAX_CONFIG_BYTES || !/^[a-f0-9]{64}$/.test(expectedRevision))
           throw new RequestError('The configuration request is invalid.');
-        const previous = this.controller.snapshot();
-        const config = parseConfig(text, process.env, previous.configFormat);
+        const previousLogin = this.controller.activeConfig()?.gateway.launchAtLogin ?? false;
         // Persist first: a stale/invalid save must never mutate macOS registration.
         // OS registration is a separate, observable result, not an atomic file operation.
         await this.controller.saveConfig(text, expectedRevision, operation);
-        // Quit cleanup may have begun while this save waited; do not touch a
-        // login library that native cleanup may already have released.
         if (this.desktop.quitStatus().phase !== 'idle') return this.snapshot();
-        let previousLogin = false;
-        try {
-          previousLogin =
-            parseConfig(previous.configText, process.env, previous.configFormat).gateway
-              .launchAtLogin ?? false;
-        } catch (error) {
-          if (!(error instanceof GatewayError)) throw error;
-        }
-        const wanted = config.gateway.launchAtLogin ?? false;
+        const wanted = this.controller.activeConfig()?.gateway.launchAtLogin ?? false;
         const actual = this.login.status();
-        if (wanted !== previousLogin || needsLoginRetry(actual, wanted))
+        if (
+          (actual.supported || (wanted && !previousLogin)) &&
+          (wanted !== previousLogin || needsLoginRetry(actual, wanted))
+        )
           this.login.setEnabled(wanted);
         return this.snapshot();
       });
@@ -275,11 +412,7 @@ export class AppService {
     migrateKeys: (input: unknown) => {
       const operation = this.controller.operation();
       return this.run(async () => {
-        if (
-          this.desktop.quitStatus().phase !== 'idle' ||
-          this.updates.status().phase === 'restarting'
-        )
-          throw new RequestError('Quit cleanup has started. The keys were not moved.');
+        this.assertIdle('The keys were not moved.');
         const { gateway, servers, expectedRevision } = decode(MigrateRequest, input);
         if (
           (!gateway && servers.length === 0) ||
@@ -306,11 +439,7 @@ export class AppService {
     validateConfig: (input: unknown) =>
       // Read-only: never wait behind a configuration operation that a later edit supersedes.
       this.settle(() => {
-        if (
-          this.desktop.quitStatus().phase !== 'idle' ||
-          this.updates.status().phase === 'restarting'
-        )
-          throw new RequestError('Quit cleanup has started. The configuration was not checked.');
+        this.assertIdle('The configuration was not checked.');
         const { text } = decode(PreviewRequest, input);
         if (Buffer.byteLength(text) > MAX_CONFIG_BYTES)
           throw new RequestError('The configuration request is invalid.');
@@ -322,6 +451,8 @@ export class AppService {
         empty(input);
         return this.desktop.confirmDiscard();
       }),
+    confirmDeleteServer: (input: unknown) =>
+      this.lifecycle(async () => this.desktop.confirmDeleteServer(serverName(input))),
     copyEndpoint: (input: unknown) =>
       this.run(() => {
         const name = serverName(input);
@@ -332,7 +463,8 @@ export class AppService {
       }),
     copyClientConfig: (input: unknown) =>
       this.run(() => {
-        const name = serverName(input);
+        const { name, redact } = decode(CopyClientConfigRequest, input);
+        if (!SAFE_NAME.test(name)) throw new RequestError('Select a configured server.');
         const snapshot = this.controller.snapshot();
         if (snapshot.configError)
           throw new RequestError('Correct the configuration before copying it.');
@@ -345,8 +477,9 @@ export class AppService {
           ? config.mcpServers[name]
           : undefined;
         if (!configured) throw new RequestError('Select a configured server.');
-        const token = effectiveServerToken(config.gateway, configured);
-        // A local, explicit copy action is the only place expanded credentials leave main.
+        const token = redact ? '[REDACTED]' : effectiveServerToken(config.gateway, configured);
+        // Only the gateway client endpoint and bearer token are copied; backend server
+        // env, headers, args, and upstream URLs never leave main.
         this.copyText(
           JSON.stringify(
             {
@@ -366,11 +499,7 @@ export class AppService {
     openSocialLink: (input: unknown) =>
       this.run(() => {
         const { target } = decode(SocialLinkRequest, input);
-        if (
-          this.desktop.quitStatus().phase !== 'idle' ||
-          this.updates.status().phase === 'restarting'
-        )
-          throw new RequestError('Quit cleanup has started. The link was not opened.');
+        this.assertIdle('The link was not opened.');
         if (!this.desktop.openExternal(SOCIAL_LINKS[target]))
           throw new RequestError('The link could not be opened in your default browser.');
         return null;
@@ -379,11 +508,7 @@ export class AppService {
       // Read-only and needed during repair: never wait behind a configuration operation.
       this.lifecycle(async () => {
         empty(input);
-        if (
-          this.desktop.quitStatus().phase !== 'idle' ||
-          this.updates.status().phase === 'restarting'
-        )
-          throw new RequestError('Quit cleanup has started. Finder was not opened.');
+        this.assertIdle('Finder was not opened.');
         // The path is owned by main; the renderer never supplies one.
         const path = this.controller.snapshot().configPath;
         try {
@@ -398,6 +523,83 @@ export class AppService {
         this.desktop.showItemInFolder(path);
         return null;
       }),
+    openConfigInEditor: (input?: unknown) =>
+      this.lifecycle(async () => {
+        empty(input);
+        this.assertIdle('The configuration file was not opened.');
+        const path = this.controller.snapshot().configPath;
+        const stat = await lstat(path);
+        if (!stat.isFile() || stat.isSymbolicLink())
+          throw failure('UnsafeFile', 'Symlinked configuration files are refused.');
+        if (!this.desktop.openPath(path))
+          throw new RequestError('The configuration file could not be opened.');
+        return null;
+      }),
+    importExternalServers: (input: unknown) => {
+      const operation = this.controller.operation();
+      return this.run(async () => {
+        this.assertIdle('Servers were not imported.');
+        const { expectedRevision } = decode(ImportExternalRequest, input);
+        if (!/^[a-f0-9]{64}$/.test(expectedRevision))
+          throw new RequestError('The configuration request is invalid.');
+        const currentSnapshot = this.controller.snapshot();
+        if (currentSnapshot.revision !== expectedRevision)
+          throw failure(
+            'StaleRevision',
+            'Save or discard configuration changes before importing servers.',
+          );
+        const currentConfig = parseConfig(
+          currentSnapshot.configText,
+          process.env,
+          currentSnapshot.configFormat,
+        );
+        const home = homedir();
+        const candidatePaths = [
+          join(home, 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json'),
+          join(home, '.cursor', 'mcp.json'),
+        ];
+        const nextServers: Record<string, StdioServerConfig | HttpServerConfig> = {
+          ...currentConfig.mcpServers,
+        };
+        let importedCount = 0;
+
+        for (const candidatePath of candidatePaths) {
+          const text = await readSafeClientFile(candidatePath);
+          if (!text) continue;
+          let parsedJson: unknown;
+          try {
+            parsedJson = JSON.parse(text);
+          } catch {
+            continue;
+          }
+          if (!isRecord(parsedJson) || !isRecord(parsedJson.mcpServers)) continue;
+          for (const [name, rawEntry] of Object.entries(parsedJson.mcpServers)) {
+            if (!SAFE_NAME.test(name) || Object.hasOwn(nextServers, name)) continue;
+            if (Object.keys(nextServers).length >= 64) break;
+            const validated = parseExternalServerEntry(
+              rawEntry,
+              currentConfig.gateway.host,
+              currentConfig.gateway.port,
+            );
+            if (!validated) continue;
+            nextServers[name] = validated;
+            importedCount += 1;
+          }
+        }
+
+        if (importedCount > 0) {
+          const nextConfig = { ...currentConfig, mcpServers: nextServers };
+          const nextText = editConfigDocument(
+            currentSnapshot.configText,
+            nextConfig,
+            currentSnapshot.configFormat,
+          );
+          await this.controller.saveConfig(nextText, expectedRevision, operation);
+        }
+
+        return { snapshot: this.snapshot(), importedCount };
+      });
+    },
     dismissWhatsNew: (input?: unknown) =>
       // Closing the notes must not wait behind a configuration operation.
       this.lifecycle(async () => {
@@ -415,6 +617,11 @@ export class AppService {
         empty(input);
         return this.updates.download();
       }),
+    updatesInstall: (input?: unknown) =>
+      this.lifecycle(async () => {
+        empty(input);
+        return this.updates.installUpdate();
+      }),
     updatesSetAutomatic: (input: unknown) =>
       this.run(async () => {
         const { automatic } = decode(AutomaticRequest, input);
@@ -423,11 +630,7 @@ export class AppService {
     setLanguage: (input: unknown) =>
       this.run(async () => {
         const { preference: requested } = decode(LanguageRequest, input);
-        if (
-          this.desktop.quitStatus().phase !== 'idle' ||
-          this.updates.status().phase === 'restarting'
-        )
-          throw new RequestError('Quit cleanup has started. The language was not changed.');
+        this.assertIdle('The language was not changed.');
         // Only the locales this build offers.
         const preference = parseLanguagePreference(requested, this.desktop.language().available);
         if (!preference) throw new RequestError('The selected language is not available.');

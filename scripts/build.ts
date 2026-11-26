@@ -1,11 +1,18 @@
-import { copyFile, mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 import { createServer } from 'vite';
 
 import packageInfo from '../package.json';
 import { assertEmptyReleaseOutputs, buildIdentity, releaseOutputEnvironment } from './build-config';
-import { buildPlan, command, prepareToolchain, toolchainEnvironment } from './toolchain';
+import {
+  buildPlan,
+  captureCommand,
+  command,
+  prepareToolchain,
+  toolchainEnvironment,
+} from './toolchain';
+import { redactSecrets } from './update-artifacts';
 
 const root = resolve(import.meta.dir, '..');
 const plan = buildPlan(process.argv[2]);
@@ -38,11 +45,17 @@ await command(
     '-framework',
     'Foundation',
     '-framework',
+    'Security',
+    '-framework',
     'ServiceManagement',
     '-framework',
     'AppKit',
+    '-framework',
+    'UserNotifications',
+    'src/native/keychain.m',
     'src/native/locale.m',
     'src/native/login.m',
+    'src/native/notifications.m',
     'src/native/power.m',
     'src/native/signals.m',
     'src/native/tray.m',
@@ -66,25 +79,6 @@ await command(
 );
 await command([resolve(root, '.cache/native/icons'), resolve(root, 'assets')], environment);
 
-// Preserve the pinned adapter's module/package boundaries and runtime metadata.
-const runtime = resolve(root, '.cache/runtime-deps');
-await mkdir(runtime, { recursive: true });
-for (const file of ['package.json', 'bun.lock'])
-  await copyFile(resolve(root, file), resolve(runtime, file));
-await command(
-  [
-    process.execPath,
-    'install',
-    '--cwd',
-    runtime,
-    '--production',
-    '--ignore-scripts',
-    '--frozen-lockfile',
-    '--cache-dir',
-    environment.BUN_INSTALL_CACHE_DIR,
-  ],
-  environment,
-);
 await command([process.execPath, 'run', 'ui:build'], {
   ...environment,
   VITE_APP_NAME: identity.name,
@@ -94,14 +88,16 @@ const signedBuild = async () => {
   const required = ['APPLE_ID', 'APPLE_TEAM_ID', 'APPLE_APP_PASSWORD'] as const;
   if (identity.notarize)
     for (const name of required) if (!process.env[name]) throw new Error(`Missing ${name}.`);
-  const identityProcess = Bun.spawn(
-    ['/usr/bin/security', 'find-identity', '-v', '-p', 'codesigning'],
-    { stdout: 'pipe', stderr: 'pipe' },
-  );
-  const identities = await new Response(identityProcess.stdout).text();
-  if ((await identityProcess.exited) !== 0) throw new Error('Signing identity inspection failed.');
+  const identityResult = await captureCommand([
+    '/usr/bin/security',
+    'find-identity',
+    '-v',
+    '-p',
+    'codesigning',
+  ]);
+  if (identityResult.exitCode !== 0) throw new Error('Signing identity inspection failed.');
   const candidates = [
-    ...identities.matchAll(/\b([A-Fa-f0-9]{40}) "(Developer ID Application: [^"]+)"/g),
+    ...identityResult.stdout.matchAll(/\b([A-Fa-f0-9]{40}) "(Developer ID Application: [^"]+)"/g),
   ];
   if (candidates.length !== 1)
     throw new Error('Exactly one Developer ID Application identity is required.');
@@ -114,30 +110,16 @@ const signedBuild = async () => {
     ELECTROBUN_TEAMID: identity.notarize ? process.env.APPLE_TEAM_ID : undefined,
   };
   await assertEmptyReleaseOutputs(root, environment, kind);
-  const child = Bun.spawn(
-    ['node', 'node_modules/electrobun/bin/electrobun.cjs', 'build', '--env=stable'],
-    {
-      cwd: root,
-      env,
-      stdin: 'ignore',
-      stdout: 'pipe',
-      stderr: 'pipe',
-    },
-  );
   // Buffer before redaction so a credential split across process chunks cannot leak.
-  const [stdout, stderr, exit] = await Promise.all([
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-    child.exited,
-  ]);
-  let log = `${stdout}\n${stderr}`;
-  for (const secret of [
-    ...required.map((name) => process.env[name]),
-    signingIdentity,
-    candidates[0][1],
-  ]) {
-    if (secret) log = log.split(secret).join('[redacted]');
-  }
+  const {
+    stdout,
+    stderr,
+    exitCode: exit,
+  } = await captureCommand(
+    ['node', 'node_modules/electrobun/bin/electrobun.cjs', 'build', '--env=stable'],
+    { env, timeoutMs: 1_800_000 },
+  );
+  const log = redactSecrets(`${stdout}\n${stderr}`, [signingIdentity, candidates[0][1]]);
   await writeFile(
     resolve(root, testBuild ? '.cache/build-stable-test.log' : '.cache/build-stable.log'),
     log,

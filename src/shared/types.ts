@@ -155,6 +155,13 @@ export interface ServerCheckResult {
   protocolVersion: string;
 }
 
+/** Structured byte and percentage progress for an active update download. */
+export interface UpdateDownloadProgress {
+  percent: number | null;
+  bytesDownloaded: number;
+  totalBytes: number | null;
+}
+
 /** Cancellation ownership captured when an operation was requested. */
 export interface GatewayOperation {
   readonly signal: AbortSignal;

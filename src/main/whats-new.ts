@@ -1,21 +1,8 @@
-import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { ensureParent } from '@mcp-gateway/core/config';
+import { readPrivateJson, writePrivateJsonAtomic } from '@mcp-gateway/main/preferences-store';
 
 const SEEN_FILE = 'seen-version.json';
-
-const parseSeen = (text: string): string | undefined => {
-  let document: unknown;
-  try {
-    document = JSON.parse(text);
-  } catch {
-    return;
-  }
-  if (typeof document !== 'object' || document === null || Array.isArray(document)) return;
-  const { schema_version, version } = document as Record<string, unknown>;
-  return schema_version === 1 && typeof version === 'string' ? version : undefined;
-};
 
 /**
  * Remembers the version whose release notes the user has dismissed. The notes are a
@@ -35,13 +22,12 @@ export class WhatsNewStore {
     existingInstall: boolean,
   ): Promise<WhatsNewStore> {
     const path = join(dataDirectory, SEEN_FILE);
-    let seen: string | undefined;
-    try {
-      seen = parseSeen(await readFile(path, 'utf8'));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
-        console.error('The seen release notes version could not be read.');
-    }
+    const result = await readPrivateJson(path, (record) =>
+      typeof record.version === 'string' ? record.version : undefined,
+    );
+    if (result.status === 'invalid')
+      console.error('The seen release notes version could not be read.');
+    const seen = result.status === 'ok' ? result.value : undefined;
     const store = new WhatsNewStore(path, installedVersion, seen);
     // A first launch has nothing new to announce.
     if (seen === undefined && !existingInstall) await store.dismiss();
@@ -60,13 +46,7 @@ export class WhatsNewStore {
     if (this.installedVersion === null || this.seen === this.installedVersion) return;
     this.seen = this.installedVersion;
     try {
-      await ensureParent(this.path);
-      // shortcut: not atomic; a torn file reads as invalid and only shows the notes once more.
-      await writeFile(
-        this.path,
-        JSON.stringify({ schema_version: 1, version: this.installedVersion }),
-        { mode: 0o600 },
-      );
+      await writePrivateJsonAtomic(this.path, { version: this.installedVersion });
     } catch (error) {
       console.error(
         `The seen release notes version could not be saved: ${error instanceof Error ? error.message : 'unknown error'}`,

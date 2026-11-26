@@ -1,10 +1,7 @@
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { spawn } from 'node:child_process';
 
-import type {
-  ChildrenOwner,
-  GatewayLogger,
-} from 'supergateway/dist/gateways/stdioToStatefulStreamableHttp.js';
+import type { ChildrenOwner, GatewayLogger } from '@mcp-gateway/core/sessions';
 
 interface CommandResult {
   stdout: string;
@@ -18,6 +15,57 @@ export type CommandRunner = (
   timeoutMs?: number,
   signal?: AbortSignal,
 ) => Promise<CommandResult>;
+
+const SAFE_PARENT_ENV_KEYS = new Set([
+  'PATH',
+  'HOME',
+  'USER',
+  'LOGNAME',
+  'SHELL',
+  'LANG',
+  'TMPDIR',
+  'TERM',
+  'SSL_CERT_FILE',
+  'SSL_CERT_DIR',
+  '__CF_USER_TEXT_ENCODING',
+]);
+
+export const isBlockedEnvironmentKey = (key: string): boolean => {
+  const upper = key.toUpperCase();
+  return (
+    upper === 'NODE_OPTIONS' ||
+    upper === 'BUN_OPTIONS' ||
+    upper.startsWith('DYLD_') ||
+    upper.startsWith('LD_')
+  );
+};
+
+export const isAllowedParentEnvironmentKey = (key: string): boolean =>
+  SAFE_PARENT_ENV_KEYS.has(key) || key.startsWith('LC_') || key.startsWith('XDG_');
+
+export const childEnvironment = (
+  serverEnv?: Readonly<Record<string, string>>,
+  parentEnv: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv => {
+  const merged: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(parentEnv)) {
+    if (
+      typeof value === 'string' &&
+      isAllowedParentEnvironmentKey(key) &&
+      !isBlockedEnvironmentKey(key)
+    ) {
+      merged[key] = value;
+    }
+  }
+  if (serverEnv) {
+    for (const [key, value] of Object.entries(serverEnv)) {
+      if (typeof value === 'string' && !isBlockedEnvironmentKey(key)) {
+        merged[key] = value;
+      }
+    }
+  }
+  return merged;
+};
 
 interface CreateCommandRunnerOptions {
   defaultTimeoutMs?: number;

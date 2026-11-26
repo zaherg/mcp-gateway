@@ -42,12 +42,14 @@ export const KeyMigration = ({
   const shown = names(step === 'what' ? slots : reviewed);
   const move = async () => setStep((await onMove(reviewed)) ? 'done' : 'failed');
   return (
-    <Modal title={t('keys.title')} onClose={onClose} fallbackFocus={fallbackFocus}>
+    <Modal title={t('keys.title')} onClose={onClose} fallbackFocus={fallbackFocus} busy={busy}>
       {dirty && step !== 'done' ? (
         <>
           <p className="dialog-intro">{t('keys.saveFirst')}</p>
           <div className="dialog-actions">
-            <Button onClick={onClose}>{t('common.cancel')}</Button>
+            <Button disabled={busy} onClick={onClose}>
+              {t('common.cancel')}
+            </Button>
           </div>
         </>
       ) : step === 'what' ? (
@@ -58,14 +60,21 @@ export const KeyMigration = ({
           <h3>{t('keys.list')}</h3>
           <ul>
             {shown.map((name) => (
-              <li key={name}>{name}</li>
+              <li key={name}>
+                <span>{name}</span>{' '}
+                <code className="masked-secret" aria-hidden="true">
+                  ••••••••
+                </code>
+              </li>
             ))}
           </ul>
           <div className="dialog-actions">
-            <Button onClick={onKeep}>{t('keys.keep')}</Button>
+            <Button disabled={busy} onClick={onKeep}>
+              {t('keys.keep')}
+            </Button>
             <Button
               variant="default"
-              disabled={shown.length === 0}
+              disabled={busy || shown.length === 0}
               onClick={() => {
                 setReviewed(slots);
                 setStep('confirm');
@@ -92,7 +101,7 @@ export const KeyMigration = ({
         <>
           <p role="status">{t('keys.moved')}</p>
           <div className="dialog-actions">
-            <Button variant="default" onClick={onClose}>
+            <Button variant="default" disabled={busy} onClick={onClose}>
               {t('keys.done')}
             </Button>
           </div>
@@ -102,7 +111,9 @@ export const KeyMigration = ({
           <p role="alert">{t('keys.failed')}</p>
           {error && <p className="inline-error">{error}</p>}
           <div className="dialog-actions">
-            <Button onClick={onClose}>{t('common.cancel')}</Button>
+            <Button disabled={busy} onClick={onClose}>
+              {t('common.cancel')}
+            </Button>
             {/* Back to review: a stale or changed list must be confirmed again, not resent. */}
             <Button variant="default" disabled={busy} onClick={() => setStep('what')}>
               {t('keys.tryAgain')}

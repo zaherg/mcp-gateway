@@ -1,11 +1,12 @@
 import { CircleHelp } from 'lucide-react';
+import { useEffect, useRef } from 'react';
 
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
 import { Alert, Toggle } from '@mcp-gateway/mainview/components/ui';
-import type { Editor } from '@mcp-gateway/mainview/dialogs/ServerEditor';
+import { useGatewayView } from '@mcp-gateway/mainview/context/GatewayViewContext';
 import { useI18n } from '@mcp-gateway/mainview/i18n';
 import type { Translate } from '@mcp-gateway/shared/i18n';
-import type { AppClient, AppResult, QuitStatus, UpdateStatus } from '@mcp-gateway/shared/rpc';
+import type { UpdateStatus } from '@mcp-gateway/shared/rpc';
 
 // The clock format follows the macOS region, not the interface language, as it did before.
 const updateCheckedLabel = (value: string | null, t: Translate): string => {
@@ -15,6 +16,12 @@ const updateCheckedLabel = (value: string | null, t: Translate): string => {
   return t('updates.lastChecked', {
     time: date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
   });
+};
+
+const formatBytes = (bytes: number): string => {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
 const updateStatusText = (update: UpdateStatus, t: Translate): string => {
@@ -42,42 +49,33 @@ const updateStatusText = (update: UpdateStatus, t: Translate): string => {
   }
 };
 
-interface Updates {
-  updateState: UpdateStatus;
-  updateBusy: boolean;
-  configurationLocked: boolean;
-  busy: boolean;
-  quitStatusKnown: boolean;
-  quitStatus: QuitStatus;
-  editor: Editor | null;
-  deleting: string | null;
-  error: string | null;
-  onDismissError: () => void;
-  runUpdate: (
-    operation: () => Promise<AppResult<UpdateStatus>>,
-    message: string,
-  ) => Promise<boolean>;
-  client: AppClient;
-  onRequestRestart: () => void;
-}
-
-export const Updates = ({
-  updateState,
-  updateBusy,
-  configurationLocked,
-  busy,
-  quitStatusKnown,
-  quitStatus,
-  editor,
-  deleting,
-  error,
-  onDismissError,
-  runUpdate,
-  client,
-  onRequestRestart,
-}: Updates) => {
+export const Updates = () => {
+  const {
+    updateState,
+    updateBusy,
+    configurationLocked,
+    busy,
+    quitStatusKnown,
+    quitStatus,
+    error,
+    clearError,
+    runUpdate,
+    client,
+    requestUpdateRestart,
+  } = useGatewayView();
   const { t } = useI18n();
+  const autoChecked = useRef(false);
+  useEffect(() => {
+    if (autoChecked.current || !updateState?.supported || updateState.phase !== 'idle') return;
+    autoChecked.current = true;
+    void runUpdate(() => client.updatesCheck(), t('updates.checkCompleted'));
+  }, [client, runUpdate, t, updateState?.phase, updateState?.supported]);
+
+  if (!updateState) return null;
+
   const updateReady = updateState.phase === 'ready';
+  const updateAvailable =
+    updateState.phase === 'available' || Boolean(updateState.availableVersion);
   const inProgress = updateState.phase === 'checking' || updateState.phase === 'downloading';
   const toggleDisabled =
     busy || updateBusy || configurationLocked || updateState.phase === 'restarting';
@@ -85,14 +83,40 @@ export const Updates = ({
   const restartDisabled =
     toggleDisabled ||
     !quitStatusKnown ||
-    editor !== null ||
-    deleting !== null ||
     quitStatus.phase === 'pending' ||
     quitStatus.phase === 'ready';
+
+  const progressPercent =
+    updateState.progressPercent ?? updateState.downloadProgress?.percent ?? null;
+  const downloadedBytes =
+    updateState.downloadedBytes ?? updateState.downloadProgress?.bytesDownloaded ?? null;
+  const totalBytes = updateState.totalBytes ?? updateState.downloadProgress?.totalBytes ?? null;
+  const showProgress = inProgress || progressPercent !== null;
+  const progressLabel = (() => {
+    const parts: string[] = [];
+    if (progressPercent !== null) parts.push(`${progressPercent}%`);
+    if (downloadedBytes !== null && downloadedBytes > 0) {
+      if (totalBytes !== null && totalBytes > 0) {
+        parts.push(`${formatBytes(downloadedBytes)} / ${formatBytes(totalBytes)}`);
+      } else {
+        parts.push(formatBytes(downloadedBytes));
+      }
+    }
+    return parts.join(' · ');
+  })();
+
+  const handleInstallAndRelaunch = () => {
+    if (updateReady) {
+      void requestUpdateRestart();
+      return;
+    }
+    void runUpdate(() => client.updatesInstall(), t('updates.downloadStarted'));
+  };
+
   return (
     <div className="updates-content">
       <p className="dialog-intro">{t('updates.intro')}</p>
-      {error && <Alert onDismiss={onDismissError}>{error}</Alert>}
+      {error && <Alert onDismiss={clearError}>{error}</Alert>}
       {!updateState.supported ? (
         <p className="update-unavailable">{t('updates.unsupported')}</p>
       ) : (
@@ -113,18 +137,34 @@ export const Updates = ({
               </div>
             )}
           </div>
-          {inProgress && (
-            <div
-              className="update-progress"
-              role="progressbar"
-              aria-label={t('updates.progress')}
-              aria-valuetext={updateStatusText(updateState, t)}
-              aria-busy="true"
-            >
-              <span />
+          {showProgress && (
+            <div>
+              <div
+                className="update-progress"
+                role="progressbar"
+                aria-label={t('updates.progress')}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={progressPercent ?? undefined}
+                aria-valuetext={progressLabel || updateStatusText(updateState, t)}
+                aria-busy={inProgress}
+              >
+                <span
+                  style={
+                    progressPercent !== null
+                      ? { width: `${Math.min(100, Math.max(0, progressPercent))}%` }
+                      : undefined
+                  }
+                />
+              </div>
+              {progressLabel && (
+                <p className="mt-1 text-[11px] text-mac-label-secondary">{progressLabel}</p>
+              )}
             </div>
           )}
-          <p className="fine-print">{updateCheckedLabel(updateState.checkedAt, t)}</p>
+          <p className="mt-3 text-[11px] text-mac-label-secondary">
+            {updateCheckedLabel(updateState.checkedAt, t)}
+          </p>
           <Toggle
             label={t('updates.automatic')}
             description={t('updates.automaticDescription')}
@@ -146,31 +186,20 @@ export const Updates = ({
             >
               {updateState.phase === 'checking' ? t('updates.checkingButton') : t('updates.check')}
             </Button>
-            {updateState.availableVersion && !updateReady && (
+            {(updateAvailable || updateReady) && (
               <Button
-                disabled={actionsDisabled}
-                onClick={() =>
-                  void runUpdate(() => client.updatesDownload(), t('updates.downloadStarted'))
-                }
+                variant="default"
+                disabled={updateReady ? restartDisabled : actionsDisabled}
+                onClick={handleInstallAndRelaunch}
               >
                 {updateState.phase === 'downloading'
                   ? t('updates.downloadingButton')
-                  : t('updates.download')}
-              </Button>
-            )}
-            {updateReady && (
-              <Button variant="default" disabled={restartDisabled} onClick={onRequestRestart}>
-                {t('updates.restart')}
+                  : 'Install and Relaunch'}
               </Button>
             )}
           </div>
-          {(editor || deleting) && updateReady && (
-            <p className="fine-print" role="status">
-              {t('updates.closeDialogFirst')}
-            </p>
-          )}
-          <p className="fine-print">
-            <CircleHelp size={16} /> {t('updates.restartNote')}
+          <p className="mt-4 flex items-start gap-2 text-[11px] leading-[1.6] text-mac-label-secondary">
+            <CircleHelp size={16} className="mt-0.5 shrink-0" /> {t('updates.restartNote')}
           </p>
         </>
       )}

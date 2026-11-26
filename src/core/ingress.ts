@@ -4,12 +4,7 @@ import type { Socket } from 'node:net';
 
 import type { GatewayMount } from '@mcp-gateway/core/adapter';
 import { backendSummary, closeMount, createMount } from '@mcp-gateway/core/adapter';
-import {
-  effectiveServerToken,
-  isHttpServer,
-  SAFE_NAME,
-  serverFingerprint,
-} from '@mcp-gateway/core/config';
+import { effectiveServerToken, isHttpServer, serverFingerprint } from '@mcp-gateway/core/config';
 import { failure, visible } from '@mcp-gateway/core/errors';
 import {
   BackendCalls,
@@ -20,12 +15,17 @@ import {
 } from '@mcp-gateway/core/limits';
 import { LogBuffer } from '@mcp-gateway/core/logs';
 import {
+  type CompiledPeerRange,
+  compileAllowedPeers,
   peerAllowed,
   rejectSelfProxy,
   type SelfProxyOptions,
   selectInterface,
+  validateHostHeader,
+  validateOriginHeader,
 } from '@mcp-gateway/core/network';
 import { checkEndpoint } from '@mcp-gateway/core/test-server';
+import { SAFE_NAME } from '@mcp-gateway/shared/config-document';
 import type {
   GatewayConfig,
   InterfaceChoice,
@@ -46,11 +46,25 @@ const MAX_REQUESTS_PER_MINUTE = 240;
 interface Endpoint {
   mount: GatewayMount;
   fingerprint: string;
+  current: boolean;
   responses: Set<ServerResponse>;
   /** Also serves session-based MCP: GET event streams and DELETE. */
   sessions: boolean;
 }
-const digest = (text: string) => createHash('sha256').update(text).digest();
+interface AdmittedRequest {
+  name: string;
+  endpoint: Endpoint;
+  post: boolean;
+  stream: boolean;
+}
+const digest = (text: string): Buffer => createHash('sha256').update(text, 'utf8').digest();
+
+export const tokenMatches = (actual: string, expected: string | undefined): boolean => {
+  const leftDigest = digest(actual);
+  const rightDigest = digest(expected ?? '');
+  const matches = timingSafeEqual(leftDigest, rightDigest);
+  return Boolean(expected) && actual.length > 0 && matches;
+};
 
 export type PreventIdleSleep = () => () => void;
 
@@ -65,6 +79,7 @@ export class GatewayIngress {
   // One backend-work budget shared by every endpoint.
   private readonly work = new BackendCalls(MAX_BACKEND_CALLS);
   private selected: InterfaceChoice;
+  private allowedPeerRanges: readonly CompiledPeerRange[] | undefined;
   private active = 0;
   private rateStart = Date.now();
   private rateCount = 0;
@@ -84,6 +99,7 @@ export class GatewayIngress {
     private readonly preventIdleSleep?: PreventIdleSleep,
   ) {
     this.selected = selectInterface(config.gateway.host);
+    this.allowedPeerRanges = compileAllowedPeers(config.gateway.allowedPeers);
     this.server = createServer(
       { maxHeaderSize: 16 * 1024, headersTimeout: 10_000, requestTimeout: REQUEST_DEADLINE_MS },
       (req, res) => this.handle(req, res),
@@ -94,6 +110,21 @@ export class GatewayIngress {
     this.server.on('connection', (socket) => {
       this.sockets.add(socket);
       socket.once('close', () => this.sockets.delete(socket));
+    });
+    this.server.on('upgrade', (req, socket) => {
+      const { host, port } = this.config.gateway;
+      if (
+        !validateHostHeader(req.headers.host, host, port) ||
+        !validateOriginHeader(req.headers.origin, host, port)
+      ) {
+        socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+      socket.end(
+        'HTTP/1.1 405 Method Not Allowed\r\nConnection: close\r\nContent-Length: 0\r\n\r\n',
+      );
+      socket.destroy();
     });
     this.server.on('clientError', (_error, socket) => {
       socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
@@ -216,6 +247,7 @@ export class GatewayIngress {
     if (this.closed) throw failure('Closed', 'The listener is closed.');
     const previous = this.config;
     this.config = config;
+    this.allowedPeerRanges = compileAllowedPeers(config.gateway.allowedPeers);
     this.syncSleepAssertion();
     for (const name of this.backendErrors.keys()) {
       if (!Object.hasOwn(config.mcpServers, name)) this.backendErrors.delete(name);
@@ -226,7 +258,9 @@ export class GatewayIngress {
     // reaches an old mount while another one is still shutting down.
     const stale = [...this.endpoints].filter(([name, endpoint]) => {
       const next = Object.hasOwn(config.mcpServers, name) ? config.mcpServers[name] : undefined;
-      return !next || next.disabled || endpoint.fingerprint !== serverFingerprint(next);
+      const isStale = !next || next.disabled || endpoint.fingerprint !== serverFingerprint(next);
+      if (isStale) endpoint.current = false;
+      return isStale;
     });
     const closing = new Map(stale.map(([name]) => [name, this.remove(name)]));
     for (const name of this.closingMounts.keys())
@@ -242,8 +276,9 @@ export class GatewayIngress {
       );
     }
     await Promise.all(
-      Object.entries(config.mcpServers).map(async ([name, server]) => {
-        if (server.disabled || this.endpoints.has(name)) return;
+      Object.entries(config.mcpServers).map(async ([name, entry]) => {
+        if (entry.disabled || this.endpoints.has(name)) return;
+        const fingerprint = serverFingerprint(entry);
         const old = Object.hasOwn(previous.mcpServers, name)
           ? previous.mcpServers[name]
           : undefined;
@@ -253,7 +288,7 @@ export class GatewayIngress {
             !stale.some(([detached]) => detached === name) &&
             old &&
             !old.disabled &&
-            serverFingerprint(old) === serverFingerprint(server)
+            serverFingerprint(old) === fingerprint
           )
             return;
           await closing.get(name);
@@ -263,7 +298,7 @@ export class GatewayIngress {
         this.backendErrors.delete(name);
         const mount = createMount(
           name,
-          server,
+          entry,
           (message) => {
             const error = visible(failure('BackendFailure', message));
             this.backendErrors.set(name, error);
@@ -276,9 +311,10 @@ export class GatewayIngress {
         );
         this.endpoints.set(name, {
           mount,
-          fingerprint: serverFingerprint(server),
+          fingerprint,
+          current: true,
           responses: new Set(),
-          sessions: server.legacyProtocol === true,
+          sessions: entry.legacyProtocol === true,
         });
       }),
     );
@@ -319,6 +355,7 @@ export class GatewayIngress {
     if (this.check?.name === name) this.check.stop.abort();
     const endpoint = this.endpoints.get(name);
     if (endpoint) {
+      endpoint.current = false;
       this.endpoints.delete(name);
       for (const response of endpoint.responses) response.destroy();
       this.closingMounts.set(name, endpoint.mount);
@@ -333,26 +370,20 @@ export class GatewayIngress {
 
   /** Whether this endpoint is mounted and was built from the route's current, enabled entry. */
   private serves(name: string, endpoint: Endpoint): boolean {
-    const server = Object.hasOwn(this.config.mcpServers, name)
-      ? this.config.mcpServers[name]
-      : undefined;
-    return (
-      server !== undefined &&
-      !server.disabled &&
-      this.endpoints.get(name) === endpoint &&
-      endpoint.fingerprint === serverFingerprint(server)
-    );
+    return !this.closed && endpoint.current && this.endpoints.get(name) === endpoint;
   }
 
-  private handle(req: IncomingMessage, res: ServerResponse): void {
-    const reject = (status: number) => {
-      res.statusCode = status;
-      res.setHeader('Connection', 'close');
-      if (status === 401) res.setHeader('WWW-Authenticate', 'Bearer');
-      res.end();
-    };
+  private rejectRequest(res: ServerResponse, status: number): void {
+    res.statusCode = status;
+    res.setHeader('Connection', 'close');
+    if (status === 401) res.setHeader('WWW-Authenticate', 'Bearer');
+    res.end();
+  }
+
+  private admitRequest(req: IncomingMessage, res: ServerResponse): AdmittedRequest | null {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.removeHeader('Access-Control-Allow-Origin');
     const authorization = req.headers.authorization;
     const presented =
       typeof authorization === 'string' && /^Bearer /i.test(authorization)
@@ -368,85 +399,91 @@ export class GatewayIngress {
     const expected = target
       ? effectiveServerToken(this.config.gateway, target)
       : this.config.gateway.token;
-    if (!timingSafeEqual(digest(presented), digest(expected))) {
-      reject(401);
-      return;
+    if (!tokenMatches(presented, expected)) {
+      this.rejectRequest(res, 401);
+      return null;
     }
     if (this.closed) {
-      reject(503);
-      return;
+      this.rejectRequest(res, 503);
+      return null;
     }
     // Refresh immediately before dispatch, not just on the monitoring timer.
     try {
       this.selected = selectInterface(this.config.gateway.host);
     } catch {
-      reject(503);
+      this.rejectRequest(res, 503);
       this.lostInterface();
-      return;
+      return null;
     }
-    if (
-      !peerAllowed(req.socket.remoteAddress ?? '', this.selected, this.config.gateway.allowedPeers)
-    ) {
-      reject(403);
-      return;
+    if (!peerAllowed(req.socket.remoteAddress ?? '', this.selected, this.allowedPeerRanges)) {
+      this.rejectRequest(res, 403);
+      return null;
     }
     const { host, port } = this.config.gateway;
-    if (req.headers.host !== `${host}:${port}` && !(port === 80 && req.headers.host === host)) {
-      reject(403);
-      return;
+    if (!validateHostHeader(req.headers.host, host, port)) {
+      this.rejectRequest(res, 403);
+      return null;
     }
     // The host is a validated IPv4 address; a URL origin omits the default port.
-    const origin = port === 80 ? `http://${host}` : this.address;
-    if (req.headers.origin !== undefined && req.headers.origin !== origin) {
-      reject(403);
-      return;
+    if (!validateOriginHeader(req.headers.origin, host, port)) {
+      this.rejectRequest(res, 403);
+      return null;
     }
     if (!SAFE_NAME.test(name)) {
-      reject(404);
-      return;
+      this.rejectRequest(res, 404);
+      return null;
     }
     const endpoint = this.endpoints.get(name);
     // Reconcile can keep a previous-configuration endpoint mounted while it waits
     // for earlier cleanup; it must never answer for the current route's key.
     if (!endpoint || !this.serves(name, endpoint)) {
-      reject(404);
-      return;
+      this.rejectRequest(res, 404);
+      return null;
     }
     // MCP 2026-07-28 is stateless: every message is a POST. Session-based MCP
     // adds a session's GET event stream and its DELETE.
     const methods = endpoint.sessions ? ['POST', 'GET', 'DELETE'] : ['POST'];
     if (!methods.includes(req.method ?? '')) {
       res.setHeader('Allow', methods.join(', '));
-      reject(405);
-      return;
+      this.rejectRequest(res, 405);
+      return null;
     }
     const post = req.method === 'POST';
     const stream = req.method === 'GET';
     const length = req.headers['content-length'];
     if (length !== undefined && (!/^\d+$/.test(length) || Number(length) > MAX_BODY_BYTES)) {
-      reject(413);
-      return;
+      this.rejectRequest(res, 413);
+      return null;
     }
     if (!post && (req.headers['transfer-encoding'] !== undefined || Number(length ?? 0) > 0)) {
-      reject(400);
-      return;
+      this.rejectRequest(res, 400);
+      return null;
     }
     if (req.headers['content-encoding'] && req.headers['content-encoding'] !== 'identity') {
-      reject(415);
-      return;
+      this.rejectRequest(res, 415);
+      return null;
     }
     if (Date.now() - this.rateStart >= 60_000) {
       this.rateStart = Date.now();
       this.rateCount = 0;
     }
     if (this.active >= MAX_CONCURRENT_REQUESTS || this.rateCount >= MAX_REQUESTS_PER_MINUTE) {
-      reject(429);
-      return;
+      this.rejectRequest(res, 429);
+      return null;
     }
     // Charge once before reading. Refused and disconnected parsers never refund
     // tokens, and settlement in a later minute cannot corrupt that window.
     this.rateCount++;
     this.active++;
+    return { name, endpoint, post, stream };
+  }
+
+  private dispatchEndpoint(
+    req: IncomingMessage,
+    res: ServerResponse,
+    admitted: AdmittedRequest,
+  ): void {
+    const { name, endpoint, post, stream } = admitted;
     const controller = new AbortController();
     const requestError = () => {
       controller.abort();
@@ -458,7 +495,7 @@ export class GatewayIngress {
     const timeout = setTimeout(() => {
       // An open event stream lives as long as its session; only its opening is bounded.
       if (stream && res.headersSent) return;
-      if (!res.headersSent) reject(504);
+      if (!res.headersSent) this.rejectRequest(res, 504);
       else res.destroy();
       controller.abort();
       req.destroy();
@@ -479,15 +516,22 @@ export class GatewayIngress {
         if (post) await readRequestBody(req, MAX_BODY_BYTES, controller.signal);
         if (finished || controller.signal.aborted || this.closed || !this.serves(name, endpoint))
           return;
-        endpoint.mount.app(req, res);
+        await endpoint.mount.handle(req, res);
       } catch (error) {
         if (finished || controller.signal.aborted) return;
         if (!(error instanceof RequestBodyError))
           this.logs.append({ server: name, level: 'error', source: 'controller' }, [error]);
-        if (!res.headersSent) reject(error instanceof RequestBodyError ? error.status : 502);
+        if (!res.headersSent)
+          this.rejectRequest(res, error instanceof RequestBodyError ? error.status : 502);
         else res.destroy();
       }
     })();
+  }
+
+  private handle(req: IncomingMessage, res: ServerResponse): void {
+    const admitted = this.admitRequest(req, res);
+    if (!admitted) return;
+    this.dispatchEndpoint(req, res, admitted);
   }
 
   close(): Promise<void> {

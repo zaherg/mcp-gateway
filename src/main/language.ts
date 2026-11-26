@@ -1,8 +1,6 @@
-import { randomBytes } from 'node:crypto';
-import { lstat, open, readFile, rename, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { ensureParent } from '@mcp-gateway/core/config';
+import { readPrivateJson, writePrivateJsonAtomic } from '@mcp-gateway/main/preferences-store';
 import {
   type CatalogLocale,
   type LanguagePreference,
@@ -26,48 +24,16 @@ const readPreference = async (
   path: string,
   available: readonly Locale[],
 ): Promise<LanguagePreference> => {
-  let text: string;
-  try {
-    const stat = await lstat(path);
-    if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0)
-      return invalidPreference();
-    text = await readFile(path, 'utf8');
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'system';
-    return invalidPreference();
-  }
-  let document: unknown;
-  try {
-    document = JSON.parse(text);
-  } catch {
-    return invalidPreference();
-  }
-  if (typeof document !== 'object' || document === null || Array.isArray(document))
-    return invalidPreference();
-  const { schema_version, language } = document as Record<string, unknown>;
-  const preference =
-    schema_version === 1 ? parseLanguagePreference(language, available) : undefined;
-  return preference ?? invalidPreference();
+  const result = await readPrivateJson(path, (record) =>
+    parseLanguagePreference(record.language, available),
+  );
+  if (result.status === 'missing') return 'system';
+  if (result.status === 'invalid') return invalidPreference();
+  return result.value;
 };
 
-// Mirrors writePreference in app-updater.ts: renaming a temporary file replaces a planted symlink
-// instead of writing through it, and a failed write never leaves a partial file.
 const writePreference = async (path: string, preference: LanguagePreference): Promise<void> => {
-  await ensureParent(path);
-  const temporary = `${path}.${randomBytes(8).toString('hex')}.tmp`;
-  const handle = await open(temporary, 'wx', 0o600);
-  try {
-    await handle.writeFile(JSON.stringify({ schema_version: 1, language: preference }));
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-  try {
-    await rename(temporary, path);
-  } catch (error) {
-    await unlink(temporary).catch(() => undefined);
-    throw error;
-  }
+  await writePrivateJsonAtomic(path, { language: preference });
 };
 
 /** The interface language. An unusable file falls back to the system language. */

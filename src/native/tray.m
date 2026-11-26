@@ -1,11 +1,30 @@
 #import <AppKit/AppKit.h>
 
+static __weak NSButton *cachedStatusButton = nil;
+static NSString *cachedGlyphPath = nil;
+static double cachedGlyphSize = 0;
+static NSImage *cachedStoppedImage = nil;
+static NSImage *cachedRunningImage = nil;
+
 static NSButton *statusButton(NSView *view) {
     if ([NSStringFromClass([view class]) isEqualToString:@"NSStatusBarButton"])
         return (NSButton *)view;
     for (NSView *child in view.subviews) {
         NSButton *found = statusButton(child);
         if (found) return found;
+    }
+    return nil;
+}
+
+static NSButton *resolveStatusButton(void) {
+    NSButton *cached = cachedStatusButton;
+    if (cached != nil && cached.window != nil) return cached;
+    for (NSWindow *window in NSApp.windows) {
+        NSButton *button = statusButton(window.contentView);
+        if (button) {
+            cachedStatusButton = button;
+            return button;
+        }
     }
     return nil;
 }
@@ -21,13 +40,20 @@ __attribute__((visibility("default"))) int mcp_tray_set_running(const char *path
     if (path == NULL || !(size > 0)) return -1;
     __block int result = -3;
     void (^apply)(void) = ^{
-        NSImage *glyph = [[NSImage alloc] initWithContentsOfFile:[NSString stringWithUTF8String:path]];
-        if (!glyph) { result = -2; return; }
-        NSSize extent = NSMakeSize(size, size);
-        glyph.size = extent;
-        NSImage *image = glyph;
-        if (running) {
-            image = [NSImage imageWithSize:extent flipped:NO drawingHandler:^BOOL(NSRect bounds) {
+        NSString *nsPath = [NSString stringWithUTF8String:path];
+        if (!nsPath) { result = -1; return; }
+        if (![cachedGlyphPath isEqualToString:nsPath] || cachedGlyphSize != size ||
+            cachedStoppedImage == nil || cachedRunningImage == nil) {
+            NSImage *glyph = [[NSImage alloc] initWithContentsOfFile:nsPath];
+            if (!glyph) { result = -2; return; }
+            NSSize extent = NSMakeSize(size, size);
+            glyph.size = extent;
+
+            NSImage *stopped = [glyph copy];
+            stopped.size = extent;
+            stopped.template = YES;
+
+            NSImage *runningImage = [NSImage imageWithSize:extent flipped:NO drawingHandler:^BOOL(NSRect bounds) {
                 [glyph drawInRect:bounds];
                 [NSColor.labelColor set];
                 NSRectFillUsingOperation(bounds, NSCompositingOperationSourceIn);
@@ -44,15 +70,17 @@ __attribute__((visibility("default"))) int mcp_tray_set_running(const char *path
                 [[NSBezierPath bezierPathWithOvalInRect:dot] fill];
                 return YES;
             }];
+            runningImage.template = NO;
+
+            cachedGlyphPath = [nsPath copy];
+            cachedGlyphSize = size;
+            cachedStoppedImage = stopped;
+            cachedRunningImage = runningImage;
         }
-        image.template = !running;
-        for (NSWindow *window in NSApp.windows) {
-            NSButton *button = statusButton(window.contentView);
-            if (!button) continue;
-            button.image = image;
-            result = 0;
-            return;
-        }
+        NSButton *button = resolveStatusButton();
+        if (!button) return;
+        button.image = running ? cachedRunningImage : cachedStoppedImage;
+        result = 0;
     };
     if ([NSThread isMainThread]) apply();
     else dispatch_sync(dispatch_get_main_queue(), apply);

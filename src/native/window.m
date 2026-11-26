@@ -1,8 +1,8 @@
 #import <AppKit/AppKit.h>
 
-// Applies a minimum content size to the NSWindow whose address matches `pointer`.
-// The address is only compared against NSApp.windows, never dereferenced, so a
-// pointer that is not an NSWindow is refused instead of crashing.
+// Applies a minimum content size and frame autosave name to the NSWindow whose
+// address matches `pointer`. The address is only compared against NSApp.windows,
+// never dereferenced, so a pointer that is not an NSWindow is refused instead of crashing.
 // Returns 0 on success, -1 for invalid arguments, -2 when no window matches.
 __attribute__((visibility("default"))) int mcp_window_set_min_content_size(
     void *pointer, double width, double height) {
@@ -12,6 +12,12 @@ __attribute__((visibility("default"))) int mcp_window_set_min_content_size(
         for (NSWindow *window in NSApp.windows) {
             if ((__bridge void *)window != pointer) continue;
             window.contentMinSize = NSMakeSize(width, height);
+            [window setFrameAutosaveName:@"MCPGatewayMainWindow"];
+            NSSize contentSize = [window contentRectForFrameRect:window.frame].size;
+            if (contentSize.width < width || contentSize.height < height) {
+                [window setContentSize:NSMakeSize(MAX(contentSize.width, width),
+                                                  MAX(contentSize.height, height))];
+            }
             result = 0;
             return;
         }
