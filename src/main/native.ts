@@ -14,7 +14,7 @@ export interface NativeKeychain {
 }
 
 const KEYCHAIN_BUFFER_BYTES = 16 * 1024;
-const cstring = (value: string): Buffer => Buffer.from(`${value}\0`, 'utf8');
+const cstring = (value: string) => Buffer.from(`${value}\0`, 'utf8');
 
 const NATIVE_SYMBOLS = {
   mcp_keychain_get: {
@@ -55,7 +55,7 @@ type NativeLibrary = ReturnType<typeof dlopen<typeof NATIVE_SYMBOLS>>;
 const nativeLibraries = new Map<string, NativeLibrary>();
 
 // Shared process-lifetime FFI handle: signal handlers and AppKit observers remain mapped until exit.
-const getNativeLibrary = (path: string): NativeLibrary => {
+const getNativeLibrary = (path: string) => {
   const key = resolve(path);
   const existing = nativeLibraries.get(key);
   if (existing) return existing;
@@ -69,7 +69,7 @@ export const postNativeNotification = (
   body: string,
   libraryPath?: string,
   onError?: (error: unknown) => void,
-): void => {
+) => {
   try {
     const library = libraryPath
       ? getNativeLibrary(libraryPath)
@@ -153,7 +153,7 @@ class MacLoginManager implements LoginManager {
   private requestedState: 0 | 1 | undefined;
   constructor(private readonly native: LoginNative) {}
 
-  status(): LoginStatus {
+  status() {
     const status = this.native.status();
     // Pending approval is disabled, but is not a completed unregister operation.
     if (status === this.requestedState) this.operationError = null;
@@ -176,7 +176,7 @@ class MacLoginManager implements LoginManager {
     return result;
   }
 
-  setEnabled(enabled: boolean): LoginStatus {
+  setEnabled(enabled: boolean) {
     this.occurrence++;
     this.operationError = null;
     if (!this.status().supported) {
@@ -210,7 +210,7 @@ export const openLoginManager = (path: string) => {
   };
 };
 
-export const preventIdleSleep = (path: string): (() => void) => {
+export const preventIdleSleep = (path: string) => {
   const library = getNativeLibrary(path);
   const activity = library.symbols.mcp_begin_idle_sleep_assertion();
   if (!activity) {
@@ -221,7 +221,7 @@ export const preventIdleSleep = (path: string): (() => void) => {
   };
 };
 
-export const observeNativeQuitSignals = (path: string): (() => boolean) => {
+export const observeNativeQuitSignals = (path: string) => {
   const library = getNativeLibrary(path);
   if (library.symbols.mcp_quit_signal_install() !== 0)
     throw new Error('Native Quit signal observation could not be installed.');
@@ -260,7 +260,7 @@ export const openTrayIndicator = (
 };
 
 // Bun's Intl follows LANG, which a Finder or login-item launch does not set; AppKit has the list.
-export const readPreferredLanguages = (path: string): string[] => {
+export const readPreferredLanguages = (path: string) => {
   const library = getNativeLibrary(path);
   const buffer = Buffer.alloc(4096);
   const length = library.symbols.mcp_preferred_languages(ptr(buffer), buffer.length);
@@ -270,7 +270,7 @@ export const readPreferredLanguages = (path: string): string[] => {
 
 type AppIdentifier = typeof PRODUCTION_IDENTIFIER | typeof TEST_IDENTIFIER;
 
-export const installedIdentifier = (resourcesFolder: string): AppIdentifier => {
+export const installedIdentifier = (resourcesFolder: string) => {
   let identifier: unknown;
   try {
     identifier = JSON.parse(readFileSync(join(resourcesFolder, 'version.json'), 'utf8')).identifier;
@@ -284,7 +284,7 @@ export const installedIdentifier = (resourcesFolder: string): AppIdentifier => {
 
 // Utils.paths.config does not include the bundle identifier, so test builds need
 // their own folder to stay off the production configuration.
-export const configurationDirectory = (configBase: string, identifier: AppIdentifier): string => {
+export const configurationDirectory = (configBase: string, identifier: AppIdentifier) => {
   if (!isAbsolute(configBase) || configBase.includes('\0'))
     throw new Error('Configuration base must be an absolute path.');
   return join(configBase, identifier === TEST_IDENTIFIER ? 'MCP Gateway Test' : 'MCP Gateway');
@@ -296,7 +296,7 @@ interface RestorableWindow {
   activate(): void;
 }
 
-export const restoreWindow = (window: RestorableWindow): void => {
+export const restoreWindow = (window: RestorableWindow) => {
   window.unminimize();
   window.show();
   window.activate();

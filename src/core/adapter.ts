@@ -64,13 +64,13 @@ const SERVER_ERROR = -32000;
 const METHOD_NOT_FOUND = -32601;
 const INTERNAL_ERROR = -32603;
 const FRAMING_ERRORS = [HEADER_MISMATCH, -32021, -32022];
-const PROCESS_FAILED: JsonRpcErrorBody = {
+const PROCESS_FAILED = {
   code: INTERNAL_ERROR,
   message: 'MCP server process failed',
 };
 
 /** Session-based (pre-2026-07-28) MCP is served only by endpoints that opt in. */
-const UNSUPPORTED_PROTOCOL_ERROR: JsonRpcErrorBody = {
+const UNSUPPORTED_PROTOCOL_ERROR = {
   code: -32600,
   message: 'Only MCP protocol version 2026-07-28 is supported.',
 };
@@ -78,10 +78,10 @@ const UNSUPPORTED_PROTOCOL_ERROR: JsonRpcErrorBody = {
 const ENCODED_PREFIX = '=?base64?';
 const ENCODED_SUFFIX = '?=';
 const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
-const isEncoded = (value: string): boolean =>
+const isEncoded = (value: string) =>
   value.startsWith(ENCODED_PREFIX) && value.endsWith(ENCODED_SUFFIX);
 
-const decodedHeader = (value: string | undefined): string | undefined => {
+const decodedHeader = (value: string | undefined) => {
   if (value === undefined || !isEncoded(value)) return value;
   const payload = value.slice(ENCODED_PREFIX.length, -ENCODED_SUFFIX.length);
   if (!BASE64.test(payload)) return undefined;
@@ -92,7 +92,7 @@ const decodedHeader = (value: string | undefined): string | undefined => {
   }
 };
 
-const encodedHeader = (value: string): string =>
+const encodedHeader = (value: string) =>
   /^[\x21-\x7e]([\x20-\x7e]*[\x21-\x7e])?$/.test(value) && !isEncoded(value)
     ? value
     : `${ENCODED_PREFIX}${Buffer.from(value, 'utf8').toString('base64')}${ENCODED_SUFFIX}`;
@@ -113,7 +113,7 @@ const headerValue =
     return Array.isArray(header) ? header.join(', ') : header;
   };
 
-const paramHeaders = (req: IncomingMessage): Record<string, string> => {
+const paramHeaders = (req: IncomingMessage) => {
   const value = headerValue(req);
   const headers: Record<string, string> = {};
   for (const name of Object.keys(req.headers)) {
@@ -125,7 +125,7 @@ const paramHeaders = (req: IncomingMessage): Record<string, string> => {
   return headers;
 };
 
-const requestIdOf = (body: unknown): string | number | null => {
+const requestIdOf = (body: unknown) => {
   if (!isRecord(body)) return null;
   const id = body.id;
   return typeof id === 'string' || typeof id === 'number' ? id : null;
@@ -136,17 +136,17 @@ const rejectWith = (
   res: ServerResponse,
   status: number,
   error: JsonRpcErrorBody,
-): void => {
+) => {
   writeJsonRpcError(res, status, error, requestIdOf(req.body));
 };
 
-const NAME_FIELDS = new Map<string, string>([
+const NAME_FIELDS = new Map([
   ['tools/call', 'name'],
   ['prompts/get', 'name'],
   ['resources/read', 'uri'],
 ]);
 
-const mirroredHeaders = (message: JSONRPCMessage): Record<string, string> => {
+const mirroredHeaders = (message: JSONRPCMessage) => {
   const headers: Record<string, string> = {};
   if (!('method' in message)) return headers;
   headers['mcp-method'] = encodedHeader(message.method);
@@ -157,7 +157,7 @@ const mirroredHeaders = (message: JSONRPCMessage): Record<string, string> => {
   return headers;
 };
 
-const validateModernHeaders = (message: JSONRPCMessage, header: HeaderValue): void => {
+const validateModernHeaders = (message: JSONRPCMessage, header: HeaderValue) => {
   if (!('id' in message) || !('method' in message)) return;
   const params = isRecord(message.params) ? message.params : undefined;
   const meta = params && isRecord(params._meta) ? params._meta : undefined;
@@ -173,13 +173,9 @@ const validateModernHeaders = (message: JSONRPCMessage, header: HeaderValue): vo
   }
 };
 
-const asRecord = (value: unknown): Record<string, unknown> => (isRecord(value) ? value : {});
+const asRecord = (value: unknown) => (isRecord(value) ? value : {});
 
-const mirrors = (
-  field: Record<string, unknown>,
-  value: unknown,
-  received: string | undefined,
-): boolean =>
+const mirrors = (field: Record<string, unknown>, value: unknown, received: string | undefined) =>
   field.type === 'integer' &&
   typeof value === 'number' &&
   received !== undefined &&
@@ -191,7 +187,7 @@ const checkMirroredHeader = (
   field: Record<string, unknown>,
   value: unknown,
   header: HeaderValue,
-): void => {
+) => {
   const name = field['x-mcp-header'];
   if (typeof name !== 'string' || value === undefined || value === null) return;
   const headerName = `mcp-param-${name.toLowerCase()}`;
@@ -199,7 +195,7 @@ const checkMirroredHeader = (
     throw new HeaderMismatch(headerName);
 };
 
-const validateToolHeaders = (schema: unknown, args: unknown, header: HeaderValue): void => {
+const validateToolHeaders = (schema: unknown, args: unknown, header: HeaderValue) => {
   const values = asRecord(args);
   const properties = asRecord(asRecord(schema).properties);
   for (const [key, property] of Object.entries(properties)) {
@@ -213,7 +209,7 @@ const validateToolHeaders = (schema: unknown, args: unknown, header: HeaderValue
 const findToolSchema = async (
   name: string,
   page: (cursor?: string) => Promise<Record<string, unknown>>,
-): Promise<unknown> => {
+) => {
   let cursor: string | undefined;
   const seen = new Set<string>();
   do {
@@ -259,7 +255,7 @@ type InboundRoute =
     }
   | ModernRoute;
 
-const stripOws = (value: string): string => value.replace(/^[\t ]+|[\t ]+$/g, '');
+const stripOws = (value: string) => value.replace(/^[\t ]+|[\t ]+$/g, '');
 
 const classifyInbound = (req: GatewayRequest, value: HeaderValue): InboundRoute => {
   if ((req.method ?? '').toUpperCase() !== 'POST') return { kind: 'legacy' };
@@ -400,7 +396,7 @@ const classifyInbound = (req: GatewayRequest, value: HeaderValue): InboundRoute 
   };
 };
 
-const acceptsBoth = (accept: string): boolean =>
+const acceptsBoth = (accept: string) =>
   accept.includes('application/json') && accept.includes('text/event-stream');
 
 const admit = async (
@@ -408,8 +404,8 @@ const admit = async (
   res: ServerResponse,
   value: HeaderValue,
   speaks: () => boolean | Promise<boolean>,
-): Promise<boolean | ModernRoute> => {
-  const reject = (status: number, error: JsonRpcErrorBody): true => {
+) => {
+  const reject = (status: number, error: JsonRpcErrorBody) => {
     rejectWith(req, res, status, error);
     return true;
   };
@@ -466,7 +462,7 @@ interface ReusedChild {
 const isContinuationHandle = (state: unknown): state is string =>
   typeof state === 'string' && state.startsWith('sgw:');
 
-const detachChild = (child: ModernChild): void => {
+const detachChild = (child: ModernChild) => {
   child.onmessage = undefined;
   child.onerror = undefined;
   child.onclose = undefined;
@@ -488,7 +484,7 @@ class RetainedChildren {
 
   constructor(private readonly options: { idleMs: number; limit: number; logger: GatewayLogger }) {}
 
-  retain(state: unknown, child: ModernChild): string {
+  retain(state: unknown, child: ModernChild) {
     let flow = this.flows.get(child);
     if (!flow) {
       flow = { child, handles: new Set(), waiters: new Set(), busy: true };
@@ -512,7 +508,7 @@ class RetainedChildren {
     return handle;
   }
 
-  async take(handle: string, signal?: AbortSignal): Promise<ReusedChild | undefined> {
+  async take(handle: string, signal?: AbortSignal) {
     for (;;) {
       const binding = this.entries.get(handle);
       if (!binding || this.closed || signal?.aborted) return undefined;
@@ -537,7 +533,7 @@ class RetainedChildren {
     }
   }
 
-  async release(child: ModernChild): Promise<void> {
+  async release(child: ModernChild) {
     const flow = this.flows.get(child);
     if (this.closed || !flow || flow.handles.size === 0) {
       await this.discard(child);
@@ -556,7 +552,7 @@ class RetainedChildren {
     this.wake(flow);
   }
 
-  async discard(child: ModernChild): Promise<void> {
+  async discard(child: ModernChild) {
     const flow = this.flows.get(child);
     if (flow) {
       clearTimeout(flow.timer);
@@ -577,14 +573,14 @@ class RetainedChildren {
     }
   }
 
-  async close(): Promise<void> {
+  async close() {
     this.closed = true;
     const children = new Set([...this.entries.values()].map((binding) => binding.flow.child));
     await Promise.all([...children].map((child) => this.discard(child)));
     await Promise.all(this.closing);
   }
 
-  private wake(flow: RetainedFlow): void {
+  private wake(flow: RetainedFlow) {
     for (const done of flow.waiters) done();
   }
 }
@@ -600,7 +596,7 @@ const untilDrained = (res: ServerResponse): Promise<void> =>
     res.on('close', done);
   });
 
-const drained = (responses: readonly ServerResponse[]): Promise<void> | undefined => {
+const drained = (responses: readonly ServerResponse[]) => {
   const full = responses.filter((res) => res.writableNeedDrain);
   if (full.length) return Promise.all(full.map(untilDrained)).then(() => {});
   return undefined;
@@ -630,12 +626,12 @@ const CLIENT_TRANSPORT_ERRORS = new Set([
   'Modern HTTP adapter error:',
   'Failed to send MCP error:',
 ]);
-const clientCaused = (args: readonly unknown[]): boolean =>
+const clientCaused = (args: readonly unknown[]) =>
   (typeof args[0] === 'string' && CLIENT_TRANSPORT_ERRORS.has(args[0])) ||
   args.some((value) => value instanceof HeaderMismatch);
 
 // Only the owned close promise proves that backend work ended.
-const cleanupConfirmed = (child: ModernChild): boolean => child.cleanedUp === true;
+const cleanupConfirmed = (child: ModernChild) => child.cleanedUp === true;
 
 class ChildQuery {
   private pending:
@@ -646,15 +642,11 @@ class ChildQuery {
       }
     | undefined;
 
-  get waiting(): boolean {
+  get waiting() {
     return this.pending !== undefined;
   }
 
-  ask(
-    child: ModernChild,
-    method: string,
-    params: Record<string, unknown>,
-  ): Promise<JSONRPCMessage> {
+  ask(child: ModernChild, method: string, params: Record<string, unknown>) {
     const id = randomUUID();
     let rejectReply: ((error: unknown) => void) | undefined;
     const reply = new Promise<JSONRPCMessage>((resolve, reject) => {
@@ -665,7 +657,7 @@ class ChildQuery {
     return reply;
   }
 
-  receive(message: JSONRPCMessage): void {
+  receive(message: JSONRPCMessage) {
     if (this.pending && 'id' in message && message.id === this.pending.id) {
       const resolve = this.pending.resolve;
       this.pending = undefined;
@@ -674,7 +666,7 @@ class ChildQuery {
   }
 }
 
-const restoredState = <T extends JSONRPCMessage>(message: T, reused?: ReusedChild): T => {
+const restoredState = <T extends JSONRPCMessage>(message: T, reused?: ReusedChild) => {
   if (!reused || !('params' in message) || !isRecord(message.params)) return message;
   const params: Record<string, unknown> = { ...message.params };
   delete params.requestState;
@@ -682,16 +674,16 @@ const restoredState = <T extends JSONRPCMessage>(message: T, reused?: ReusedChil
   return { ...message, params };
 };
 
-const withoutProgressToken = (callMeta: unknown): Record<string, unknown> => {
+const withoutProgressToken = (callMeta: unknown) => {
   const meta = { ...asRecord(callMeta) };
   delete meta.progressToken;
   return meta;
 };
 
-const statusForError = (code: number): number =>
+const statusForError = (code: number) =>
   code === METHOD_NOT_FOUND ? 404 : FRAMING_ERRORS.includes(code) ? 400 : 200;
 
-const mintedState = (result: unknown): { value: string | undefined } | undefined => {
+const mintedState = (result: unknown) => {
   if (!isRecord(result)) return undefined;
   const { resultType, requestState } = result;
   return resultType === 'input_required' &&
@@ -727,12 +719,12 @@ class WorkTransport {
 
   constructor(private readonly replied: (message: JSONRPCMessage) => void) {}
 
-  async start(): Promise<void> {
+  async start() {
     if (this.started) throw new Error('WorkTransport is already started');
     this.started = true;
   }
 
-  async handleMessage(message: JSONRPCMessage): Promise<Response> {
+  async handleMessage(message: JSONRPCMessage) {
     if (this.used) throw new Error('WorkTransport serves one exchange');
     if (!this.started || !this.onmessage) throw new Error('WorkTransport is not connected');
     if (this.closed) throw new Error('WorkTransport is closed');
@@ -753,10 +745,7 @@ class WorkTransport {
     return new Response(null, { status: 202 });
   }
 
-  async send(
-    message: JSONRPCMessage,
-    options?: { relatedRequestId?: string | number },
-  ): Promise<void> {
+  async send(message: JSONRPCMessage, options?: { relatedRequestId?: string | number }) {
     if (!('method' in message) && 'id' in message) this.replied(message);
     if (this.closed) return;
     const isResponse = isJSONRPCResultResponse(message) || isJSONRPCErrorResponse(message);
@@ -789,7 +778,7 @@ class WorkTransport {
     this.writeMessageFrame(message);
   }
 
-  async close(): Promise<void> {
+  async close() {
     if (this.closed) return;
     this.closed = true;
     if (this.sse !== undefined && !this.sse.closed) {
@@ -805,13 +794,13 @@ class WorkTransport {
     this.onclose?.();
   }
 
-  private settleResponse(response: Response): void {
+  private settleResponse(response: Response) {
     if (this.deferred === undefined || this.deferred.settled) return;
     this.deferred.settled = true;
     this.deferred.resolve(response);
   }
 
-  private upgradeToSse(): void {
+  private upgradeToSse() {
     let controller!: ReadableStreamDefaultController<Uint8Array>;
     const readable = new ReadableStream<Uint8Array>({
       start: (streamController) => {
@@ -835,7 +824,7 @@ class WorkTransport {
     );
   }
 
-  private finalizeStream(): void {
+  private finalizeStream() {
     if (this.sse !== undefined && !this.sse.closed) {
       this.sse.closed = true;
       try {
@@ -845,7 +834,7 @@ class WorkTransport {
     queueMicrotask(() => void this.close());
   }
 
-  private writeMessageFrame(message: JSONRPCMessage): void {
+  private writeMessageFrame(message: JSONRPCMessage) {
     if (this.sse === undefined || this.sse.closed) return;
     try {
       this.sse.controller.enqueue(
@@ -902,11 +891,11 @@ class ModernRequest {
     };
   }
 
-  private get stopped(): boolean {
+  private get stopped() {
     return this.stopPromise !== undefined;
   }
 
-  readonly stop = (): Promise<void> => {
+  readonly stop = () => {
     const { res, logger } = this.at;
     if (!this.stopPromise) {
       res.off('close', this.closed);
@@ -919,7 +908,7 @@ class ModernRequest {
     return this.stopPromise;
   };
 
-  private async cleanUp(): Promise<void> {
+  private async cleanUp() {
     const { transport, active, retained, child } = this.at;
     try {
       await transport.close();
@@ -934,7 +923,7 @@ class ModernRequest {
     }
   }
 
-  private readonly fail = async (error: unknown): Promise<void> => {
+  private readonly fail = async (error: unknown) => {
     const { route, transport, logger } = this.at;
     if (this.stopped || this.failed) return;
     this.failed = true;
@@ -953,12 +942,12 @@ class ModernRequest {
     await this.stop();
   };
 
-  private repliesToRequest(message: JSONRPCMessage): boolean {
+  private repliesToRequest(message: JSONRPCMessage) {
     const { route } = this.at;
     return 'id' in message && route.messageKind === 'request' && message.id === route.message.id;
   }
 
-  private fromChild(message: JSONRPCMessage): void {
+  private fromChild(message: JSONRPCMessage) {
     const { route, transport, child, res, retained } = this.at;
     if (this.stopped) return;
     if ('method' in message && 'id' in message) {
@@ -994,10 +983,7 @@ class ModernRequest {
     child.hold(drained([res]));
   }
 
-  private async listToolsPage(
-    callMeta: unknown,
-    cursor?: string,
-  ): Promise<Record<string, unknown>> {
+  private async listToolsPage(callMeta: unknown, cursor?: string) {
     if (this.stopped) throw new Error('Request closed');
     const result = await this.query.ask(this.at.child, 'tools/list', {
       _meta: withoutProgressToken(callMeta),
@@ -1009,7 +995,7 @@ class ModernRequest {
     return result.result;
   }
 
-  private async dispatch(): Promise<void> {
+  private async dispatch() {
     const { route, reused, child, children, value } = this.at;
     if (this.stopped || children.closing) throw new Error('Gateway is shutting down');
     if (!reused) {
@@ -1034,7 +1020,7 @@ class ModernRequest {
     if (route.messageKind === 'notification') await child.finish();
   }
 
-  private async respond(): Promise<Response> {
+  private async respond() {
     const { route, transport } = this.at;
     const response = await transport.handleMessage(route.message);
     if (route.messageKind === 'notification') {
@@ -1058,7 +1044,7 @@ class ModernRequest {
     return response;
   }
 
-  async serve(): Promise<boolean> {
+  async serve() {
     const { req, res, transport, active, logger } = this.at;
     active.add(this.stop);
     res.once('close', this.closed);
@@ -1075,11 +1061,7 @@ class ModernRequest {
     return true;
   }
 
-  private async writeResponse(
-    req: GatewayRequest,
-    res: ServerResponse,
-    logger: GatewayLogger,
-  ): Promise<void> {
+  private async writeResponse(req: GatewayRequest, res: ServerResponse, logger: GatewayLogger) {
     let finished = false;
     const abort = new AbortController();
     res.on('close', () => {
@@ -1212,7 +1194,7 @@ export const createMount = (
     close: () => Promise<void>;
     cleanedUp = false;
 
-    async start(): Promise<void> {
+    async start() {
       if (!source.stdioCmd) throw new Error('Expected stdio source');
       const child = spawn(source.stdioCmd.command, source.stdioCmd.args, {
         ...children.spawnOptions,
@@ -1245,7 +1227,7 @@ export const createMount = (
       );
     }
 
-    watch(child: ChildProcessWithoutNullStreams): void {
+    watch(child: ChildProcessWithoutNullStreams) {
       const fail = (error: Error) => {
         if (this.closed) return;
         logger.error('MCP child failed:', error);
@@ -1261,7 +1243,7 @@ export const createMount = (
       });
     }
 
-    deliver(line: string): void {
+    deliver(line: string) {
       if (!line.trim()) return;
       let message: JSONRPCMessage;
       try {
@@ -1273,14 +1255,14 @@ export const createMount = (
       this.onmessage?.(message);
     }
 
-    hold(drainedPromise: Promise<void> | undefined): void {
+    hold(drainedPromise: Promise<void> | undefined) {
       const stdout = this.child?.stdout;
       if (!stdout || !drainedPromise || stdout.isPaused()) return;
       stdout.pause();
       void drainedPromise.then(() => stdout.resume());
     }
 
-    async send(message: JSONRPCMessage): Promise<void> {
+    async send(message: JSONRPCMessage) {
       const child = this.child;
       if (this.closed || !child) throw new Error('MCP child is closed');
       await new Promise<void>((resolve, reject) => {
@@ -1291,7 +1273,7 @@ export const createMount = (
       });
     }
 
-    async finish(): Promise<void> {
+    async finish() {
       const child = this.child;
       if (!child || this.closed || child.exitCode !== null || child.signalCode !== null) return;
       this.closed = true;
@@ -1341,13 +1323,13 @@ export const createMount = (
     close: () => Promise<void>;
     cleanedUp = false;
 
-    async start(): Promise<void> {}
+    async start() {}
 
-    hold(drainedPromise: Promise<void> | undefined): void {
+    hold(drainedPromise: Promise<void> | undefined) {
       this.held = drainedPromise;
     }
 
-    async send(message: JSONRPCMessage): Promise<void> {
+    async send(message: JSONRPCMessage) {
       const pending = this.sendInternal(message);
       this.sending.add(pending);
       try {
@@ -1357,7 +1339,7 @@ export const createMount = (
       }
     }
 
-    private async sendInternal(message: JSONRPCMessage): Promise<void> {
+    private async sendInternal(message: JSONRPCMessage) {
       if (this.closed || !source.upstream) throw new Error('Upstream request is closed');
       const call = 'method' in message && message.method === 'tools/call';
       const response = await fetch(source.upstream.url, {
@@ -1385,18 +1367,18 @@ export const createMount = (
       this.reading.add(reading);
     }
 
-    async finish(): Promise<void> {
+    async finish() {
       await Promise.all(this.reading);
     }
 
-    private fail(error: unknown): void {
+    private fail(error: unknown) {
       if (this.closed) return;
       logger.error('Upstream request failed:', error);
       this.onerror?.(error instanceof Error ? error : new Error(String(error)));
       void this.close();
     }
 
-    private async read(response: Response, awaited?: string | number): Promise<void> {
+    private async read(response: Response, awaited?: string | number) {
       const type = response.headers.get('content-type') ?? '';
       let answered = awaited === undefined;
       const deliver = (value: unknown) => {
@@ -1410,7 +1392,7 @@ export const createMount = (
       if (!answered) throw new Error('The remote server ended its answer without a reply');
     }
 
-    private async events(response: Response, deliver: (value: unknown) => void): Promise<void> {
+    private async events(response: Response, deliver: (value: unknown) => void) {
       if (!response.body) throw new Error('Upstream event stream has no body');
       const parser = createParser({
         maxBufferSize: MAX_SSE_EVENT_BYTES,
@@ -1458,13 +1440,13 @@ export const createMount = (
     }
   }
 
-  const wrapLegacyResponse = (res: ServerResponse): GatewayResponse => {
+  const wrapLegacyResponse = (res: ServerResponse) => {
     const wrapped = res as GatewayResponse;
-    wrapped.status ??= (code: number) => {
+    wrapped.status ??= (code) => {
       res.statusCode = code;
       return wrapped;
     };
-    wrapped.send ??= (body: string) => {
+    wrapped.send ??= (body) => {
       if (!res.headersSent && !res.destroyed) {
         const payload = Buffer.from(body, 'utf8');
         if (!res.getHeader('content-type'))
@@ -1474,7 +1456,7 @@ export const createMount = (
       }
       return wrapped;
     };
-    wrapped.json ??= (body: unknown) => {
+    wrapped.json ??= (body) => {
       if (!res.headersSent && !res.destroyed) {
         const payload = Buffer.from(JSON.stringify(body), 'utf8');
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -1515,7 +1497,7 @@ export const createMount = (
         })
       : undefined;
 
-    const handlePost = async (req: GatewayRequest, res: ServerResponse): Promise<void> => {
+    const handlePost = async (req: GatewayRequest, res: ServerResponse) => {
       const value = headerValue(req);
       const route = await admit(req, res, value, speaks);
       if (res.destroyed || res.writableEnded || children.closing) return;
@@ -1679,7 +1661,7 @@ export const createMount = (
   }
 };
 
-const validExit = (code: string, signal: string): boolean => {
+const validExit = (code: string, signal: string) => {
   return (
     (code === 'null' || (Number(code) >= -1 && Number(code) <= 255)) &&
     (signal === 'null' || Object.hasOwn(constants.signals, signal))
@@ -1700,14 +1682,14 @@ const ERROR_CODES = new Set([
 // Reads a data property without invoking getters. The result keeps the descriptor's `any` type.
 const own = (value: object, key: string) => Object.getOwnPropertyDescriptor(value, key)?.value;
 
-const exitSummary = (text: string): string | undefined => {
+const exitSummary = (text: string) => {
   const exit = /^Child exited: code=(-?\d+|null), signal=(SIG[A-Z0-9]+|null)$/.exec(text);
   if (!exit || !validExit(exit[1], exit[2])) return undefined;
   return `Backend process exited (code ${exit[1]}, signal ${exit[2]}). Open Logs for details.`;
 };
 
 /** Only allowlisted codes and numeric statuses may enter status summaries. */
-export const backendSummary = (args: readonly unknown[]): string => {
+export const backendSummary = (args: readonly unknown[]) => {
   const pending = [...args];
   const seen = new Set<object>();
   for (let index = 0; index < Math.min(pending.length, 16); index++) {
@@ -1751,10 +1733,7 @@ export const backendSummary = (args: readonly unknown[]): string => {
 // rejection is unconfirmed cleanup and must remain a failure on every retry.
 const mountClosures = new WeakMap<GatewayMount, Promise<void>>();
 
-export const closeMount = async (
-  mount: GatewayMount,
-  onFailure?: (error: unknown) => void,
-): Promise<void> => {
+export const closeMount = async (mount: GatewayMount, onFailure?: (error: unknown) => void) => {
   let completion = mountClosures.get(mount);
   if (!completion) {
     completion = Promise.resolve().then(() => mount.close());
@@ -1782,7 +1761,7 @@ const MAX_DISCOVERY_BYTES = 64 * 1024;
 const DISCOVERY_TIMEOUT_MS = 10_000;
 const DISCOVERY_ID = 'mcp-gateway-discover';
 
-const discoveryResult = (data: string): boolean | undefined => {
+const discoveryResult = (data: string) => {
   const message = JSONRPCMessageSchema.parse(JSON.parse(data));
   if (!('id' in message) || 'method' in message || message.id !== DISCOVERY_ID) return undefined;
   if (!('result' in message)) return false;
@@ -1801,7 +1780,7 @@ class UpstreamDiscovery {
 
   constructor(private readonly upstream: Upstream) {}
 
-  readonly speaks = (): Promise<boolean> => {
+  readonly speaks = () => {
     if (this.lifetime.signal.aborted) return Promise.resolve(false);
     if (this.last && Date.now() - this.last.at < SPEAKS_FOR_MS) return this.last.result;
     const last = {
@@ -1816,13 +1795,13 @@ class UpstreamDiscovery {
     return last.result;
   };
 
-  async close(): Promise<void> {
+  async close() {
     this.lifetime.abort();
     await this.last?.result;
   }
 
   /** Undefined when the upstream could not be asked: no connection, a timeout or a 5xx. */
-  private async discover(): Promise<boolean | undefined> {
+  private async discover() {
     try {
       let response: Response;
       try {

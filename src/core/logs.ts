@@ -1,4 +1,4 @@
-import { LOG_LIMITS, type LogEntry, type LogPage, type LogQuery } from '@mcp-gateway/shared/types';
+import { LOG_LIMITS, type LogEntry, type LogQuery } from '@mcp-gateway/shared/types';
 
 const TRUNCATION_MARKER = '\n[entry truncated]';
 
@@ -13,7 +13,7 @@ const URL_QUERY_SECRET_PATTERN =
 const WELL_KNOWN_TOKEN_PATTERN =
   /\b(?:sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{16,})\b/g;
 
-export const redactText = (input: string, secrets?: Iterable<string>): string => {
+export const redactText = (input: string, secrets?: Iterable<string>) => {
   let output = input
     .replace(AUTH_HEADER_PATTERN, '$1[REDACTED]')
     .replace(API_KEY_HEADER_PATTERN, '$1[REDACTED]')
@@ -32,10 +32,10 @@ export const redactText = (input: string, secrets?: Iterable<string>): string =>
 };
 
 /** Reads data descriptors only: diagnostic capture must never invoke custom inspection or getters. */
-const diagnosticText = (values: readonly unknown[]): string => {
+const diagnosticText = (values: readonly unknown[]) => {
   let remaining = LOG_LIMITS.entryBytes;
   const seen = new Set<object>();
-  const take = (text: string): string => {
+  const take = (text: string) => {
     const part = text.slice(0, remaining);
     remaining -= part.length;
     return part;
@@ -91,7 +91,7 @@ export class LogBuffer {
   private sequence = 0;
   private generation = 0;
 
-  registerSecrets(values: Iterable<string>): void {
+  registerSecrets(values: Iterable<string>) {
     for (const value of values) {
       if (typeof value === 'string' && value.length >= 8) {
         this.secrets.add(value);
@@ -99,10 +99,7 @@ export class LogBuffer {
     }
   }
 
-  append(
-    metadata: Pick<LogEntry, 'server' | 'level' | 'source'>,
-    values: readonly unknown[],
-  ): void {
+  append(metadata: Pick<LogEntry, 'server' | 'level' | 'source'>, values: readonly unknown[]) {
     let text = redactText(diagnosticText(values), this.secrets);
     const truncated = Buffer.byteLength(text) >= LOG_LIMITS.entryBytes;
     if (truncated) {
@@ -141,14 +138,14 @@ export class LogBuffer {
     }
   }
 
-  clear(): LogPage {
+  clear() {
     this.entries = [];
     this.bytes = 0;
     this.generation++;
     return this.read({ after: this.sequence });
   }
 
-  read(query: LogQuery): LogPage {
+  read(query: LogQuery) {
     const oldest = this.entries[0]?.id ?? this.sequence + 1;
     const gap = query.after < oldest - 1 || query.after > this.sequence;
     let cursor = gap ? oldest - 1 : query.after;

@@ -17,16 +17,16 @@ export class QuitCoordinator {
     private readonly onFailure: (error: unknown, kind: 'quit' | 'update') => void,
   ) {}
 
-  status(): QuitStatus {
+  status() {
     return { ...this.state };
   }
 
-  updateRestartActive(): boolean {
+  updateRestartActive() {
     return this.intent === 'update';
   }
 
   /** Runs cleanup for an update restart; false means an ordinary quit won. */
-  async beginUpdateRestart(): Promise<boolean> {
+  async beginUpdateRestart() {
     if (this.approved || this.state.phase === 'ready') return false;
     if (this.intent === 'quit') return false;
     if (this.intent !== 'update') {
@@ -37,16 +37,16 @@ export class QuitCoordinator {
     return this.intent === 'update' && this.cleanupDone;
   }
 
-  approveUpdateRestart(): void {
+  approveUpdateRestart() {
     if (this.intent === 'update' && this.cleanupDone) this.approved = true;
   }
 
-  clearUpdateRestart(): void {
+  clearUpdateRestart() {
     this.approved = false;
     if (this.intent === 'update') this.intent = undefined;
   }
 
-  updateRestartFailed(message: string): void {
+  updateRestartFailed(message: string) {
     this.approved = false;
     this.intent = undefined;
     this.state = { attempt: this.state.attempt, phase: 'failed', error: message };
@@ -54,7 +54,7 @@ export class QuitCoordinator {
   }
 
   /** A normal user quit must never inherit a previously selected update. */
-  armQuit(): boolean {
+  armQuit() {
     if (this.approved || this.state.phase === 'ready') return false;
     if (this.intent === 'quit' && this.state.phase === 'pending') return true;
     this.intent = 'quit';
@@ -63,7 +63,7 @@ export class QuitCoordinator {
   }
 
   /** Native events are synchronous: veto now and request quit again after cleanup. */
-  handle(veto: () => void, signal = false): void {
+  handle(veto: () => void, signal = false) {
     if (this.approved && !signal) return;
     if (signal) {
       this.approved = false;
@@ -74,7 +74,7 @@ export class QuitCoordinator {
     this.ordinaryIntent();
   }
 
-  private ordinaryIntent(): void {
+  private ordinaryIntent() {
     if (!this.armQuit()) return;
     if (this.cleanupDone) {
       void this.finishAfterCleanup();
@@ -83,7 +83,7 @@ export class QuitCoordinator {
     void this.ensureCleanup().catch(() => undefined);
   }
 
-  private ensureCleanup(): Promise<void> {
+  private ensureCleanup() {
     if (this.cleanupDone) return Promise.resolve();
     if (this.cleanupInFlight) return this.cleanupInFlight;
     const operation = Promise.resolve()
@@ -112,7 +112,7 @@ export class QuitCoordinator {
     return operation;
   }
 
-  private async finishAfterCleanup(): Promise<void> {
+  private async finishAfterCleanup() {
     if (this.intent !== 'quit') return;
     this.state = { attempt: this.state.attempt, phase: 'ready', error: null };
     try {
@@ -141,7 +141,7 @@ export class InteractiveQuitGate {
     private readonly signalRequested: () => boolean = () => false,
   ) {}
 
-  handle(veto: () => void): void {
+  handle(veto: () => void) {
     if (this.signalRequested()) {
       // A native signal is terminal intent, including during update preflight or
       // an unanswered draft prompt. It must never inherit install-on-quit.

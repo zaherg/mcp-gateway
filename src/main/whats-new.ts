@@ -20,7 +20,7 @@ export class WhatsNewStore {
     dataDirectory: string,
     installedVersion: string | null,
     existingInstall: boolean,
-  ): Promise<WhatsNewStore> {
+  ) {
     const path = join(dataDirectory, SEEN_FILE);
     const result = await readPrivateJson(path, (record) =>
       typeof record.version === 'string' ? record.version : undefined,
@@ -35,14 +35,14 @@ export class WhatsNewStore {
   }
 
   /** The installed version when its release notes have not been dismissed yet. */
-  get pending(): string | null {
+  get pending() {
     return this.installedVersion !== null && this.seen !== this.installedVersion
       ? this.installedVersion
       : null;
   }
 
   /** Marks the installed version as seen; the notes stay dismissed for this run even if the save fails. */
-  async dismiss(): Promise<void> {
+  async dismiss() {
     if (this.installedVersion === null || this.seen === this.installedVersion) return;
     this.seen = this.installedVersion;
     try {

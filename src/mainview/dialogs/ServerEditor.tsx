@@ -52,14 +52,14 @@ export const createKeyValueRow = (
   key = '',
   value = '',
   secret = isDefaultSecretRow(key, value),
-): KeyValueRow => ({
+) => ({
   id: `kv-${++rowSequence}`,
   key,
   value,
   secret,
 });
 
-const isDefaultSecretRow = (key: string, value: string): boolean => {
+const isDefaultSecretRow = (key: string, value: string) => {
   if (!key && !value) return false;
   if (/\$\{[^}]+\}/.test(value)) return false;
   return (
@@ -68,17 +68,14 @@ const isDefaultSecretRow = (key: string, value: string): boolean => {
   );
 };
 
-export const recordToKeyValueRows = (record: Record<string, string> | undefined): KeyValueRow[] => {
+export const recordToKeyValueRows = (record: Record<string, string> | undefined) => {
   if (!record) return [];
   return Object.entries(record).map(([key, value]) => createKeyValueRow(key, value));
 };
 
 const FORBIDDEN_MAP_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
-export const keyValueRowsToRecord = (
-  rows: readonly KeyValueRow[],
-  message: string,
-): Record<string, string> => {
+export const keyValueRowsToRecord = (rows: readonly KeyValueRow[], message: string) => {
   const result = Object.create(null) as Record<string, string>;
   for (const row of rows) {
     const key = row.key.trim();
@@ -94,7 +91,7 @@ export const keyValueRowsToRecord = (
   return { ...result };
 };
 
-const hasInvalidKeyValueRows = (rows: readonly KeyValueRow[]): boolean => {
+const hasInvalidKeyValueRows = (rows: readonly KeyValueRow[]) => {
   const seen = new Set<string>();
   for (const row of rows) {
     const key = row.key.trim();
@@ -116,7 +113,7 @@ const stringMap = (value: unknown): value is Record<string, string> => {
   );
 };
 /** Parses an editor JSON field that must hold an object of string values. */
-export const parseStringMap = (text: string, message: string): Record<string, string> => {
+export const parseStringMap = (text: string, message: string) => {
   const value: unknown = JSON.parse(text || '{}');
   if (!stringMap(value)) throw new Error(message);
   return value;
@@ -162,7 +159,7 @@ const isFormConfig = (value: unknown): value is ConfigFile => {
   );
 };
 // This guard is for rendering only. Native validation remains authoritative on every save.
-export const formConfig = (text: string, format: ConfigFormat): ConfigFile | null => {
+export const formConfig = (text: string, format: ConfigFormat) => {
   try {
     const value = parseConfigDocument(text, format);
     // The parsed document keeps every field, including unknown ones for native rejection.
@@ -187,7 +184,7 @@ export const emptyEditor = (): Editor => ({
   tokenRef: undefined,
 });
 /** The macOS Bear preset fields; a name the user already typed is kept. */
-export const bearPreset = (name = ''): Pick<Editor, 'name' | 'command' | 'args'> => ({
+export const bearPreset = (name = '') => ({
   name: name || 'bear',
   command: '/Applications/Bear.app/Contents/MacOS/bearcli',
   args: ['mcp-server'],
@@ -335,7 +332,7 @@ interface ServerEditor {
   onDismissError: () => void;
 }
 
-const rowsToEnvPreview = (rows: readonly KeyValueRow[]): Record<string, string> => {
+const rowsToEnvPreview = (rows: readonly KeyValueRow[]) => {
   const env: Record<string, string> = {};
   for (const row of rows) {
     const key = row.key.trim();

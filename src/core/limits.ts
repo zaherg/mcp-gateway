@@ -18,7 +18,7 @@ export const writeJsonRpcError = (
   status: number,
   error: JsonRpcErrorBody,
   id: string | number | null = null,
-): void => {
+) => {
   if (res.headersSent || res.destroyed) return;
   const payload = Buffer.from(
     JSON.stringify({ jsonrpc: '2.0', id, error: { code: error.code, message: error.message } }),
@@ -43,7 +43,7 @@ export const readBackendLines = (
   deliver: (line: string) => void,
   fail: (error: Error) => void,
   output: () => Promise<void> | undefined,
-): void => {
+) => {
   let buffer = Buffer.alloc(0);
   let length = 0;
   let failed = false;
@@ -103,7 +103,7 @@ class BackendEventBudget {
   private lineBytes = 0;
   private afterCR = false;
 
-  push(chunk: Uint8Array): void {
+  push(chunk: Uint8Array) {
     for (const byte of chunk) {
       if (this.afterCR && byte === 10) {
         this.afterCR = false;
@@ -125,7 +125,7 @@ class BackendEventBudget {
 export const boundedBackendResponse = (
   response: Response,
   onLimit?: (error: BackendOutputLimitError) => void,
-): Response => {
+) => {
   if (!response.body) return response;
   const reader = response.body.getReader();
   const type = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase();
@@ -213,12 +213,12 @@ export class BackendCalls {
   constructor(private readonly limit = MAX_BACKEND_CALLS) {}
 
   /** A fresh ownership identity; never reused after its cleanup. */
-  owner(): WorkOwner {
+  owner() {
     return Object.freeze({});
   }
 
   /** Whether this owner already holds a reservation for the exact id. */
-  holds(owner: WorkOwner, id: string | number): boolean {
+  holds(owner: WorkOwner, id: string | number) {
     return this.owned.get(owner)?.has(id) === true;
   }
 
@@ -226,7 +226,7 @@ export class BackendCalls {
    * Charge one in-flight request. A duplicate id is refused rather than
    * charged twice; callers must not dispatch it a second time.
    */
-  admit(owner: WorkOwner, id: string | number): boolean {
+  admit(owner: WorkOwner, id: string | number) {
     let calls = this.owned.get(owner);
     if (calls?.has(id)) return false;
     if (this.used >= this.limit) return false;
@@ -240,7 +240,7 @@ export class BackendCalls {
   }
 
   /** Release a call this owner was charged for; unknown ids release nothing. */
-  settle(owner: WorkOwner, id: string | number): boolean {
+  settle(owner: WorkOwner, id: string | number) {
     const calls = this.owned.get(owner);
     if (!calls?.delete(id)) return false;
     this.used--;
@@ -249,7 +249,7 @@ export class BackendCalls {
   }
 
   /** Release everything an owner still holds, only after confirmed cleanup. */
-  settleOwner(owner: WorkOwner): number {
+  settleOwner(owner: WorkOwner) {
     const calls = this.owned.get(owner);
     if (!calls) return 0;
     this.owned.delete(owner);
@@ -262,10 +262,7 @@ export class BackendCalls {
  * Run `release` only when the owned cleanup fulfilled. A rejected cleanup is
  * unconfirmed and keeps its work charged for a retry.
  */
-export const releaseAfterCleanup = async <T>(
-  cleanup: Promise<T>,
-  release: () => void,
-): Promise<T> => {
+export const releaseAfterCleanup = async <T>(cleanup: Promise<T>, release: () => void) => {
   const value = await cleanup;
   release();
   return value;
@@ -277,7 +274,7 @@ export class ResourceAdmission {
 
   constructor(private readonly limit: number) {}
 
-  acquire(): ResourceLease | undefined {
+  acquire() {
     if (this.used >= this.limit) return undefined;
     this.used++;
     let released = false;
@@ -306,7 +303,7 @@ export const readRequestBody = async (
   request: IncomingMessage,
   limit: number,
   signal: AbortSignal,
-): Promise<void> => {
+) => {
   try {
     const mime = new MIMEType(request.headers['content-type'] ?? '');
     if (

@@ -19,7 +19,7 @@ interface CopiedClientConfig {
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-const parseJsonRpcResponse = async (response: Response): Promise<Record<string, unknown>> => {
+const parseJsonRpcResponse = async (response: Response) => {
   const contentType = response.headers.get('content-type') ?? '';
   const text = await response.text();
   if (contentType.includes('text/event-stream')) {
@@ -38,7 +38,7 @@ const postModernJsonRpc = (
   url: string,
   headers: Record<string, string>,
   body: { jsonrpc: '2.0'; id: number | string; method: string; params?: Record<string, unknown> },
-): Promise<Response> => {
+) => {
   const toolName = typeof body.params?.name === 'string' ? body.params.name : undefined;
   return fetch(url, {
     method: 'POST',

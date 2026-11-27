@@ -4,7 +4,7 @@ type ChangelogBlock =
   | { kind: 'list'; items: string[] };
 
 /** The body of the dated `## [version] - YYYY-MM-DD` section, or null when there is none. */
-export const changelogSection = (changelog: string, version: string): string | null => {
+export const changelogSection = (changelog: string, version: string) => {
   const heading = new RegExp(
     `^## \\[${version.replaceAll('.', '\\.')}\\] - \\d{4}-\\d{2}-\\d{2}$`,
     'm',
@@ -17,7 +17,7 @@ export const changelogSection = (changelog: string, version: string): string | n
 };
 
 /** Splits a section into `###` headings, `- ` lists with indented continuation lines, and paragraphs. */
-export const changelogBlocks = (section: string): ChangelogBlock[] => {
+export const changelogBlocks = (section: string) => {
   const blocks: ChangelogBlock[] = [];
   for (const line of section.split('\n')) {
     const last = blocks.at(-1);

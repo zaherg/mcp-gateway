@@ -35,7 +35,7 @@ interface I18nProvider {
 
 export const I18nProvider = ({ children }: I18nProvider) => {
   // Until the first snapshot names the saved choice, follow the WebView's languages.
-  const [locale, setLocale] = useState<Locale>(() => resolveLocale(navigator.languages));
+  const [locale, setLocale] = useState(() => resolveLocale(navigator.languages));
   useLayoutEffect(() => {
     document.documentElement.lang = localeTag(locale);
   }, [locale]);
@@ -59,7 +59,7 @@ export const I18nProvider = ({ children }: I18nProvider) => {
   return <I18nContext value={value}>{children}</I18nContext>;
 };
 
-export const useI18n = (): I18n => {
+export const useI18n = () => {
   const value = useContext(I18nContext);
   if (!value) throw new Error('useI18n must be used inside I18nProvider.');
   return value;

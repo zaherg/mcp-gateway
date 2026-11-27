@@ -3,7 +3,7 @@ import { GlobalWindow } from 'happy-dom';
 
 let activeWindow: GlobalWindow | null = null;
 
-const ensureDialogMethods = (win: GlobalWindow): void => {
+const ensureDialogMethods = (win: GlobalWindow) => {
   const proto = win.HTMLDialogElement.prototype;
   proto.showModal = function showModal() {
     this.open = true;
@@ -16,7 +16,7 @@ const ensureDialogMethods = (win: GlobalWindow): void => {
 };
 
 /** Unmounts rendered React trees and clears the active document body. */
-export const cleanupDom = (): void => {
+export const cleanupDom = () => {
   cleanup();
   if (typeof document !== 'undefined' && document.body) {
     document.body.innerHTML = '';
@@ -27,7 +27,7 @@ export const cleanupDom = (): void => {
  * Installs a Happy-DOM window and browser globals on `globalThis` for opt-in DOM tests.
  * Returns a `cleanupDom` function for per-test teardown.
  */
-export const installDomEnvironment = (): (() => void) => {
+export const installDomEnvironment = () => {
   if (activeWindow) {
     void activeWindow.happyDOM?.cancelAsync?.();
   }
@@ -35,7 +35,7 @@ export const installDomEnvironment = (): (() => void) => {
   activeWindow = win;
   ensureDialogMethods(win);
 
-  const globals: Record<string, unknown> = {
+  const globals = {
     window: win,
     document: win.document,
     navigator: win.navigator,

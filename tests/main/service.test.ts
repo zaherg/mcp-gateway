@@ -28,7 +28,7 @@ import { deferred, flushMicrotasks, registerTempDirLifecycle } from '../helpers/
 type LocalUpdateInfo = Awaited<ReturnType<typeof Updater.getLocalInfo>>;
 type UpdateInfo = ReturnType<typeof Updater.updateInfo>;
 
-const makeUpdateInfo = (overrides: Partial<UpdateInfo> = {}): UpdateInfo => ({
+const makeUpdateInfo = (overrides: Partial<UpdateInfo> = {}) => ({
   version: '',
   hash: '',
   updateAvailable: false,
@@ -56,8 +56,8 @@ const defaultSdkState = () => ({
   onStatusChangeCalls: [] as Array<((entry: UpdateStatusEntry) => void) | null>,
   appDataFolder: '',
   checkForUpdateImpl: async (): Promise<UpdateInfo> => sdkState.updateInfo,
-  downloadUpdateImpl: async (): Promise<void> => {},
-  applyUpdateImpl: async (): Promise<void> => {},
+  downloadUpdateImpl: async () => {},
+  applyUpdateImpl: async () => {},
 });
 
 let sdkState = defaultSdkState();
@@ -68,17 +68,17 @@ const emitSdkStatus = (
 
 mock.module('electrobun/main', () => ({
   Updater: {
-    getLocalInfo: async (): Promise<LocalUpdateInfo> => sdkState.localInfo,
-    updateInfo: (): UpdateInfo => sdkState.updateInfo,
-    getStatusHistory: (): UpdateStatusEntry[] => [...sdkState.statusHistory],
-    onStatusChange: (cb: ((entry: UpdateStatusEntry) => void) | null): void => {
+    getLocalInfo: async () => sdkState.localInfo,
+    updateInfo: () => sdkState.updateInfo,
+    getStatusHistory: () => [...sdkState.statusHistory],
+    onStatusChange: (cb: ((entry: UpdateStatusEntry) => void) | null) => {
       sdkState.onStatusChangeCalls.push(cb);
       sdkState.statusListener = cb;
     },
-    checkForUpdate: async (): Promise<UpdateInfo> => sdkState.checkForUpdateImpl(),
-    downloadUpdate: async (): Promise<void> => sdkState.downloadUpdateImpl(),
-    applyUpdate: async (): Promise<void> => sdkState.applyUpdateImpl(),
-    appDataFolder: async (): Promise<string> => sdkState.appDataFolder,
+    checkForUpdate: async () => sdkState.checkForUpdateImpl(),
+    downloadUpdate: async () => sdkState.downloadUpdateImpl(),
+    applyUpdate: async () => sdkState.applyUpdateImpl(),
+    appDataFolder: async () => sdkState.appDataFolder,
   },
 }));
 
@@ -115,9 +115,8 @@ const BASE_CONFIG: GatewayConfig = {
   },
 };
 
-const makeConfigText = (config: GatewayConfig = BASE_CONFIG): string =>
-  `${JSON.stringify(config, null, 2)}\n`;
-const withLoginConfig = (): GatewayConfig => ({
+const makeConfigText = (config = BASE_CONFIG) => `${JSON.stringify(config, null, 2)}\n`;
+const withLoginConfig = () => ({
   ...BASE_CONFIG,
   gateway: { ...BASE_CONFIG.gateway, launchAtLogin: true },
 });
@@ -139,11 +138,11 @@ const makeUpdateStatus = (overrides: Partial<UpdateStatus> = {}): UpdateStatus =
 const { makeTempDir } = registerTempDirLifecycle('mcp-gateway-service-test-');
 const activeSpies: Array<{ mockRestore(): void }> = [];
 const activeUpdaters: Array<InstanceType<typeof AppUpdater>> = [];
-const trackSpy = <T extends { mockRestore(): void }>(spy: T): T => {
+const trackSpy = <T extends { mockRestore(): void }>(spy: T) => {
   activeSpies.push(spy);
   return spy;
 };
-const trackUpdater = (u: InstanceType<typeof AppUpdater>): InstanceType<typeof AppUpdater> => {
+const trackUpdater = (u: InstanceType<typeof AppUpdater>) => {
   activeUpdaters.push(u);
   return u;
 };
@@ -476,7 +475,7 @@ describe('AppService — assertIdle guards, gateway control, logs, and lifecycle
     expect((await h.restartServer({ name: 'alpha' })).ok).toBe(true);
     expect(controller.restartServer.mock.calls[0]?.[0]).toBe('alpha');
 
-    const page: LogPage = { entries: [], cursor: 1, generation: 1, gap: false, hasMore: false };
+    const page = { entries: [], cursor: 1, generation: 1, gap: false, hasMore: false };
     state.logPage = page;
     expect(await h.readLogs({ after: 0 })).toEqual({ ok: true, value: page });
     expect(controller.readLogs.mock.calls).toEqual([[{ after: 0 }]]);
@@ -841,7 +840,7 @@ describe('AppService — importExternalServers security filtering & deduplicatio
       valid_cursor: { command: '/usr/bin/true' },
       self_port80: { url: 'http://127.0.0.1/mcp/alpha' },
     });
-    const port80Config: GatewayConfig = {
+    const port80Config = {
       ...BASE_CONFIG,
       gateway: { ...BASE_CONFIG.gateway, port: 80 },
     };

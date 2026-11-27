@@ -40,10 +40,9 @@ import { registerTempDirLifecycle } from '../helpers/core';
 
 const { makeTempDir } = registerTempDirLifecycle('mcp-gateway-scripts-');
 
-const sha256Hex = (data: Buffer | string): string =>
-  createHash('sha256').update(data).digest('hex');
+const sha256Hex = (data: Buffer | string) => createHash('sha256').update(data).digest('hex');
 
-const pathExists = async (target: string): Promise<boolean> => {
+const pathExists = async (target: string) => {
   try {
     await lstat(target);
     return true;
@@ -164,7 +163,7 @@ describe('scripts/build-config.ts', () => {
 
   describe('releaseOutputEnvironment', () => {
     test('populates default production and test output directories while preserving other vars', () => {
-      const baseEnv: NodeJS.ProcessEnv = { CUSTOM_FLAG: '1' };
+      const baseEnv = { CUSTOM_FLAG: '1' };
       expect(releaseOutputEnvironment('0.9.0', baseEnv, 'production')).toEqual({
         CUSTOM_FLAG: '1',
         MCP_GATEWAY_BUILD_ROOT: 'build/v0.9.0',
@@ -710,7 +709,7 @@ describe('scripts/update-artifacts.ts', () => {
 });
 
 describe('scripts/release-inventory.ts', () => {
-  const createBundleTree = async (parent: string, name: string): Promise<string> => {
+  const createBundleTree = async (parent: string, name: string) => {
     const bundle = join(parent, name);
     await mkdir(join(bundle, 'Contents/MacOS'), { recursive: true });
     await mkdir(join(bundle, 'Contents/Resources'), { recursive: true });

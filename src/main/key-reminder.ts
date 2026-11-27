@@ -15,7 +15,7 @@ export class KeyReminderStore {
   ) {}
 
   /** `existingInstall` is false on a first launch, whose new configuration needs no reminder. */
-  static async open(dataDirectory: string, existingInstall: boolean): Promise<KeyReminderStore> {
+  static async open(dataDirectory: string, existingInstall: boolean) {
     const path = join(dataDirectory, REMINDER_FILE);
     const result = await readPrivateJson(path, (record) =>
       record.retired === true ? true : undefined,
@@ -29,12 +29,12 @@ export class KeyReminderStore {
     return store;
   }
 
-  get retired(): boolean {
+  get retired() {
     return this.retiredState;
   }
 
   /** Retired for this run even if the save fails; the save failure is reported to the caller. */
-  async retire(): Promise<void> {
+  async retire() {
     if (this.retiredState) return;
     this.retiredState = true;
     await writePrivateJsonAtomic(this.path, { retired: true });

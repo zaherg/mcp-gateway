@@ -212,7 +212,7 @@ process.stdin.on('end', () => process.exit(0));
 process.on('SIGTERM', () => process.exit(0));
 `;
 
-const stdioFixtureConfig = (overrides: Partial<StdioServerConfig> = {}): StdioServerConfig => ({
+const stdioFixtureConfig = (overrides: Partial<StdioServerConfig> = {}) => ({
   command: process.execPath,
   args: ['-e', STDIO_SERVER_SCRIPT],
   ...overrides,
@@ -984,7 +984,7 @@ const writeDiscoveryReply = (
   id: string | number,
   reply: DiscoveryReply,
   format: DiscoveryFormat,
-): void => {
+) => {
   if (reply === 'reset-before-headers') {
     res.destroy();
     return;
@@ -1034,7 +1034,7 @@ describe('UpstreamDiscovery caching, retry, and 64 KiB boundary', () => {
       discoveries: () => number;
       forwarded: () => number;
     }) => Promise<void>,
-  ): Promise<void> => {
+  ) => {
     let discoveries = 0;
     let forwarded = 0;
     let recovered = false;

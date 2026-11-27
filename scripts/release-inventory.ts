@@ -12,16 +12,13 @@ interface BundleInventoryEntry {
   link?: string;
 }
 
-export const inventoryBundle = async (
-  rootPath: string,
-  signal?: AbortSignal,
-): Promise<BundleInventoryEntry[]> => {
+export const inventoryBundle = async (rootPath: string, signal?: AbortSignal) => {
   const root = resolve(rootPath);
   const rootInfo = await lstat(root);
   if (rootInfo.isSymbolicLink() || !rootInfo.isDirectory())
     throw new Error('Bundle inventory root is not a plain directory.');
   const entries: BundleInventoryEntry[] = [];
-  const visit = async (path: string): Promise<void> => {
+  const visit = async (path: string) => {
     signal?.throwIfAborted();
     const info = await lstat(path);
     const entryPath = relative(root, path) || '.';
@@ -73,7 +70,7 @@ export const compareBundleInventories = (
   expected: BundleInventoryEntry[],
   actual: BundleInventoryEntry[],
   labels = { expected: 'expected', actual: 'actual' },
-): void => {
+) => {
   const differences: string[] = [];
   const expectedByPath = new Map(expected.map((entry) => [entry.path, entry]));
   const actualByPath = new Map(actual.map((entry) => [entry.path, entry]));
@@ -97,6 +94,6 @@ export const compareBundleInventories = (
     throw new Error(`Bundle inventories differ: ${differences.slice(0, 8).join(', ')}`);
 };
 
-export const inventoryDigest = (entries: BundleInventoryEntry[]): string => {
+export const inventoryDigest = (entries: BundleInventoryEntry[]) => {
   return createHash('sha256').update(JSON.stringify(entries)).digest('hex');
 };

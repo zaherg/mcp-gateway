@@ -11,7 +11,7 @@ import { GatewayIngress, tokenMatches } from '@mcp-gateway/core/ingress';
 import { LogBuffer } from '@mcp-gateway/core/logs';
 import { checkEndpoint } from '@mcp-gateway/core/test-server';
 import { isRecord } from '@mcp-gateway/shared/config-document';
-import type { GatewayConfig, KeyStore, VisibleError } from '@mcp-gateway/shared/types';
+import type { KeyStore, VisibleError } from '@mcp-gateway/shared/types';
 import {
   deferred,
   expectAsyncGatewayError,
@@ -28,7 +28,7 @@ const activeIngresses: GatewayIngress[] = [];
 const activeServers: Server[] = [];
 const { makeTempDir } = registerTempDirLifecycle('bear-mcp-t060-02-');
 
-const reservePort = async (): Promise<number> => {
+const reservePort = async () => {
   const reservation = createServer();
   try {
     return await listen(reservation);
@@ -37,16 +37,12 @@ const reservePort = async (): Promise<number> => {
   }
 };
 
-const createTempConfigPath = async (): Promise<string> => {
+const createTempConfigPath = async () => {
   const dir = await makeTempDir();
   return join(dir, 'mcp.json');
 };
 
-const waitFor = async (
-  predicate: () => boolean,
-  description: string,
-  timeoutMs = 5_000,
-): Promise<void> => {
+const waitFor = async (predicate: () => boolean, description: string, timeoutMs = 5_000) => {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (predicate()) return;
@@ -55,10 +51,7 @@ const waitFor = async (
   throw new Error(`Timed out waiting for: ${description}`);
 };
 
-const createMemoryKeyStore = (options?: {
-  failSet?: boolean;
-  mismatchGet?: boolean;
-}): { store: KeyStore; entries: Map<string, string> } => {
+const createMemoryKeyStore = (options?: { failSet?: boolean; mismatchGet?: boolean }) => {
   const entries = new Map<string, string>();
   const store: KeyStore = {
     get: async (refs) => {
@@ -87,7 +80,7 @@ const readBodyJson = async (req: IncomingMessage): Promise<unknown> => {
 
 const startMockServer = async (
   handler: (req: IncomingMessage, res: ServerResponse) => Promise<void> | void,
-): Promise<number> => {
+) => {
   const server = createServer((req, res) => {
     void Promise.resolve(handler(req, res)).catch(() => {
       if (!res.headersSent) res.writeHead(500);
@@ -98,7 +91,7 @@ const startMockServer = async (
   return listen(server);
 };
 
-const startModernMcpUpstream = async (): Promise<number> =>
+const startModernMcpUpstream = async () =>
   startMockServer(async (req, res) => {
     if (req.method !== 'POST') {
       res.writeHead(405).end();
@@ -193,7 +186,7 @@ const buildConfig = (
     keepAwake?: boolean;
     mcpServers?: Record<string, unknown>;
   },
-): GatewayConfig =>
+) =>
   resolveKeys(
     parseConfig(
       JSON.stringify({
@@ -519,7 +512,7 @@ describe('GatewayIngress admission guards and lifecycle', () => {
   });
 
   test('enforces 32-request concurrency limit (429 on 33rd request), clientError 400 on malformed raw HTTP, and testServer guards', async () => {
-    const holdGate = deferred<void>();
+    const holdGate = deferred();
     const upstreamPort = await startMockServer(async (req, res) => {
       const message = await readBodyJson(req);
       if (!isRecord(message)) {
@@ -651,8 +644,8 @@ describe('GatewayIngress admission guards and lifecycle', () => {
     );
 
     // Concurrent testServer lock and mid-test abort on ingress.close()
-    const checkStarted = deferred<void>();
-    const checkGate = deferred<void>();
+    const checkStarted = deferred();
+    const checkGate = deferred();
     const slowUpstreamPort = await startMockServer(async (_req, res) => {
       checkStarted.resolve();
       await checkGate.promise;

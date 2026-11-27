@@ -30,9 +30,6 @@ export const readPrivateJson = async <T>(
   return value === undefined ? { status: 'invalid' } : { status: 'ok', value };
 };
 
-export const writePrivateJsonAtomic = async (
-  path: string,
-  payload: Record<string, unknown>,
-): Promise<void> => {
+export const writePrivateJsonAtomic = async (path: string, payload: Record<string, unknown>) => {
   await writePrivateTextAtomic(path, JSON.stringify({ schema_version: 1, ...payload }));
 };

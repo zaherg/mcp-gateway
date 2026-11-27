@@ -28,7 +28,7 @@ const APPLE_SECRET_ENV_NAMES = ['APPLE_ID', 'APPLE_TEAM_ID', 'APPLE_APP_PASSWORD
 export const watchCancelSignals = (
   reason: string,
   onCancel?: (signal: 'SIGINT' | 'SIGTERM') => void,
-): { signal: AbortSignal; dispose: () => void } => {
+) => {
   const controller = new AbortController();
   const handle = (signal: 'SIGINT' | 'SIGTERM') => {
     if (controller.signal.aborted) return;
@@ -52,7 +52,7 @@ export const watchCancelSignals = (
 export const redactSecrets = (
   text: string,
   extraSecrets: ReadonlyArray<string | undefined> = [],
-): string => {
+) => {
   let output = text;
   for (const secret of [
     ...APPLE_SECRET_ENV_NAMES.map((name) => process.env[name]),
@@ -68,7 +68,7 @@ export const redactSecrets = (
     .replace(/^TeamIdentifier=.*$/gm, 'TeamIdentifier=[redacted]');
 };
 
-export const redactedUrl = (raw: string): string => {
+export const redactedUrl = (raw: string) => {
   try {
     const url = new URL(raw);
     return `${url.origin}${url.pathname}`;
@@ -77,18 +77,7 @@ export const redactedUrl = (raw: string): string => {
   }
 };
 
-interface UpdateManifest {
-  schemaVersion: 1;
-  identifier: string;
-  channel: 'stable';
-  version: string;
-  hash: string;
-  platform: 'macos';
-  arch: 'arm64';
-  artifact: { file: string; tarSha256?: string; tarSize?: number };
-}
-
-const record = (value: unknown): Record<string, unknown> => {
+const record = (value: unknown) => {
   if (typeof value !== 'object' || value === null || Array.isArray(value))
     throw new Error('Update metadata must be an object.');
   return value as Record<string, unknown>;
@@ -103,7 +92,7 @@ export const verifyEmbeddedMetadata = (
     hash?: string;
     baseUrl?: string;
   },
-): void => {
+) => {
   let value: unknown;
   try {
     value = JSON.parse(text);
@@ -124,7 +113,7 @@ export const verifyEmbeddedMetadata = (
     throw new Error('Embedded metadata does not match the expected release identity or manifest.');
 };
 
-const parseManifest = (text: string, identifier: string, version?: string): UpdateManifest => {
+const parseManifest = (text: string, identifier: string, version?: string) => {
   const { updates } = releaseFiles(identifier);
   let value: unknown;
   try {
@@ -164,7 +153,7 @@ const parseManifest = (text: string, identifier: string, version?: string): Upda
   };
 };
 
-export const hashFile = async (path: string, signal?: AbortSignal): Promise<string> => {
+export const hashFile = async (path: string, signal?: AbortSignal) => {
   const digest = createHash('sha256');
   for await (const chunk of createReadStream(path)) {
     signal?.throwIfAborted();

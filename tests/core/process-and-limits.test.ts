@@ -19,10 +19,9 @@ import {
   writeJsonRpcError,
 } from '@mcp-gateway/core/limits';
 import { BackendProcesses, childEnvironment, createCommandRunner } from '@mcp-gateway/core/process';
-import type { GatewayLogger } from '@mcp-gateway/core/sessions';
 import { deferred } from '../helpers/core';
 
-const createTestLogger = (): GatewayLogger => ({
+const createTestLogger = () => ({
   info: () => {},
   debug: () => {},
   warn: () => {},
@@ -44,7 +43,7 @@ const readFirstLine = (stream: Readable): Promise<string> =>
     stream.once('error', reject);
   });
 
-const isProcessGone = (targetPid: number): boolean => {
+const isProcessGone = (targetPid: number) => {
   try {
     process.kill(targetPid, 0);
     return false;
@@ -53,7 +52,7 @@ const isProcessGone = (targetPid: number): boolean => {
   }
 };
 
-const forceKill = (targetPid: number): void => {
+const forceKill = (targetPid: number) => {
   try {
     process.kill(targetPid, 'SIGKILL');
   } catch {
@@ -68,10 +67,7 @@ interface MockResponseState {
   body: Buffer | undefined;
 }
 
-const createMockResponse = (options?: {
-  headersSent?: boolean;
-  destroyed?: boolean;
-}): MockResponseState => {
+const createMockResponse = (options?: { headersSent?: boolean; destroyed?: boolean }) => {
   const headers = new Map<string, string>();
   const state: MockResponseState = {
     res: null as unknown as ServerResponse,
@@ -98,7 +94,7 @@ const createMockResponse = (options?: {
 const createMockRequest = (
   contentType: string | undefined,
   chunks: readonly (Buffer | string)[],
-): IncomingMessage & { body?: unknown } => {
+) => {
   const stream = new PassThrough();
   const req = Object.assign(stream, {
     headers: contentType === undefined ? {} : { 'content-type': contentType },
@@ -112,7 +108,7 @@ const createMockRequest = (
   return req;
 };
 
-const streamFromChunks = (chunks: readonly Uint8Array[]): ReadableStream<Uint8Array> =>
+const streamFromChunks = (chunks: readonly Uint8Array[]) =>
   new ReadableStream<Uint8Array>({
     start(controller) {
       for (const chunk of chunks) controller.enqueue(chunk);
@@ -123,7 +119,7 @@ const streamFromChunks = (chunks: readonly Uint8Array[]): ReadableStream<Uint8Ar
 const expectRequestBodyErrorStatus = async (
   promise: Promise<unknown>,
   expectedStatus: 400 | 413 | 415,
-): Promise<void> => {
+) => {
   try {
     await promise;
     throw new Error(`Expected RequestBodyError(${expectedStatus}) but resolved`);
@@ -135,7 +131,7 @@ const expectRequestBodyErrorStatus = async (
 
 describe('src/core/process.ts — environment isolation', () => {
   test('childEnvironment filters parentEnv, overlays serverEnv, strips blocked keys, and never mutates inputs', () => {
-    const parentEnv: NodeJS.ProcessEnv = {
+    const parentEnv = {
       PATH: '/usr/bin:/bin',
       HOME: '/Users/tester',
       LC_ALL: 'en_US.UTF-8',
@@ -146,7 +142,7 @@ describe('src/core/process.ts — environment isolation', () => {
       NODE_OPTIONS: '--inspect',
       TERM: undefined,
     };
-    const serverEnv: Record<string, string> = {
+    const serverEnv = {
       PATH: '/custom/bin:/usr/bin',
       CUSTOM_API_URL: 'https://example.internal',
       NODE_OPTIONS: '--max-old-space-size=4096',

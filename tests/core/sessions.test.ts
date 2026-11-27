@@ -110,7 +110,7 @@ if (process.env.SPAWN_MARKER_FILE) {
 process.exit(0);
 `;
 
-const isProcessGone = (pid: number): boolean => {
+const isProcessGone = (pid: number) => {
   try {
     process.kill(pid, 0);
     return false;
@@ -119,11 +119,7 @@ const isProcessGone = (pid: number): boolean => {
   }
 };
 
-const waitFor = async (
-  predicate: () => boolean,
-  description: string,
-  timeoutMs = 5_000,
-): Promise<void> => {
+const waitFor = async (predicate: () => boolean, description: string, timeoutMs = 5_000) => {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (predicate()) return;
@@ -146,7 +142,7 @@ const parseResponseMessages = async (response: Response): Promise<unknown[]> => 
 const readUntilSseMessage = async (
   reader: ReadableStreamDefaultReader<Uint8Array>,
   timeoutMs = 5_000,
-): Promise<unknown> => {
+) => {
   const decoder = new TextDecoder('utf8');
   let buffer = '';
   const deadline = Date.now() + timeoutMs;
@@ -182,7 +178,7 @@ const postJson = (
   body: unknown,
   headers: Record<string, string> = {},
   signal?: AbortSignal,
-): Promise<Response> =>
+) =>
   fetch(url, {
     method: 'POST',
     signal: signal ?? AbortSignal.timeout(5_000),

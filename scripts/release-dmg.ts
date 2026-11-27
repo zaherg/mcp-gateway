@@ -9,7 +9,7 @@ interface DmgCleanup {
   detail: string;
 }
 
-const object = (value: unknown): Record<string, unknown> => {
+const object = (value: unknown) => {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new Error('DMG mount inspection returned invalid data.');
   return value as Record<string, unknown>;
@@ -25,7 +25,7 @@ export const withDmgMount = async <T>(
     signal?: AbortSignal;
     onCleanup?: (result: DmgCleanup) => void;
   } = {},
-): Promise<T> => {
+) => {
   const run = options.run ?? runCommand;
   const image = await realpath(imagePath);
   options.signal?.throwIfAborted();
@@ -37,7 +37,7 @@ export const withDmgMount = async <T>(
   let attachConfirmed = false;
   let outcome: { ok: true; value: T } | { ok: false; error: unknown };
 
-  const mounted = async (): Promise<boolean> => {
+  const mounted = async () => {
     const info = await run('/usr/bin/hdiutil', ['info', '-plist'], 15_000);
     if (info.exitCode !== 0) throw new Error('DMG mount inspection failed.');
     await writeFile(plist, info.stdout, { mode: 0o600 });

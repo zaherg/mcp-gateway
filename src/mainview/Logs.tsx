@@ -13,7 +13,7 @@ import type { AppClient } from '@mcp-gateway/shared/rpc';
 import { LOG_LEVELS, LOG_LIMITS, type LogEntry, type LogLevel } from '@mcp-gateway/shared/types';
 
 // Bounds the wait only. Callers discard a late answer with their own cancelled and generation checks.
-const logRequest = async <T,>(pending: Promise<T>): Promise<T> => {
+const logRequest = async <T,>(pending: Promise<T>) => {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
@@ -33,7 +33,7 @@ const logRequest = async <T,>(pending: Promise<T>): Promise<T> => {
 // Each entry is measured once, when it first reaches the trimming step.
 const encoder = new TextEncoder();
 const entrySizes = new WeakMap<LogEntry, number>();
-const entrySize = (entry: LogEntry): number => {
+const entrySize = (entry: LogEntry) => {
   let size = entrySizes.get(entry);
   if (size === undefined) {
     size = encoder.encode(JSON.stringify(entry)).byteLength + 1;

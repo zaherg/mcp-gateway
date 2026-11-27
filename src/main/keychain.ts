@@ -12,7 +12,7 @@ const UNREADABLE =
 const UNWRITABLE = 'A key could not be stored in Keychain.';
 
 // A locked Keychain can wait on a system prompt; the app stops waiting but the prompt may remain.
-const withDeadline = <A>(work: () => Promise<A>, error: () => Error): Promise<A> => {
+const withDeadline = <A>(work: () => Promise<A>, error: () => Error) => {
   let timer: ReturnType<typeof setTimeout> | undefined;
   return Promise.race([
     work(),
@@ -22,7 +22,7 @@ const withDeadline = <A>(work: () => Promise<A>, error: () => Error): Promise<A>
   ]).finally(() => clearTimeout(timer));
 };
 
-const defaultNativeLibraryPath = (): string | undefined => {
+const defaultNativeLibraryPath = () => {
   const candidates = [
     resolve(import.meta.dir, '../../.cache/native/login.dylib'),
     resolve(import.meta.dir, '../native/login.dylib'),

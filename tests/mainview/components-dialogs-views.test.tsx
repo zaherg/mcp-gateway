@@ -29,7 +29,6 @@ import type {
   ConfigFile,
   KeyMigration as KeyMigrationSlots,
   LogEntry,
-  LogPage,
 } from '@mcp-gateway/shared/types';
 import { cleanupDom, installDomEnvironment } from '../helpers/dom';
 import {
@@ -80,21 +79,21 @@ const deferred = <T,>() => {
 
 // Click the wrapping <label> rather than the nested Base UI <span role="switch"> so the click
 // triggers Base UI's hidden checkbox once instead of bubbling from span -> label -> checkbox twice.
-const getToggleControl = (container: HTMLElement, label: string): HTMLElement => {
+const getToggleControl = (container: HTMLElement, label: string) => {
   const strong = within(container).getByText(label);
   const labelEl = strong.closest('label');
   if (!labelEl) throw new Error(`Toggle label not found for "${label}"`);
   return labelEl;
 };
 
-const must = <T,>(value: T | null | undefined, label = 'value'): T => {
+const must = <T,>(value: T | null | undefined, label = 'value') => {
   if (value === null || value === undefined) {
     throw new Error(`Expected ${label} to be defined`);
   }
   return value;
 };
 
-const lastSavedConfig = (bundle: MockClientBundle): ConfigFile =>
+const lastSavedConfig = (bundle: MockClientBundle) =>
   JSON.parse(must(bundle.calls.saveConfig.at(-1), 'saveConfig call').text) as ConfigFile;
 
 const StatefulServerEditor = ({
@@ -110,7 +109,7 @@ const StatefulServerEditor = ({
   onClose: () => void;
   onSubmitted: (editor: Editor) => void;
 }) => {
-  const [editor, setEditor] = useState<Editor>(initial);
+  const [editor, setEditor] = useState(initial);
   const [editorError, setEditorError] = useState<string | null>(null);
   return (
     <ServerEditor
@@ -139,7 +138,7 @@ const renderWithGateway = (client: AppClient, ui: ReactNode) =>
     </I18nProvider>,
   );
 
-const getCodeMirrorView = (container: HTMLElement): EditorView => {
+const getCodeMirrorView = (container: HTMLElement) => {
   const cmEditor = must(
     container.querySelector('.raw-code-editor .cm-editor') as HTMLElement | null,
     '.cm-editor',
@@ -668,7 +667,7 @@ describe('Dialogs (KeyMigration, WhatsNew, ServerEditor)', () => {
       return moveShouldSucceed;
     });
 
-    const initialSlots: KeyMigrationSlots = { gateway: true, servers: ['bear', 'linear'] };
+    const initialSlots = { gateway: true, servers: ['bear', 'linear'] };
     const view = renderWithI18n(
       <KeyMigration
         slots={initialSlots}
@@ -1635,12 +1634,12 @@ describe('Views: Overview, Settings, Updates, Logs', () => {
     let clearCalls = 0;
     let clearMode: 'fail-result' | 'throw' | 'ok' = 'fail-result';
     let currentGeneration = 1;
-    let ringEntries: LogEntry[] = entries;
+    let ringEntries = entries;
     const scheduledPoll: { current: (() => void) | null } = { current: null };
     const realSetTimeout = globalThis.setTimeout;
 
     const mockBundle = createMockAppClient(makeSnapshot(), {
-      readLogs: async (params): Promise<AppResult<LogPage>> => {
+      readLogs: async (params) => {
         readCalls += 1;
         if (readCalls === 1) {
           return {
@@ -1683,7 +1682,7 @@ describe('Views: Overview, Settings, Updates, Logs', () => {
           },
         };
       },
-      clearLogs: async (): Promise<AppResult<LogPage>> => {
+      clearLogs: async () => {
         clearCalls += 1;
         if (clearMode === 'fail-result') {
           return {

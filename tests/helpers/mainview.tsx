@@ -14,7 +14,7 @@ export const DEFAULT_REVISION = 'rev-1';
 export const SECOND_REVISION = 'rev-2';
 export const THIRD_REVISION = 'rev-3';
 
-export const setNavigatorLanguages = (languages: readonly string[]): void => {
+export const setNavigatorLanguages = (languages: readonly string[]) => {
   Object.defineProperty(navigator, 'languages', {
     configurable: true,
     value: languages,
@@ -25,7 +25,7 @@ export const setNavigatorLanguages = (languages: readonly string[]): void => {
 // so React DOM may initialize with `isInputEventSupported = false` (its input-event polyfill
 // watches `focus` + `keyup` via `getInstIfValueChanged`). Focusing, setting value, and firing
 // `keyUp` triggers React's `onChange` exactly once in both native and polyfill modes.
-export const setInputValue = (element: HTMLElement, value: string): void => {
+export const setInputValue = (element: HTMLElement, value: string) => {
   fireEvent.focus(element);
   fireEvent.change(element, { target: { value } });
   fireEvent.keyUp(element, { key: 'Unidentified' });
@@ -45,7 +45,7 @@ export const makeUpdateStatus = (overrides: Partial<UpdateStatus> = {}): UpdateS
 export const makeConfigText = (
   servers: Record<string, unknown> = {},
   gatewayOverrides: Record<string, unknown> = {},
-): string =>
+) =>
   JSON.stringify(
     {
       gateway: {
@@ -181,7 +181,7 @@ export const createMockAppClient = (
     updatesSetAutomatic: [],
   };
 
-  const emitSnapshot = (next: AppSnapshot): void => {
+  const emitSnapshot = (next: AppSnapshot) => {
     currentSnapshot = next;
     for (const listener of snapshotListeners) listener(next);
   };
@@ -199,7 +199,7 @@ export const createMockAppClient = (
     saveConfig: async (params) => {
       calls.saveConfig.push(params);
       revisionCounter += 1;
-      const updated: AppSnapshot = {
+      const updated = {
         ...currentSnapshot,
         gateway: {
           ...currentSnapshot.gateway,
@@ -230,7 +230,7 @@ export const createMockAppClient = (
     quit: () => unusedError('quit'),
     quitStatus: () => unusedError('quitStatus'),
     start: async () => {
-      const next: AppSnapshot = {
+      const next = {
         ...currentSnapshot,
         gateway: { ...currentSnapshot.gateway, running: true },
       };
@@ -238,7 +238,7 @@ export const createMockAppClient = (
       return { ok: true, value: next };
     },
     stop: async () => {
-      const next: AppSnapshot = {
+      const next = {
         ...currentSnapshot,
         gateway: { ...currentSnapshot.gateway, running: false },
       };
@@ -256,7 +256,7 @@ export const createMockAppClient = (
     migrateKeys: async (params) => {
       calls.migrateKeys.push(params);
       revisionCounter += 1;
-      const next: AppSnapshot = {
+      const next = {
         ...currentSnapshot,
         gateway: {
           ...currentSnapshot.gateway,
@@ -269,7 +269,7 @@ export const createMockAppClient = (
     },
     dismissKeyReminder: async () => {
       calls.dismissKeyReminder += 1;
-      const next: AppSnapshot = { ...currentSnapshot, keyReminder: false };
+      const next = { ...currentSnapshot, keyReminder: false };
       emitSnapshot(next);
       return { ok: true, value: next };
     },
@@ -333,8 +333,8 @@ export const createMockAppClient = (
     },
     setLanguage: async (params) => {
       calls.setLanguage.push(params);
-      const nextLocale: Locale = params.preference === 'system' ? 'en_US' : params.preference;
-      const next: AppSnapshot = {
+      const nextLocale = params.preference === 'system' ? 'en_US' : params.preference;
+      const next = {
         ...currentSnapshot,
         language: {
           ...currentSnapshot.language,

@@ -7,7 +7,7 @@ import { createCommandRunner } from '@mcp-gateway/core/process';
 const root = resolve(import.meta.dir, '..');
 export const ELECTROBUN_CLI = resolve(root, 'node_modules/electrobun/bin/electrobun.cjs');
 
-const validateBuildHost = (): void => {
+const validateBuildHost = () => {
   if (process.platform !== 'darwin' || process.arch !== 'arm64')
     throw new Error(`Unsupported build host: ${process.platform}/${process.arch}.`);
 };
@@ -30,13 +30,7 @@ export const buildPlan = (mode: string | undefined) => {
   return { ...MODES[mode], mode };
 };
 
-const createToolchainEnvironment = (
-  environment: NodeJS.ProcessEnv = process.env,
-): NodeJS.ProcessEnv & {
-  HUTCH_HOME: string;
-  TMPDIR: string;
-  BUN_INSTALL_CACHE_DIR: string;
-} => {
+const createToolchainEnvironment = (environment: NodeJS.ProcessEnv = process.env) => {
   const temporaryDirectory = resolve(root, '.cache/tmp');
   return {
     ...environment,
@@ -90,7 +84,7 @@ export const captureCommand = async (
 export const runCheckedCommand = async (
   args: readonly [string, ...string[]],
   options?: { env?: NodeJS.ProcessEnv; timeoutMs?: number; maxOutputBytes?: number },
-): Promise<string> => {
+) => {
   const result = await captureCommand(args, options);
   const text = `${result.stdout}${result.stderr}`;
   if (result.exitCode !== 0) throw new Error(`Command failed: ${args.join(' ')}\n${text.trim()}`);

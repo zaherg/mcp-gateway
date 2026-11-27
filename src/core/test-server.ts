@@ -2,13 +2,9 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 
 import { MODERN_VERSION } from '@mcp-gateway/core/adapter';
 import { isDisallowedUpstreamUrl, isHttpServer } from '@mcp-gateway/core/config';
-import { failure, type GatewayError } from '@mcp-gateway/core/errors';
+import { failure } from '@mcp-gateway/core/errors';
 import { boundedBackendResponse } from '@mcp-gateway/core/limits';
-import type {
-  HttpServerConfig,
-  ServerCheckResult,
-  StdioServerConfig,
-} from '@mcp-gateway/shared/types';
+import type { HttpServerConfig, StdioServerConfig } from '@mcp-gateway/shared/types';
 
 // Matches the gateway's own request deadline.
 const CHECK_MS = 30_000;
@@ -37,7 +33,7 @@ interface HandshakeReply {
   code: number | undefined;
 }
 
-const jsonRpcErrorCode = (text: string): number | undefined => {
+const jsonRpcErrorCode = (text: string) => {
   try {
     const code = (JSON.parse(text) as { error?: { code?: unknown } } | null)?.error?.code;
     return typeof code === 'number' ? code : undefined;
@@ -47,7 +43,7 @@ const jsonRpcErrorCode = (text: string): number | undefined => {
   }
 };
 
-const commandAdvice = (server: StdioServerConfig): string =>
+const commandAdvice = (server: StdioServerConfig) =>
   // The launcher looks the command up in the server's PATH, else the app's own.
   Bun.which(server.command, { PATH: server.env?.PATH ?? process.env.PATH, cwd: server.cwd }) ===
   null
@@ -60,7 +56,7 @@ const explainFailure = (
   server: StdioServerConfig | HttpServerConfig,
   reply: HandshakeReply,
   { cancelled, timedOut }: { cancelled: boolean; timedOut: boolean },
-): GatewayError => {
+) => {
   if (cancelled)
     return failure('Cancelled', 'The test stopped because the gateway or this server changed.');
   if (timedOut || reply.status === 504)
@@ -91,12 +87,7 @@ const explainFailure = (
 };
 
 /** Sends the handshake a client would send, through the gateway's own route and policy. */
-export const checkEndpoint = async ({
-  url,
-  token,
-  server,
-  stopped,
-}: EndpointCheck): Promise<ServerCheckResult> => {
+export const checkEndpoint = async ({ url, token, server, stopped }: EndpointCheck) => {
   if (isDisallowedUpstreamUrl(url))
     throw failure(
       'NetworkPolicy',

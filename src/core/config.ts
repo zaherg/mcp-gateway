@@ -22,7 +22,6 @@ import { anyNumber, ownRecord } from '@mcp-gateway/core/schema';
 import {
   CONFIG_TOO_LARGE,
   type ConfigFormat,
-  type ConfigIssue,
   configFormat,
   configRange,
   hasUnmigratedSecretLiterals,
@@ -36,7 +35,6 @@ import type {
   ConfigFile,
   GatewayConfig,
   HttpServerConfig,
-  KeyMigration,
   KeySlot,
   StdioServerConfig,
 } from '@mcp-gateway/shared/types';
@@ -91,7 +89,7 @@ const invalid: (message?: string) => never = (
 };
 
 /** Whether a URL hostname targets link-local (169.254.0.0/16, fe80::/10) or unspecified (0.0.0.0/8). */
-export const isDisallowedUpstreamUrl = (url: URL): boolean => {
+export const isDisallowedUpstreamUrl = (url: URL) => {
   const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
   const v4 = ipv4Number(host);
   if (v4 !== null) {
@@ -99,14 +97,6 @@ export const isDisallowedUpstreamUrl = (url: URL): boolean => {
   }
   return /^fe[89ab][0-9a-f]:/i.test(host) || host === '::';
 };
-
-/** A fixed, range-bearing explanation of the first structural configuration problem. */
-interface StructureIssue {
-  message: string;
-  path: JSONPath;
-  /** Point at the property name instead of its value, for unknown properties. */
-  key?: boolean;
-}
 
 const UNKNOWN_PROPERTY = 'An unknown property is present; remove or rename it.';
 const MISSING_PROPERTY = 'A required property is missing.';
@@ -117,7 +107,7 @@ const SERVER_TRANSPORT = 'A server entry must use either command fields or URL f
 const SERVERS_OBJECT = 'Servers must be an object with one entry per server.';
 
 /** Whether the parsed document has an entry at `path`; JSON cannot hold `undefined`. */
-const pathExists = (value: unknown, path: JSONPath): boolean => {
+const pathExists = (value: unknown, path: JSONPath) => {
   let current = value;
   for (const segment of path) {
     if (current === null || typeof current !== 'object') return false;
@@ -136,7 +126,7 @@ const pathExists = (value: unknown, path: JSONPath): boolean => {
 const isUnrecognizedKeys = (issue: z.core.$ZodIssue): issue is z.core.$ZodIssueUnrecognizedKeys =>
   issue.code === 'unrecognized_keys';
 
-const issuePath = (issue: z.core.$ZodIssue, base: JSONPath): JSONPath | null => {
+const issuePath = (issue: z.core.$ZodIssue, base: JSONPath) => {
   const path: JSONPath = [...base];
   for (const segment of issue.path) {
     if (typeof segment !== 'string' && typeof segment !== 'number') return null;
@@ -145,11 +135,7 @@ const issuePath = (issue: z.core.$ZodIssue, base: JSONPath): JSONPath | null => 
   return path;
 };
 
-const describeIssue = (
-  issue: z.core.$ZodIssue,
-  base: JSONPath,
-  root: unknown,
-): StructureIssue | null => {
+const describeIssue = (issue: z.core.$ZodIssue, base: JSONPath, root: unknown) => {
   const path = issuePath(issue, base);
   if (!path) return null;
   if (path.length === 0 && issue.code === 'invalid_type') return { message: ROOT_OBJECT, path };
@@ -174,11 +160,11 @@ const describeIssue = (
   return { message: WRONG_PROPERTY, path };
 };
 
-const preferredIssue = (issues: readonly z.core.$ZodIssue[]): z.core.$ZodIssue | undefined => {
+const preferredIssue = (issues: readonly z.core.$ZodIssue[]) => {
   return issues.find((issue) => issue.code === 'unrecognized_keys') ?? issues[0];
 };
 
-const serverIssue = (entry: unknown, path: JSONPath, root: unknown): StructureIssue | null => {
+const serverIssue = (entry: unknown, path: JSONPath, root: unknown) => {
   if (!isRecord(entry)) return { message: SERVER_ENTRY, path };
   const http = Object.hasOwn(entry, 'url');
   if (http && Object.hasOwn(entry, 'command')) return { message: SERVER_TRANSPORT, path };
@@ -200,7 +186,7 @@ const serverIssue = (entry: unknown, path: JSONPath, root: unknown): StructureIs
 };
 
 /** Explains a schema failure using the same schemas and rules as the authoritative parse. */
-const structureIssue = (value: unknown): StructureIssue | null => {
+const structureIssue = (value: unknown) => {
   const result = ConfigSchema.safeParse(value);
   if (result.success) return null;
   const issue = preferredIssue(result.error.issues);
@@ -225,11 +211,11 @@ const REFERENCE = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/;
 // A lowercase UUID v4 from crypto.randomUUID(), the only IDs main creates.
 const KEY_REF = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const MAX_ALLOWED_PEERS = 16;
-const assertToken = (token: string, message: string): void => {
+const assertToken = (token: string, message: string) => {
   if (!TOKEN_PATTERN.test(token)) invalid(message);
 };
 
-const expand = (value: string, environment: NodeJS.ProcessEnv): string => {
+const expand = (value: string, environment: NodeJS.ProcessEnv) => {
   const result = value.replace(new RegExp(REFERENCE, 'g'), (_match, name: string) => {
     // Only an own entry: `${constructor}` must not resolve to an inherited Object member.
     const replacement = Object.hasOwn(environment, name) ? environment[name] : undefined;
@@ -247,7 +233,7 @@ export const isHttpServer = (
 };
 
 /** A slot holds a key or a reference, never both; a key is expanded and checked. */
-const checkSlot = (slot: KeySlot, map: (value: string) => string, message: string): void => {
+const checkSlot = (slot: KeySlot, map: (value: string) => string, message: string) => {
   if (slot.token !== undefined && slot.tokenRef !== undefined)
     invalid('A key cannot have both token and tokenRef; keep one.');
   if (slot.tokenRef !== undefined && !KEY_REF.test(slot.tokenRef))
@@ -258,7 +244,7 @@ const checkSlot = (slot: KeySlot, map: (value: string) => string, message: strin
   }
 };
 
-const validateConfig = (value: unknown, environment: NodeJS.ProcessEnv): ConfigFile => {
+const validateConfig = (value: unknown, environment: NodeJS.ProcessEnv) => {
   let config: ConfigFile;
   try {
     config = ConfigSchema.parse(value);
@@ -364,9 +350,9 @@ const validateConfig = (value: unknown, environment: NodeJS.ProcessEnv): ConfigF
  */
 export const parseConfig = (
   text: string,
-  environment: NodeJS.ProcessEnv = process.env,
+  environment = process.env,
   format: ConfigFormat = 'json',
-): ConfigFile => {
+) => {
   if (Buffer.byteLength(text) > MAX_CONFIG_BYTES) invalid(CONFIG_TOO_LARGE);
   let value: unknown;
   try {
@@ -383,9 +369,9 @@ export const parseConfig = (
  */
 export const parseConfigWithSlots = (
   text: string,
-  environment: NodeJS.ProcessEnv = process.env,
+  environment = process.env,
   format: ConfigFormat = 'json',
-): { file: ConfigFile; slots: KeyMigration } => {
+) => {
   if (Buffer.byteLength(text) > MAX_CONFIG_BYTES) invalid(CONFIG_TOO_LARGE);
   const parsed = parseConfigTree(text, format);
   if (!parsed.ok) invalid();
@@ -400,9 +386,9 @@ export const parseConfigWithSlots = (
  */
 export const previewConfig = (
   text: string,
-  environment: NodeJS.ProcessEnv = process.env,
+  environment = process.env,
   format: ConfigFormat = 'json',
-): ConfigIssue | null => {
+) => {
   if (Buffer.byteLength(text) > MAX_CONFIG_BYTES) return { message: CONFIG_TOO_LARGE };
   const parsed = parseConfigTree(text, format);
   if (!parsed.ok) return parsed.issue;
@@ -423,18 +409,15 @@ export const previewConfig = (
 };
 
 /** Every stored-key ID the file references, each once. */
-export const keyRefs = (config: ConfigFile): string[] => [
+export const keyRefs = (config: ConfigFile) => [
   ...new Set(
     [config.gateway, ...Object.values(config.mcpServers)].flatMap((slot) => slot.tokenRef ?? []),
   ),
 ];
 
 /** Replaces each reference with its key; `keys` holds every ID from keyRefs. Pure and synchronous. */
-export const resolveKeys = (
-  config: ConfigFile,
-  keys: ReadonlyMap<string, string>,
-): GatewayConfig => {
-  const resolve = <S extends KeySlot>(slot: S): S => {
+export const resolveKeys = (config: ConfigFile, keys: ReadonlyMap<string, string>) => {
+  const resolve = <S extends KeySlot>(slot: S) => {
     if (slot.tokenRef === undefined) return slot;
     const token = keys.get(slot.tokenRef);
     if (token === undefined) invalid('A referenced key was not loaded.');
@@ -455,10 +438,7 @@ export const resolveKeys = (
 };
 
 /** Slots whose saved configuration contains literal secrets, read from the unexpanded file or pre-parsed tree. Names only, never values. */
-export const literalKeySlots = (
-  source: string | Node,
-  format: ConfigFormat = 'json',
-): KeyMigration => {
+export const literalKeySlots = (source: string | Node, format: ConfigFormat = 'json') => {
   const detected = hasUnmigratedSecretLiterals(source, format);
   return {
     gateway: detected.gateway,
@@ -470,9 +450,9 @@ export const literalKeySlots = (
 export const effectiveServerToken = (
   gateway: GatewayConfig['gateway'],
   server: StdioServerConfig | HttpServerConfig,
-): string => server.token ?? gateway.token;
+) => server.token ?? gateway.token;
 
-export const serverFingerprint = (server: StdioServerConfig | HttpServerConfig): string => {
+export const serverFingerprint = (server: StdioServerConfig | HttpServerConfig) => {
   const sorted = (values: Record<string, string> = {}) =>
     Object.fromEntries(Object.entries(values).sort(([a], [b]) => a.localeCompare(b)));
   return JSON.stringify(
@@ -495,7 +475,7 @@ export const serverFingerprint = (server: StdioServerConfig | HttpServerConfig):
   );
 };
 
-const newConfigText = (gateway: KeySlot & { port: number }): string => {
+const newConfigText = (gateway: KeySlot & { port: number }) => {
   return `${JSON.stringify(
     {
       gateway: {
@@ -514,13 +494,13 @@ const SYSTEM_TMP_SYMLINKS = new Set(
   ['/tmp', '/var', '/etc', tmpdir().replace(/\/+$/, '')].filter(Boolean),
 );
 
-const assertPlainDirectory = (stat: Stats, dirPath?: string): void => {
+const assertPlainDirectory = (stat: Stats, dirPath?: string) => {
   if (stat.isSymbolicLink() && dirPath && SYSTEM_TMP_SYMLINKS.has(dirPath)) return;
   if (!stat.isDirectory() || stat.isSymbolicLink())
     throw failure('UnsafeFile', 'Configuration paths must not contain symlinks.');
 };
 
-const safeParent = async (path: string): Promise<void> => {
+const safeParent = async (path: string) => {
   const parent = dirname(path);
   let current = parse(parent).root;
   for (const part of parent.slice(current.length).split('/').filter(Boolean)) {
@@ -535,7 +515,7 @@ const safeParent = async (path: string): Promise<void> => {
     );
 };
 
-export const ensureParent = async (path: string): Promise<void> => {
+export const ensureParent = async (path: string) => {
   const parent = dirname(path);
   let current = parse(parent).root;
   for (const part of parent.slice(current.length).split('/').filter(Boolean)) {
@@ -562,10 +542,9 @@ export interface ConfigDocument {
   text: string;
   revision: string;
 }
-const revisionOf = (bytes: string | Uint8Array): string =>
-  createHash('sha256').update(bytes).digest('hex');
+const revisionOf = (bytes: string | Uint8Array) => createHash('sha256').update(bytes).digest('hex');
 
-const guarded = async <A>(work: () => Promise<A>): Promise<A> => {
+const guarded = async <A>(work: () => Promise<A>) => {
   try {
     return await work();
   } catch (error) {
@@ -574,7 +553,7 @@ const guarded = async <A>(work: () => Promise<A>): Promise<A> => {
   }
 };
 
-const safeFile = (stat: Stats): void => {
+const safeFile = (stat: Stats) => {
   // replace() publishes a new file with link() then unlink(); a crash between them leaves
   // the hidden temporary name as a second link.
   if (stat.isFile() && stat.nlink === 2)
@@ -598,10 +577,7 @@ const safeFile = (stat: Stats): void => {
  * Descriptor-verified private file read (`O_NOFOLLOW` + `fstat`), eliminating pre-open
  * `lstat` -> `readFile` TOCTOU windows.
  */
-export const readPrivateText = async (
-  path: string,
-  maxBytes = MAX_CONFIG_BYTES,
-): Promise<{ text: string; bytes: Buffer }> => {
+export const readPrivateText = async (path: string, maxBytes = MAX_CONFIG_BYTES) => {
   await safeParent(path);
   let handle: fs.FileHandle;
   try {
@@ -647,7 +623,7 @@ export const readPrivateText = async (
  * Atomic owner-only file write via a sibling `0o600` temporary file (`O_EXCL | O_NOFOLLOW`),
  * `fsync`, and `rename`.
  */
-export const writePrivateTextAtomic = async (path: string, text: string): Promise<void> => {
+export const writePrivateTextAtomic = async (path: string, text: string) => {
   await ensureParent(path);
   const temp = join(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`);
   const file = await fs.open(
@@ -691,14 +667,14 @@ export class ConfigStore {
     this.jsoncPath = `${this.jsonPath}c`;
   }
 
-  get path(): string {
+  get path() {
     return this.selectedPath;
   }
-  get format(): ConfigFormat {
+  get format() {
     return configFormat(this.path);
   }
 
-  private async exists(path: string): Promise<boolean> {
+  private async exists(path: string) {
     try {
       await fs.lstat(path);
       return true;
@@ -708,7 +684,7 @@ export class ConfigStore {
     }
   }
 
-  private async checkSelection(): Promise<void> {
+  private async checkSelection() {
     if (this.selectionRefused) throw failure('AmbiguousConfig', AMBIGUOUS_CONFIG);
     const alternate = this.path === this.jsonPath ? this.jsoncPath : this.jsonPath;
     if (await this.exists(alternate)) {
@@ -717,7 +693,7 @@ export class ConfigStore {
     }
   }
 
-  read(): Promise<ConfigDocument> {
+  read() {
     return guarded(async () => {
       await safeParent(this.path);
       await this.checkSelection();
@@ -727,7 +703,7 @@ export class ConfigStore {
     });
   }
 
-  private async acquireLock(lockPath: string): Promise<fs.FileHandle> {
+  private async acquireLock(lockPath: string) {
     const lock = await fs.open(
       lockPath,
       constants.O_RDWR | constants.O_CREAT | constants.O_NOFOLLOW,
@@ -756,7 +732,7 @@ export class ConfigStore {
     }
   }
 
-  private async locked<A>(work: () => Promise<A>): Promise<A> {
+  private async locked<A>(work: () => Promise<A>) {
     await safeParent(this.path);
     const lockPath = `${this.jsonPath}.lock`;
     const lock = await this.acquireLock(lockPath);
@@ -767,7 +743,7 @@ export class ConfigStore {
     }
   }
 
-  private async replace(text: string, create: boolean): Promise<void> {
+  private async replace(text: string, create: boolean) {
     const temp = join(dirname(this.path), `.${basename(this.path)}.${randomUUID()}.tmp`);
     const file = await fs.open(
       temp,
@@ -809,7 +785,7 @@ export class ConfigStore {
     if (failed) throw failed.error;
   }
 
-  initialize(createGateway: () => Promise<KeySlot & { port: number }>): Promise<ConfigDocument> {
+  initialize(createGateway: () => Promise<KeySlot & { port: number }>) {
     if (this.initialized || this.selectionRefused) return this.read();
     return guarded(async () => {
       // Inspect each ancestor before creating owner-only directories; recursive
@@ -836,7 +812,7 @@ export class ConfigStore {
     });
   }
 
-  save(text: string, expectedRevision: string, preValidated = false): Promise<ConfigDocument> {
+  save(text: string, expectedRevision: string, preValidated = false) {
     return guarded(() =>
       this.locked(async () => {
         await this.checkSelection();

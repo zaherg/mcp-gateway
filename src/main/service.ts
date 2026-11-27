@@ -29,18 +29,13 @@ import {
 } from '@mcp-gateway/shared/i18n';
 import {
   type AppResult,
-  type AppSnapshot,
   type LoginStatus,
   needsLoginRetry,
   type QuitStatus,
   SOCIAL_LINK_TARGETS,
   type SocialLinkTarget,
 } from '@mcp-gateway/shared/rpc';
-import type {
-  GatewayController,
-  HttpServerConfig,
-  StdioServerConfig,
-} from '@mcp-gateway/shared/types';
+import type { GatewayController } from '@mcp-gateway/shared/types';
 
 export interface LoginManager {
   status(): LoginStatus;
@@ -77,27 +72,27 @@ const AutomaticRequest = z.strictObject({ automatic: z.boolean() });
 const SocialLinkRequest = z.strictObject({ target: z.enum(SOCIAL_LINK_TARGETS) });
 const LanguageRequest = z.strictObject({ preference: z.string() });
 
-const decode = <A>(schema: z.ZodType<A>, input: unknown): A => {
+const decode = <A>(schema: z.ZodType<A>, input: unknown) => {
   const result = schema.safeParse(input);
   if (!result.success) throw new RequestError('The application request is invalid.');
   return result.data;
 };
 
-const empty = (input: unknown): void => {
+const empty = (input: unknown) => {
   if (input !== undefined && input !== null)
     throw new RequestError('This operation does not accept parameters.');
 };
 
-const serverName = (input: unknown): string => {
+const serverName = (input: unknown) => {
   const { name } = decode(NameRequest, input);
   if (!SAFE_NAME.test(name)) throw new RequestError('Select a configured server.');
   return name;
 };
 
-const missingFile = (error: unknown): boolean =>
+const missingFile = (error: unknown) =>
   error instanceof Error && 'code' in error && error.code === 'ENOENT';
 
-const readSafeClientFile = async (filePath: string): Promise<string | null> => {
+const readSafeClientFile = async (filePath: string) => {
   try {
     const stat = await lstat(filePath);
     if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_CONFIG_BYTES) return null;
@@ -124,11 +119,7 @@ const readSafeClientFile = async (filePath: string): Promise<string | null> => {
   }
 };
 
-const parseExternalServerEntry = (
-  entry: unknown,
-  gatewayHost: string,
-  gatewayPort: number,
-): StdioServerConfig | HttpServerConfig | null => {
+const parseExternalServerEntry = (entry: unknown, gatewayHost: string, gatewayPort: number) => {
   if (!isRecord(entry)) return null;
   const hasUrl = Object.hasOwn(entry, 'url');
   const hasCommand = Object.hasOwn(entry, 'command');
@@ -255,16 +246,16 @@ export class AppService {
     this.loginStatus = login.status();
   }
 
-  private assertIdle(consequence: string): void {
+  private assertIdle(consequence: string) {
     if (this.desktop.quitStatus().phase !== 'idle' || this.updates.status().phase === 'restarting')
       throw new RequestError(`Quit cleanup has started. ${consequence}`);
   }
 
-  currentSnapshot(): AppSnapshot {
+  currentSnapshot() {
     return this.snapshot();
   }
 
-  private snapshot(): AppSnapshot {
+  private snapshot() {
     // A later cleanup step can fail after the login library has been released.
     if (this.desktop.quitStatus().phase === 'idle') this.loginStatus = this.login.status();
     const gateway = this.controller.snapshot();
@@ -309,14 +300,14 @@ export class AppService {
     );
   }
 
-  private run<A>(work: () => Promise<A> | A): Promise<AppResult<A>> {
+  private run<A>(work: () => Promise<A> | A) {
     return this.settle(work, true);
   }
 
   // Stop, Quit and lifecycle status must not wait behind a configuration
   // operation whose validation a Stop or Quit is meant to cancel. Each still
   // validates its own parameters before it can cancel anything.
-  private lifecycle<A>(work: () => Promise<A> | A): Promise<AppResult<A>> {
+  private lifecycle<A>(work: () => Promise<A> | A) {
     return this.settle(work, false);
   }
 
@@ -558,7 +549,7 @@ export class AppService {
           join(home, 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json'),
           join(home, '.cursor', 'mcp.json'),
         ];
-        const nextServers: Record<string, StdioServerConfig | HttpServerConfig> = {
+        const nextServers = {
           ...currentConfig.mcpServers,
         };
         let importedCount = 0;

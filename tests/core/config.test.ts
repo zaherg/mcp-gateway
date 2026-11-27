@@ -20,7 +20,7 @@ import {
   writePrivateTextAtomic,
 } from '@mcp-gateway/core/config';
 import { MAX_CONFIG_BYTES } from '@mcp-gateway/shared/config-document';
-import type { ConfigFile, HttpServerConfig, StdioServerConfig } from '@mcp-gateway/shared/types';
+import type { HttpServerConfig } from '@mcp-gateway/shared/types';
 import {
   DEFAULT_TEST_TOKEN,
   expectAsyncGatewayError,
@@ -35,7 +35,7 @@ const UUID_1 = '11111111-1111-4111-8111-111111111111';
 const UUID_2 = '22222222-2222-4222-9222-222222222222';
 const UUID_3 = '33333333-3333-4333-a333-333333333333';
 
-const envRef = (name: string): string => `\${${name}}`;
+const envRef = (name: string) => `\${${name}}`;
 
 const LOCK_EX_NB = 6;
 const libSystem = dlopen('libSystem.B.dylib', {
@@ -45,7 +45,7 @@ const libSystem = dlopen('libSystem.B.dylib', {
 const makeConfig = (
   gatewayOverrides: Record<string, unknown> = {},
   mcpServers: Record<string, unknown> = {},
-): string => makeConfigText({ gateway: gatewayOverrides, mcpServers });
+) => makeConfigText({ gateway: gatewayOverrides, mcpServers });
 
 const { makeTempDir } = registerTempDirLifecycle('bear-mcp-config-');
 
@@ -79,7 +79,7 @@ describe('isDisallowedUpstreamUrl', () => {
 
 describe('parseConfig and parseConfigWithSlots', () => {
   test('parses valid stdio and HTTP configurations in JSON and JSONC with environment expansion', () => {
-    const env: NodeJS.ProcessEnv = {
+    const env = {
       GW_HOST: '127.0.0.1',
       GW_TOKEN,
       HTTP_TOKEN: SERVER_TOKEN,
@@ -724,7 +724,7 @@ describe('previewConfig', () => {
 
 describe('keyRefs, resolveKeys, effectiveServerToken, and serverFingerprint', () => {
   test('keyRefs deduplicates tokenRef UUIDs across gateway and mcpServers', () => {
-    const config: ConfigFile = {
+    const config = {
       gateway: { host: '127.0.0.1', port: 3333, tokenRef: UUID_1 },
       mcpServers: {
         a: { command: '/bin/echo', tokenRef: UUID_2 },
@@ -737,7 +737,7 @@ describe('keyRefs, resolveKeys, effectiveServerToken, and serverFingerprint', ()
   });
 
   test('resolveKeys replaces tokenRefs, removes tokenRef, and rejects missing or invalid stored keys', () => {
-    const config: ConfigFile = {
+    const config = {
       gateway: { host: '127.0.0.1', port: 3333, tokenRef: UUID_1 },
       mcpServers: {
         ref_srv: { command: '/bin/echo', tokenRef: UUID_2 },
@@ -785,24 +785,24 @@ describe('keyRefs, resolveKeys, effectiveServerToken, and serverFingerprint', ()
 
   test('effectiveServerToken prefers server.token and falls back to gateway.token', () => {
     const gateway = { host: '127.0.0.1', port: 3333, token: GW_TOKEN };
-    const withToken: StdioServerConfig = { command: '/bin/echo', token: SERVER_TOKEN };
-    const withoutToken: HttpServerConfig = { url: 'https://api.example.com/mcp' };
+    const withToken = { command: '/bin/echo', token: SERVER_TOKEN };
+    const withoutToken = { url: 'https://api.example.com/mcp' };
 
     expect(effectiveServerToken(gateway, withToken)).toBe(SERVER_TOKEN);
     expect(effectiveServerToken(gateway, withoutToken)).toBe(GW_TOKEN);
   });
 
   test('serverFingerprint normalizes URL, sorts headers/env keys, and normalizes legacyProtocol', () => {
-    const httpA: HttpServerConfig = {
+    const httpA = {
       url: 'HTTPS://API.EXAMPLE.COM:443/mcp',
       headers: { 'x-b': '2', 'x-a': '1' },
       legacyProtocol: false,
     };
-    const httpB: HttpServerConfig = {
+    const httpB = {
       url: 'https://api.example.com/mcp',
       headers: { 'x-a': '1', 'x-b': '2' },
     };
-    const httpLegacy: HttpServerConfig = {
+    const httpLegacy = {
       ...httpB,
       legacyProtocol: true,
     };
@@ -810,19 +810,19 @@ describe('keyRefs, resolveKeys, effectiveServerToken, and serverFingerprint', ()
     expect(serverFingerprint(httpA)).toBe(serverFingerprint(httpB));
     expect(serverFingerprint(httpA)).not.toBe(serverFingerprint(httpLegacy));
 
-    const stdioA: StdioServerConfig = {
+    const stdioA = {
       command: '/bin/echo',
       env: { Z_VAR: 'last', A_VAR: 'first' },
       cwd: '/var/empty',
       legacyProtocol: false,
     };
-    const stdioB: StdioServerConfig = {
+    const stdioB = {
       command: '/bin/echo',
       args: [],
       env: { A_VAR: 'first', Z_VAR: 'last' },
       cwd: '/var/empty',
     };
-    const stdioLegacy: StdioServerConfig = {
+    const stdioLegacy = {
       ...stdioB,
       legacyProtocol: true,
     };

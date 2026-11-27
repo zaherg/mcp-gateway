@@ -40,7 +40,7 @@ const CHILD_ENVIRONMENT_NAMES = new Set([
   'no_proxy',
 ]);
 
-const childEnvironment = (source: NodeJS.ProcessEnv): NodeJS.ProcessEnv => {
+const childEnvironment = (source: NodeJS.ProcessEnv) => {
   const environment: NodeJS.ProcessEnv = {};
   for (const [name, value] of Object.entries(source)) {
     if (value === undefined) continue;
@@ -49,7 +49,7 @@ const childEnvironment = (source: NodeJS.ProcessEnv): NodeJS.ProcessEnv => {
   return environment;
 };
 
-const parseS3Path = (value: string | undefined): string => {
+const parseS3Path = (value: string | undefined) => {
   const segments = value?.split('/') ?? [];
   if (segments.length < 2 || !segments.every((part) => /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(part)))
     throw new Error(

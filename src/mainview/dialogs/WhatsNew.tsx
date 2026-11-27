@@ -1,4 +1,4 @@
-import type { ReactNode, RefObject } from 'react';
+import type { RefObject } from 'react';
 
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
 import { Modal } from '@mcp-gateway/mainview/components/ui';
@@ -10,7 +10,7 @@ import changelog from '../../../CHANGELOG.md?raw';
 const INLINE = /(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\([^)]+\))/;
 
 /** Renders inline code and bold; a link keeps its text only, because the window cannot navigate. */
-const inline = (text: string): ReactNode[] => {
+const inline = (text: string) => {
   let offset = 0;
   return text.split(INLINE).map((part) => {
     // The character offset is unique within the line, unlike the text of a repeated code span.

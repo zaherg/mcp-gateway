@@ -23,7 +23,7 @@ const CATALOGS: Record<CatalogLocale, Record<string, string>> = {
   tr_TR: trTR,
 };
 
-const extractPlaceholders = (template: string): string[] =>
+const extractPlaceholders = (template: string) =>
   [...template.matchAll(/\{(\w+)\}/g)].map((match) => match[1] ?? '').sort();
 
 describe('localeTag', () => {

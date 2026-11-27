@@ -29,7 +29,6 @@ import { SAFE_NAME } from '@mcp-gateway/shared/config-document';
 import type {
   GatewayConfig,
   InterfaceChoice,
-  ServerCheckResult,
   ServerSnapshot,
   VisibleError,
 } from '@mcp-gateway/shared/types';
@@ -57,9 +56,9 @@ interface AdmittedRequest {
   post: boolean;
   stream: boolean;
 }
-const digest = (text: string): Buffer => createHash('sha256').update(text, 'utf8').digest();
+const digest = (text: string) => createHash('sha256').update(text, 'utf8').digest();
 
-export const tokenMatches = (actual: string, expected: string | undefined): boolean => {
+export const tokenMatches = (actual: string, expected: string | undefined) => {
   const leftDigest = digest(actual);
   const rightDigest = digest(expected ?? '');
   const matches = timingSafeEqual(leftDigest, rightDigest);
@@ -145,7 +144,7 @@ export class GatewayIngress {
     control?: SelfProxyOptions,
     onInterfaceLost?: (ingress: GatewayIngress) => void,
     preventIdleSleep?: PreventIdleSleep,
-  ): Promise<GatewayIngress> {
+  ) {
     await rejectSelfProxy(config, control);
     const ingress = new GatewayIngress(config, report, logs, onInterfaceLost, preventIdleSleep);
     try {
@@ -181,10 +180,10 @@ export class GatewayIngress {
     }
   }
 
-  get running(): boolean {
+  get running() {
     return !this.closed && this.server.listening;
   }
-  get address(): string {
+  get address() {
     return `http://${this.config.gateway.host}:${this.config.gateway.port}`;
   }
 
@@ -208,7 +207,7 @@ export class GatewayIngress {
     });
   }
 
-  private lostInterface(): void {
+  private lostInterface() {
     if (this.closed) return;
     this.report(
       visible(
@@ -223,7 +222,7 @@ export class GatewayIngress {
     void this.close().catch((error) => this.report(visible(error)));
   }
 
-  private syncSleepAssertion(): void {
+  private syncSleepAssertion() {
     try {
       if (this.running && this.config.gateway.keepAwake) {
         if (!this.preventIdleSleep) throw new Error('Idle sleep control is unavailable.');
@@ -242,7 +241,7 @@ export class GatewayIngress {
     }
   }
 
-  async reconcile(config: GatewayConfig, control?: SelfProxyOptions): Promise<void> {
+  async reconcile(config: GatewayConfig, control?: SelfProxyOptions) {
     await rejectSelfProxy(config, control);
     if (this.closed) throw failure('Closed', 'The listener is closed.');
     const previous = this.config;
@@ -321,7 +320,7 @@ export class GatewayIngress {
     if (this.closed) throw failure('Closed', 'The listener is closed.');
   }
 
-  async restart(name: string, control?: SelfProxyOptions): Promise<void> {
+  async restart(name: string, control?: SelfProxyOptions) {
     const server = this.config.mcpServers[name];
     if (!Object.hasOwn(this.config.mcpServers, name) || !server || server.disabled)
       throw failure('BackendFailure', 'Select an enabled configured server to restart.');
@@ -329,7 +328,7 @@ export class GatewayIngress {
     await this.reconcile(this.config, control);
   }
 
-  async testServer(name: string): Promise<ServerCheckResult> {
+  async testServer(name: string) {
     const server = Object.hasOwn(this.config.mcpServers, name)
       ? this.config.mcpServers[name]
       : undefined;
@@ -351,7 +350,7 @@ export class GatewayIngress {
     }
   }
 
-  private async remove(name: string): Promise<void> {
+  private async remove(name: string) {
     if (this.check?.name === name) this.check.stop.abort();
     const endpoint = this.endpoints.get(name);
     if (endpoint) {
@@ -369,18 +368,18 @@ export class GatewayIngress {
   }
 
   /** Whether this endpoint is mounted and was built from the route's current, enabled entry. */
-  private serves(name: string, endpoint: Endpoint): boolean {
+  private serves(name: string, endpoint: Endpoint) {
     return !this.closed && endpoint.current && this.endpoints.get(name) === endpoint;
   }
 
-  private rejectRequest(res: ServerResponse, status: number): void {
+  private rejectRequest(res: ServerResponse, status: number) {
     res.statusCode = status;
     res.setHeader('Connection', 'close');
     if (status === 401) res.setHeader('WWW-Authenticate', 'Bearer');
     res.end();
   }
 
-  private admitRequest(req: IncomingMessage, res: ServerResponse): AdmittedRequest | null {
+  private admitRequest(req: IncomingMessage, res: ServerResponse) {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.removeHeader('Access-Control-Allow-Origin');
@@ -478,11 +477,7 @@ export class GatewayIngress {
     return { name, endpoint, post, stream };
   }
 
-  private dispatchEndpoint(
-    req: IncomingMessage,
-    res: ServerResponse,
-    admitted: AdmittedRequest,
-  ): void {
+  private dispatchEndpoint(req: IncomingMessage, res: ServerResponse, admitted: AdmittedRequest) {
     const { name, endpoint, post, stream } = admitted;
     const controller = new AbortController();
     const requestError = () => {
@@ -528,13 +523,13 @@ export class GatewayIngress {
     })();
   }
 
-  private handle(req: IncomingMessage, res: ServerResponse): void {
+  private handle(req: IncomingMessage, res: ServerResponse) {
     const admitted = this.admitRequest(req, res);
     if (!admitted) return;
     this.dispatchEndpoint(req, res, admitted);
   }
 
-  close(): Promise<void> {
+  close() {
     this.closePromise ??= this.closeOwned().catch((error) => {
       this.closePromise = undefined;
       throw error;
@@ -542,7 +537,7 @@ export class GatewayIngress {
     return this.closePromise;
   }
 
-  private async closeOwned(): Promise<void> {
+  private async closeOwned() {
     this.closed = true;
     this.syncSleepAssertion();
     this.check?.stop.abort();

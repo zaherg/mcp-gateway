@@ -15,9 +15,7 @@ import type { GatewayConfig, InterfaceChoice, NetworkKind } from '@mcp-gateway/s
 
 export type CompiledPeerRange = NonNullable<ReturnType<typeof parseIpv4Range>>;
 
-export const compileAllowedPeers = (
-  allowedPeers?: readonly string[],
-): readonly CompiledPeerRange[] | undefined => {
+export const compileAllowedPeers = (allowedPeers?: readonly string[]) => {
   if (!allowedPeers) return undefined;
   return allowedPeers.flatMap((text) => {
     const range = parseIpv4Range(text);
@@ -25,7 +23,7 @@ export const compileAllowedPeers = (
   });
 };
 
-const ipv4 = (value: string): string | null => {
+const ipv4 = (value: string) => {
   if (isIP(value) === 4) return value;
   if (/^::ffff:/i.test(value)) {
     const suffix = value.slice(7);
@@ -39,7 +37,7 @@ const ipv4 = (value: string): string | null => {
 };
 const isLoopback = (address: string) =>
   address === '::1' || ipv4(address)?.startsWith('127.') === true;
-const isLocal = (address: string): boolean => {
+const isLocal = (address: string) => {
   const value = ipv4Number(address);
   return value !== null && isLocalIpv4(value);
 };
@@ -53,7 +51,7 @@ const networkKind = (name: string, address: string): NetworkKind => {
   return value !== null && isSharedIpv4(value) ? 'tailscale' : 'tunnel';
 };
 
-export const interfaceChoices = (): InterfaceChoice[] => {
+export const interfaceChoices = () => {
   return Object.entries(networkInterfaces()).flatMap(([name, entries]) =>
     (entries ?? [])
       .filter(
@@ -68,7 +66,7 @@ export const interfaceChoices = (): InterfaceChoice[] => {
   );
 };
 
-export const selectInterface = (host: string): InterfaceChoice => {
+export const selectInterface = (host: string) => {
   const choice = interfaceChoices().find((entry) => entry.address === host);
   if (!choice)
     throw failure(
@@ -82,7 +80,7 @@ export const peerAllowed = (
   peer: string,
   selected: InterfaceChoice,
   allowedPeers?: readonly (string | CompiledPeerRange)[],
-): boolean => {
+) => {
   if (peer === '::1') return selected.kind === 'loopback';
   const ip = ipv4(peer);
   if (!ip) return false;
@@ -107,7 +105,7 @@ export const validateHostHeader = (
   hostHeader: string | undefined,
   listenHost: string,
   listenPort: number,
-): boolean => {
+) => {
   if (typeof hostHeader !== 'string' || hostHeader.length === 0) return false;
   const bracketedHost =
     listenHost.includes(':') && !listenHost.startsWith('[') ? `[${listenHost}]` : listenHost;
@@ -125,7 +123,7 @@ export const validateOriginHeader = (
   originHeader: string | undefined,
   listenHost: string,
   listenPort: number,
-): boolean => {
+) => {
   if (originHeader === undefined) return true;
   const expectedOrigin =
     listenPort === 80 ? `http://${listenHost}` : `http://${listenHost}:${listenPort}`;
@@ -142,7 +140,7 @@ export interface SelfProxyOptions {
   deadline?: number;
 }
 
-export const isSelfProxyCancelled = (error: unknown): boolean =>
+export const isSelfProxyCancelled = (error: unknown) =>
   error instanceof GatewayError && error.code === 'Cancelled';
 
 const cancelled = () =>
@@ -191,10 +189,7 @@ const boundedLookup = (
   });
 };
 
-export const rejectSelfProxy = async (
-  config: GatewayConfig,
-  options: SelfProxyOptions = {},
-): Promise<void> => {
+export const rejectSelfProxy = async (config: GatewayConfig, options: SelfProxyOptions = {}) => {
   const deadline = options.deadline ?? Date.now() + SELF_PROXY_DEADLINE_MS;
   // A superseded or already-expired operation refuses even when a stdio-only,
   // disabled or different-port configuration needs no hostname lookup.

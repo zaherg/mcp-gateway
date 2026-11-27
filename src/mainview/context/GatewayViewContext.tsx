@@ -223,7 +223,7 @@ export const GatewayViewProvider = ({ client, children }: GatewayViewProviderPro
     [],
   );
 
-  const confirmDiscard = useCallback(async (): Promise<boolean> => {
+  const confirmDiscard = useCallback(async () => {
     try {
       const result = await client.confirmDiscard();
       if (result.ok) return result.value;
@@ -311,7 +311,7 @@ export const GatewayViewProvider = ({ client, children }: GatewayViewProviderPro
     setActiveModal({ kind: 'updates' });
   }, [updatesOpen, updatesRequested, updatesTriggerDisabled, updateState]);
 
-  const format: ConfigFormat = snapshot?.gateway.configFormat ?? 'json';
+  const format = snapshot?.gateway.configFormat ?? 'json';
   const filename = snapshot?.gateway.configPath.split('/').at(-1) ?? 'mcp.json';
   const gateway = snapshot?.gateway;
   const stale = !!doc && !!gateway && doc.dirty && doc.revision !== gateway.revision;
@@ -330,7 +330,7 @@ export const GatewayViewProvider = ({ client, children }: GatewayViewProviderPro
     );
   };
 
-  const commitConfig = async (nextConfig: ConfigFile, rename?: Rename): Promise<boolean> => {
+  const commitConfig = async (nextConfig: ConfigFile, rename?: Rename) => {
     const currentDoc = docRef.current;
     if (configurationLocked || !currentDoc) return false;
     const nextText = editConfigDocument(
@@ -391,7 +391,7 @@ export const GatewayViewProvider = ({ client, children }: GatewayViewProviderPro
     void run(() => client.openConfigInEditor(), '');
   };
 
-  const importExternalServers = async (): Promise<number | null> => {
+  const importExternalServers = async () => {
     const currentDoc = docRef.current;
     if (busy || configurationLocked || !currentDoc || currentDoc.dirty) return null;
     let count: number | null = null;
@@ -418,7 +418,7 @@ export const GatewayViewProvider = ({ client, children }: GatewayViewProviderPro
   };
 
   // Saved mode reloads the form and raw editor from the new revision, so no draft keeps the plaintext.
-  const migrateKeys = async (slots: KeyMigrationSlots): Promise<boolean> => {
+  const migrateKeys = async (slots: KeyMigrationSlots) => {
     if (busy || configurationLocked || !doc || dirty) return false;
     return run(
       () =>
@@ -480,7 +480,7 @@ export const GatewayViewProvider = ({ client, children }: GatewayViewProviderPro
   );
 
   const handleMenuCommand = useRef<(command: MenuCommand) => void>(() => {});
-  handleMenuCommand.current = (command: MenuCommand) => {
+  handleMenuCommand.current = (command) => {
     switch (command) {
       case 'tab:overview':
         setTab('overview');
@@ -609,7 +609,7 @@ export const GatewayViewProvider = ({ client, children }: GatewayViewProviderPro
     void client.dismissWhatsNew().catch(() => undefined);
   }, [client]);
 
-  const value: GatewayViewContextValue = {
+  const value = {
     client,
     snapshot,
     gateway,
@@ -673,7 +673,7 @@ export const GatewayViewProvider = ({ client, children }: GatewayViewProviderPro
   return <GatewayViewContext.Provider value={value}>{children}</GatewayViewContext.Provider>;
 };
 
-export const useGatewayView = (): GatewayViewContextValue => {
+export const useGatewayView = () => {
   const context = useContext(GatewayViewContext);
   if (!context) {
     throw new Error('useGatewayView must be used within a GatewayViewProvider');

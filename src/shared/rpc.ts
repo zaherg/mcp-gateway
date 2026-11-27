@@ -17,7 +17,7 @@ export interface LoginStatus {
   error: string | null;
 }
 
-export const needsLoginRetry = (status: LoginStatus, wanted: boolean): boolean => {
+export const needsLoginRetry = (status: LoginStatus, wanted: boolean) => {
   return status.supported && (status.error !== null || status.enabled !== wanted);
 };
 

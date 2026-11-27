@@ -17,10 +17,10 @@ import { LogBuffer } from '@mcp-gateway/core/logs';
 import type { GatewayRequest } from '@mcp-gateway/core/sessions';
 import type { HttpServerConfig, StdioServerConfig } from '@mcp-gateway/shared/types';
 
-export const encodeBase64Header = (value: string): string =>
+export const encodeBase64Header = (value: string) =>
   `=?base64?${Buffer.from(value, 'utf8').toString('base64')}?=`;
 
-export const modernMeta = (version: string = MODERN_VERSION): Record<string, unknown> => ({
+export const modernMeta = (version: string = MODERN_VERSION) => ({
   'io.modelcontextprotocol/protocolVersion': version,
   'io.modelcontextprotocol/clientInfo': { name: 'adapter-test', version: '1.0.0' },
   'io.modelcontextprotocol/clientCapabilities': {},
@@ -37,7 +37,7 @@ export const listen = (server: Server): Promise<number> =>
     });
   });
 
-export const closeServer = async (server: Server): Promise<void> => {
+export const closeServer = async (server: Server) => {
   if (!server.listening) return;
   await new Promise<void>((resolve, reject) => {
     server.close((error) => (error ? reject(error) : resolve()));
@@ -45,7 +45,7 @@ export const closeServer = async (server: Server): Promise<void> => {
   });
 };
 
-export const readBodyText = async (req: IncomingMessage): Promise<string> => {
+export const readBodyText = async (req: IncomingMessage) => {
   const chunks: Buffer[] = [];
   for await (const chunk of req) {
     chunks.push(typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : chunk);
@@ -53,7 +53,7 @@ export const readBodyText = async (req: IncomingMessage): Promise<string> => {
   return Buffer.concat(chunks).toString('utf8');
 };
 
-export const parseSseMessages = (raw: string): unknown[] => {
+export const parseSseMessages = (raw: string) => {
   const messages: unknown[] = [];
   for (const frame of raw.split(/\r?\n\r?\n/)) {
     const dataLines = frame
@@ -67,7 +67,7 @@ export const parseSseMessages = (raw: string): unknown[] => {
   return messages;
 };
 
-export const registerAsyncCleanups = (): ((fn: () => Promise<void>) => void) => {
+export const registerAsyncCleanups = () => {
   const cleanups: Array<() => Promise<void>> = [];
   afterEach(async () => {
     while (cleanups.length > 0) {
@@ -167,7 +167,7 @@ export const createMountHarness = async (options: {
   const url = `http://127.0.0.1:${port}/mcp`;
   let closed = false;
 
-  const close = async (): Promise<void> => {
+  const close = async () => {
     if (closed) return;
     closed = true;
     try {

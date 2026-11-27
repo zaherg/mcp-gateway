@@ -4,11 +4,9 @@ import { readPrivateJson, writePrivateJsonAtomic } from '@mcp-gateway/main/prefe
 import {
   type CatalogLocale,
   type LanguagePreference,
-  type LanguageState,
   type Locale,
   languageState,
   parseLanguagePreference,
-  type Translate,
   translator,
 } from '@mcp-gateway/shared/i18n';
 
@@ -20,10 +18,7 @@ const invalidPreference = (): 'system' => {
 };
 
 // Same safety rules as updates.json: an owner-only regular file, never a symlink.
-const readPreference = async (
-  path: string,
-  available: readonly Locale[],
-): Promise<LanguagePreference> => {
+const readPreference = async (path: string, available: readonly Locale[]) => {
   const result = await readPrivateJson(path, (record) =>
     parseLanguagePreference(record.language, available),
   );
@@ -32,7 +27,7 @@ const readPreference = async (
   return result.value;
 };
 
-const writePreference = async (path: string, preference: LanguagePreference): Promise<void> => {
+const writePreference = async (path: string, preference: LanguagePreference) => {
   await writePrivateJsonAtomic(path, { language: preference });
 };
 
@@ -45,25 +40,21 @@ export class LanguageStore {
     private preference: LanguagePreference,
   ) {}
 
-  static async open(
-    dataDirectory: string,
-    system: CatalogLocale,
-    available: Locale[],
-  ): Promise<LanguageStore> {
+  static async open(dataDirectory: string, system: CatalogLocale, available: Locale[]) {
     const path = join(dataDirectory, LANGUAGE_FILE);
     return new LanguageStore(path, system, available, await readPreference(path, available));
   }
 
-  get state(): LanguageState {
+  get state() {
     return languageState(this.preference, this.system, this.available);
   }
 
-  get translate(): Translate {
+  get translate() {
     return translator(this.state.locale);
   }
 
   /** Saves first, so a failed save leaves the language in use unchanged. */
-  async set(preference: LanguagePreference): Promise<void> {
+  async set(preference: LanguagePreference) {
     await writePreference(this.path, preference);
     this.preference = preference;
   }

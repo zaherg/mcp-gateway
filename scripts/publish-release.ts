@@ -37,7 +37,7 @@ interface Release {
 }
 
 /** The remote that already has the tag, so an existing tag cannot surface inside `gh`. */
-const remoteWithTag = async (): Promise<string | null> => {
+const remoteWithTag = async () => {
   const remotes = (await runCheckedCommand(['git', 'remote']))
     .split('\n')
     .map((line) => line.trim())
@@ -57,7 +57,7 @@ const remoteWithTag = async (): Promise<string | null> => {
 const stage = (name: string) => console.log(`\n== ${name}`);
 
 /** Everything that must hold before minutes of signing, or the release must not be published. */
-const preflight = async (): Promise<{ commit: string; notes: string }> => {
+const preflight = async () => {
   if (process.platform !== 'darwin' || process.arch !== 'arm64')
     throw new Error('A signed release builds only on macOS arm64.');
   if (process.env.MCP_GATEWAY_TEST_FEED)
@@ -91,7 +91,7 @@ const preflight = async (): Promise<{ commit: string; notes: string }> => {
 };
 
 /** The release description `gh` returns, or an error instead of a partial read. */
-const parseRelease = (text: string): Release => {
+const parseRelease = (text: string) => {
   let value: unknown;
   try {
     value = JSON.parse(text);
@@ -114,7 +114,7 @@ const parseRelease = (text: string): Release => {
 };
 
 /** `shasum -a 256` compatible, because the release notes tell readers to check with it. */
-const writeChecksums = async (): Promise<Map<string, string>> => {
+const writeChecksums = async () => {
   const localHashes = new Map<string, string>();
   const lines: string[] = [];
   for (const file of RELEASE_ASSETS) {
@@ -128,7 +128,7 @@ const writeChecksums = async (): Promise<Map<string, string>> => {
   return localHashes;
 };
 
-const publish = async (commit: string, notesPath: string): Promise<void> => {
+const publish = async (commit: string, notesPath: string) => {
   await runForeground(
     [
       'gh',
@@ -149,7 +149,7 @@ const publish = async (commit: string, notesPath: string): Promise<void> => {
 };
 
 /** Reads back the published release, its asset names and the bytes the update feed serves. */
-const confirmPublished = async (localHashes: ReadonlyMap<string, string>): Promise<void> => {
+const confirmPublished = async (localHashes: ReadonlyMap<string, string>) => {
   const release = parseRelease(
     await runCheckedCommand([
       'gh',
@@ -221,7 +221,7 @@ const confirmPublished = async (localHashes: ReadonlyMap<string, string>): Promi
 
 let published = false;
 
-const main = async (): Promise<void> => {
+const main = async () => {
   stage(`Preflight for ${tag}`);
   const { commit, notes } = await preflight();
   stage('Build, sign and notarize');

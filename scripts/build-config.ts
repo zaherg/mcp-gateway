@@ -9,7 +9,7 @@ export const STABLE_VERSION_PATTERN = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-
 export const PRODUCTION_FEED = 'https://github.com/zaherg/mcp-gateway/releases/latest/download';
 type BuildKind = 'production' | 'test';
 
-export const validateFeedUrl = (value: string | undefined): string => {
+export const validateFeedUrl = (value: string | undefined) => {
   if (
     !value ||
     /\s/.test(value) ||
@@ -56,7 +56,7 @@ export const releaseOutputEnvironment = <T extends NodeJS.ProcessEnv>(
   version: string,
   environment: T,
   kind: BuildKind = 'production',
-): T & { MCP_GATEWAY_BUILD_ROOT: string; MCP_GATEWAY_ARTIFACTS_DIR: string } => {
+) => {
   if (!STABLE_VERSION_PATTERN.test(version)) throw new Error('Invalid release version.');
   const prefix = kind === 'test' ? 'test-v' : 'v';
   return {
@@ -71,7 +71,7 @@ export const assertEmptyReleaseOutputs = async (
   root: string,
   environment: NodeJS.ProcessEnv,
   kind: BuildKind,
-): Promise<void> => {
+) => {
   const paths = [environment.MCP_GATEWAY_BUILD_ROOT, environment.MCP_GATEWAY_ARTIFACTS_DIR];
   const directories = paths.map((value) => {
     if (!value) throw new Error('Release output directories are required.');

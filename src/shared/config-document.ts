@@ -34,9 +34,7 @@ export const SENSITIVE_ENV_KEYS = new Set([
   'ZDOTDIR',
 ]);
 
-export const sensitiveEnvOverrides = (
-  env: Readonly<Record<string, string>> | undefined,
-): string[] => {
+export const sensitiveEnvOverrides = (env: Readonly<Record<string, string>> | undefined) => {
   if (!env) return [];
   return Object.keys(env).filter((key) => SENSITIVE_ENV_KEYS.has(key.toUpperCase()));
 };
@@ -54,26 +52,26 @@ const ARG_SECRET_PATTERN =
 const isUnexpandedLiteral = (value: unknown): value is string =>
   typeof value === 'string' && value.trim().length > 0 && !ENV_REFERENCE_PATTERN.test(value);
 
-const isLiteralTokenSlot = (slot: unknown): boolean =>
+const isLiteralTokenSlot = (slot: unknown) =>
   isRecord(slot) &&
   slot.tokenRef === undefined &&
   isUnexpandedLiteral(slot.token) &&
   LITERAL_TOKEN_PATTERN.test(slot.token);
 
-const hasLiteralSecretValue = (key: string, value: unknown): boolean => {
+const hasLiteralSecretValue = (key: string, value: unknown) => {
   if (!isUnexpandedLiteral(value)) return false;
   if (WELL_KNOWN_SECRET_PREFIX_PATTERN.test(value)) return true;
   return SECRET_KEY_NAME_PATTERN.test(key) && value.trim().length >= 8;
 };
 
-const hasUrlLiteralSecret = (url: unknown): boolean => {
+const hasUrlLiteralSecret = (url: unknown) => {
   if (!isUnexpandedLiteral(url)) return false;
   const match = URL_SECRET_QUERY_PATTERN.exec(url);
   if (!match?.[1]) return false;
   return !ENV_REFERENCE_PATTERN.test(match[1]);
 };
 
-const hasArgsLiteralSecret = (args: unknown): boolean => {
+const hasArgsLiteralSecret = (args: unknown) => {
   if (!Array.isArray(args)) return false;
   for (let i = 0; i < args.length; i++) {
     const item = args[i];
@@ -101,7 +99,7 @@ const hasArgsLiteralSecret = (args: unknown): boolean => {
 export const hasUnmigratedSecretLiterals = (
   source: string | Node,
   format: ConfigFormat = 'json',
-): { gateway: boolean; servers: string[]; warnings: string[] } => {
+) => {
   let root: Node | undefined;
   if (typeof source === 'string') {
     const parsed = parseConfigTree(source, format);
@@ -153,8 +151,7 @@ export const hasUnmigratedSecretLiterals = (
 };
 
 // Fixed messages only: parser diagnostics must not echo configuration credentials.
-const syntaxError = (): Error =>
-  new Error('Configuration syntax is invalid or contains duplicate keys.');
+const syntaxError = () => new Error('Configuration syntax is invalid or contains duplicate keys.');
 
 const SYNTAX_MESSAGE = 'Configuration syntax is invalid.';
 const DUPLICATE_MESSAGE = 'Duplicate property names are not allowed.';
@@ -198,7 +195,7 @@ const duplicateKey = (node: Node): Node | undefined => {
 };
 
 /** The first bracket nested beyond the limit, found without recursion. */
-const tooDeep = (text: string): ConfigTextIssue | undefined => {
+const tooDeep = (text: string) => {
   const scanner = createScanner(text, true);
   const open: SyntaxKind[] = [];
   for (let token = scanner.scan(); token !== SyntaxKind.EOF; token = scanner.scan()) {
@@ -242,11 +239,7 @@ export const parseConfigTree = (text: string, format: ConfigFormat = 'json'): Co
 };
 
 /** Source range of the value at `path`, or of its property name when `key` is set. */
-export const configRange = (
-  root: Node,
-  path: JSONPath,
-  key = false,
-): ConfigSourceRange | undefined => {
+export const configRange = (root: Node, path: JSONPath, key = false) => {
   const node = findNodeAtLocation(root, path);
   if (!node) return undefined;
   if (key && node.parent?.type === 'property') {
@@ -256,14 +249,14 @@ export const configRange = (
   return { offset: node.offset, length: node.length };
 };
 
-const checkedTree = (text: string, format: ConfigFormat): Node => {
+const checkedTree = (text: string, format: ConfigFormat) => {
   const parsed = parseConfigTree(text, format);
   if (!parsed.ok) throw syntaxError();
   return parsed.root;
 };
 
 /** Two-space indentation, the document's existing newline, and preserved comments and lexemes. */
-export const formatConfigDocument = (text: string, format: ConfigFormat = 'json'): string => {
+export const formatConfigDocument = (text: string, format: ConfigFormat = 'json') => {
   checkedTree(text, format);
   const eol = text.includes('\r\n') ? '\r\n' : '\n';
   return applyEdits(text, formatText(text, undefined, { tabSize: 2, insertSpaces: true, eol }));
@@ -292,7 +285,7 @@ export const editConfigDocument = (
   next: unknown,
   format: ConfigFormat = 'json',
   rename?: Rename,
-): string => {
+) => {
   let root = checkedTree(text, format);
   if (rename && rename.from !== rename.to) {
     const source = findNodeAtLocation(root, [...rename.path, rename.from]);
@@ -308,7 +301,7 @@ export const editConfigDocument = (
   const original: unknown = getNodeValue(root);
   // No formatting pass: jsonc-parser's edit ranges include neighboring comments/lines.
   // Direct value edits and unformatted structural edits leave retained trivia byte-identical.
-  const change = (path: JSONPath, before: unknown, after: unknown): void => {
+  const change = (path: JSONPath, before: unknown, after: unknown) => {
     if (Object.is(before, after)) return;
     if (isRecord(before) && isRecord(after)) {
       for (const key of Object.keys(before)) {
@@ -323,7 +316,7 @@ export const editConfigDocument = (
         change([...path, index], before[index], after[index]);
     } else set(path, after);
   };
-  const set = (path: JSONPath, value: unknown): void => {
+  const set = (path: JSONPath, value: unknown) => {
     const edits = modify(text, path, value, {});
     text = applyEdits(text, edits);
     if (value === undefined && edits.length > 0) {

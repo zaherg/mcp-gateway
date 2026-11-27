@@ -2,20 +2,20 @@ import { Electroview } from 'electrobun/view';
 
 import type { AppClient, AppRPC, AppSnapshot, MenuCommand } from '@mcp-gateway/shared/rpc';
 
-let checkUnsavedRawConfig: () => boolean = () => false;
+let checkUnsavedRawConfig = () => false;
 const snapshotListeners = new Set<(snapshot: AppSnapshot) => void>();
 const menuCommandListeners = new Set<(command: MenuCommand) => void>();
 
-export const setUnsavedRawConfigChecker = (checker: () => boolean): void => {
+export const setUnsavedRawConfigChecker = (checker: () => boolean) => {
   checkUnsavedRawConfig = checker;
 };
 
-export const onSnapshotChanged = (listener: (snapshot: AppSnapshot) => void): (() => void) => {
+export const onSnapshotChanged = (listener: (snapshot: AppSnapshot) => void) => {
   snapshotListeners.add(listener);
   return () => snapshotListeners.delete(listener);
 };
 
-export const onMenuCommand = (listener: (command: MenuCommand) => void): (() => void) => {
+export const onMenuCommand = (listener: (command: MenuCommand) => void) => {
   menuCommandListeners.add(listener);
   return () => menuCommandListeners.delete(listener);
 };
@@ -39,7 +39,7 @@ const rpc = Electroview.defineRPC<AppRPC>({
 });
 new Electroview({ rpc });
 
-const scrubElectrobunWindowSecrets = (): void => {
+const scrubElectrobunWindowSecrets = () => {
   const globalWindow = window as unknown as Record<string, unknown>;
   const rawKeyBytes = globalWindow.__electrobunSecretKeyBytes;
   if (Array.isArray(rawKeyBytes)) {

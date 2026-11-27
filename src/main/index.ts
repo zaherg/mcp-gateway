@@ -36,7 +36,7 @@ import { WhatsNewStore } from '@mcp-gateway/main/whats-new';
 import { editConfigDocument, SAFE_NAME } from '@mcp-gateway/shared/config-document';
 import { CATALOG_LOCALES, resolveLocale } from '@mcp-gateway/shared/i18n';
 import { appNameFor, TEST_IDENTIFIER } from '@mcp-gateway/shared/identity';
-import type { AppRPC, MenuCommand, UpdateStatus } from '@mcp-gateway/shared/rpc';
+import type { AppRPC, MenuCommand } from '@mcp-gateway/shared/rpc';
 
 const MIN_WINDOW_SIZE = { width: 1120, height: 820 } as const;
 const MENU_COMMANDS: ReadonlySet<MenuCommand> = new Set([
@@ -95,7 +95,7 @@ const controller = await McpGatewayController.open(
   // A different first-run port lets the Dev app run beside the production app.
   defaultPort,
 );
-const notifyBackground = (body: string): void => {
+const notifyBackground = (body: string) => {
   postNativeNotification(appName, body, nativeLibrary, (error) =>
     controller.recordLocalError(error),
   );
@@ -154,28 +154,28 @@ const desktopState: {
   hasUnsavedRawConfig: undefined,
 };
 
-const menuAction = (event: unknown): string | undefined => {
+const menuAction = (event: unknown) => {
   if (typeof event !== 'object' || event === null || !('data' in event)) return;
   const data = event.data;
   if (typeof data !== 'object' || data === null || !('action' in data)) return;
   return typeof data.action === 'string' ? data.action : undefined;
 };
 
-const removeTray = (): void => {
+const removeTray = () => {
   if (!desktopState.trayRemoved) {
     tray.remove();
     desktopState.trayRemoved = true;
   }
 };
 
-const gatewayBaseEndpoint = (): string => {
+const gatewayBaseEndpoint = () => {
   const active = controller.activeConfig();
   const host = active?.gateway.host ?? '127.0.0.1';
   const port = active?.gateway.port ?? defaultPort;
   return `http://${host}:${port}`;
 };
 
-const pushSnapshot = (): void => {
+const pushSnapshot = () => {
   if (!desktopState.window || !desktopState.windowReady || !desktopState.rpc) return;
   try {
     desktopState.rpc.send.snapshotChanged(service.currentSnapshot());
@@ -184,7 +184,7 @@ const pushSnapshot = (): void => {
   }
 };
 
-const sendMenuCommand = (command: MenuCommand): void => {
+const sendMenuCommand = (command: MenuCommand) => {
   desktopState.pendingMenuCommand = command;
   openWindow();
   if (desktopState.windowReady && desktopState.rpc) {
@@ -197,7 +197,7 @@ const sendMenuCommand = (command: MenuCommand): void => {
   }
 };
 
-const updateMenu = (): void => {
+const updateMenu = () => {
   if (desktopState.trayRemoved) return;
   const quitFailed = quit.status().phase === 'failed';
   const snapshot = controller.snapshot();
@@ -319,7 +319,7 @@ const updateMenu = (): void => {
   ]);
 };
 
-const showUpdatesSection = (): void => {
+const showUpdatesSection = () => {
   if (!support.supported) return;
   sendMenuCommand('updates:open');
   void service.handlers
@@ -334,8 +334,8 @@ const showUpdatesSection = (): void => {
 const wrapHandler = <Args extends unknown[], Res>(
   handler: (...args: Args) => Promise<Res>,
   notifiesSnapshot = true,
-): ((...args: Args) => Promise<Res>) => {
-  return async (...args: Args): Promise<Res> => {
+) => {
+  return async (...args: Args) => {
     const result = await handler(...args);
     if (notifiesSnapshot) {
       updateMenu();
@@ -345,7 +345,7 @@ const wrapHandler = <Args extends unknown[], Res>(
   };
 };
 
-const openWindow = (): void => {
+const openWindow = () => {
   if (desktopState.window) {
     restoreWindow(desktopState.window);
     return;
@@ -370,7 +370,7 @@ const openWindow = (): void => {
         updatesSetAutomatic: wrapHandler(service.handlers.updatesSetAutomatic),
         setLanguage: wrapHandler(service.handlers.setLanguage),
         updatesRestart: wrapHandler(service.handlers.updatesRestart),
-        snapshot: async (input: unknown) => {
+        snapshot: async (input) => {
           const result = await service.handlers.snapshot(input);
           if (!ready) {
             ready = true;
@@ -456,7 +456,7 @@ const updater = new AppUpdater({
   quit,
 });
 let previousUpdatePhase = updater.status().phase;
-updater.subscribe((status: UpdateStatus) => {
+updater.subscribe((status) => {
   const transitionedToReady = previousUpdatePhase !== 'ready' && status.phase === 'ready';
   previousUpdatePhase = status.phase;
   updateMenu();
@@ -556,7 +556,7 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const)
     Utils.quit();
   });
 
-const toggleServerFromTray = async (name: string): Promise<void> => {
+const toggleServerFromTray = async (name: string) => {
   if (!SAFE_NAME.test(name)) return;
   const snapshot = controller.snapshot();
   if (snapshot.configError) return;
@@ -588,7 +588,7 @@ const toggleServerFromTray = async (name: string): Promise<void> => {
   pushSnapshot();
 };
 
-const dispatch = async (event: unknown): Promise<void> => {
+const dispatch = async (event: unknown) => {
   const action = menuAction(event);
   if (!action) return;
   if (action.startsWith('toggle-server:')) {
@@ -666,7 +666,7 @@ tray.on('tray-clicked', (event) => {
     console.error('Tray action failed.');
   });
 });
-const setApplicationMenu = (): void => {
+const setApplicationMenu = () => {
   const t = language.translate;
   ApplicationMenu.setApplicationMenu([
     {

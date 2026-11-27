@@ -1,4 +1,4 @@
-import type { ChildProcess, SpawnOptions } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { spawn } from 'node:child_process';
 
 import type { ChildrenOwner, GatewayLogger } from '@mcp-gateway/core/sessions';
@@ -30,7 +30,7 @@ const SAFE_PARENT_ENV_KEYS = new Set([
   '__CF_USER_TEXT_ENCODING',
 ]);
 
-export const isBlockedEnvironmentKey = (key: string): boolean => {
+export const isBlockedEnvironmentKey = (key: string) => {
   const upper = key.toUpperCase();
   return (
     upper === 'NODE_OPTIONS' ||
@@ -40,13 +40,13 @@ export const isBlockedEnvironmentKey = (key: string): boolean => {
   );
 };
 
-export const isAllowedParentEnvironmentKey = (key: string): boolean =>
+export const isAllowedParentEnvironmentKey = (key: string) =>
   SAFE_PARENT_ENV_KEYS.has(key) || key.startsWith('LC_') || key.startsWith('XDG_');
 
 export const childEnvironment = (
   serverEnv?: Readonly<Record<string, string>>,
-  parentEnv: NodeJS.ProcessEnv = process.env,
-): NodeJS.ProcessEnv => {
+  parentEnv = process.env,
+) => {
   const merged: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(parentEnv)) {
     if (
@@ -232,7 +232,7 @@ const inspectBackendGroup = async (pgid: number): Promise<BackendGroup> => {
 
 // Signal 0 checks existence without spawning pgrep; ESRCH means no process is
 // left in the group. Any other answer falls through to the identity inspection.
-const groupGone = (pgid: number): boolean => {
+const groupGone = (pgid: number) => {
   try {
     process.kill(-pgid, 0);
     return false;
@@ -252,12 +252,12 @@ const STUCK_POLL_MS = 1_000;
 /** A cleanup stays owned through uncertain inspection or refused termination. */
 export class BackendProcesses implements ChildrenOwner {
   closing = false;
-  readonly spawnOptions: SpawnOptions = { shell: false, detached: true };
+  readonly spawnOptions = { shell: false, detached: true };
   private readonly stops = new Set<() => Promise<void>>();
 
   constructor(private readonly logger: GatewayLogger) {}
 
-  track(stop: () => Promise<void>): () => Promise<void> {
+  track(stop: () => Promise<void>) {
     let operation: Promise<void> | undefined;
     const once = () =>
       (operation ??= Promise.resolve()
@@ -269,7 +269,7 @@ export class BackendProcesses implements ChildrenOwner {
     return once;
   }
 
-  own(child: ChildProcess): () => Promise<void> {
+  own(child: ChildProcess) {
     const pid = child.pid;
     const running = () => child.exitCode === null && child.signalCode === null;
     // Set only when this owner saw the exit happen.
@@ -285,7 +285,7 @@ export class BackendProcesses implements ChildrenOwner {
       }
     });
     let known = new Map<number, string>();
-    const remember = (state: BackendGroup): boolean => {
+    const remember = (state: BackendGroup) => {
       if (state.status !== 'present') return false;
       // A helper started after registration is unknown, so the first inspection after the
       // leader's exit records it; later inspections then trust it through `known`.
@@ -357,7 +357,7 @@ export class BackendProcesses implements ChildrenOwner {
     return stop;
   }
 
-  async close(): Promise<void> {
+  async close() {
     this.closing = true;
     while (this.stops.size) await Promise.all([...this.stops].map((stop) => stop()));
   }

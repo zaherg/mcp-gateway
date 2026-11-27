@@ -33,9 +33,9 @@ export interface LanguageState {
 }
 
 /** The BCP 47 form (`en-US`) that HTML `lang` and `Intl` expect. */
-export const localeTag = (locale: Locale): string => locale.replace('_', '-');
+export const localeTag = (locale: Locale) => locale.replace('_', '-');
 
-const tagParts = (tag: string): { language: string; region: string | undefined } => {
+const tagParts = (tag: string) => {
   const [language = '', ...rest] = tag.replace(/_/g, '-').split('-');
   const region = rest.find((part) => /^([A-Za-z]{2}|\d{3})$/.test(part));
   return { language: language.toLowerCase(), region: region?.toUpperCase() };
@@ -45,7 +45,7 @@ const tagParts = (tag: string): { language: string; region: string | undefined }
  * Walks the OS preference list in order. Each entry takes an exact language and region match,
  * else the first catalog in the same language; the first entry that matches wins.
  */
-export const resolveLocale = (tags: readonly string[]): CatalogLocale => {
+export const resolveLocale = (tags: readonly string[]) => {
   for (const tag of tags) {
     const { language, region } = tagParts(tag);
     const exact = CATALOG_LOCALES.find((locale) => locale === `${language}_${region}`);
@@ -66,7 +66,7 @@ export const languageState = (
   preference: LanguagePreference,
   system: CatalogLocale,
   available: Locale[],
-): LanguageState => ({
+) => ({
   preference,
   locale: preference === 'system' ? system : preference,
   system,
@@ -76,10 +76,10 @@ export const languageState = (
 const PLACEHOLDER = /\{(\w+)\}/g;
 
 /** The raw catalog text, for callers that substitute React elements. */
-export const messageTemplate = (locale: Locale, key: MessageKey): string => CATALOGS[locale][key];
+export const messageTemplate = (locale: Locale, key: MessageKey) => CATALOGS[locale][key];
 
 /** A locale's own name, from its catalog. */
-export const languageName = (locale: Locale): string => messageTemplate(locale, 'language.name');
+export const languageName = (locale: Locale) => messageTemplate(locale, 'language.name');
 
 type MessageValues = Readonly<Record<string, string | number>>;
 export type Translate = (key: MessageKey, values?: MessageValues) => string;

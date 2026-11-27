@@ -23,7 +23,7 @@ import {
 import type { GatewayConfig, InterfaceChoice } from '@mcp-gateway/shared/types';
 import { expectAsyncGatewayError, expectGatewayError } from '../helpers/core';
 
-const mustIp = (text: string): number => {
+const mustIp = (text: string) => {
   const value = ipv4Number(text);
   if (value === null) throw new Error(`Expected valid IPv4 address: ${text}`);
   return value;
@@ -38,7 +38,7 @@ const mustRange = (text: string) => {
 const makeConfig = (
   overrides: Partial<GatewayConfig['gateway']>,
   mcpServers: GatewayConfig['mcpServers'] = {},
-): GatewayConfig => ({
+) => ({
   gateway: {
     host: '127.0.0.1',
     port: 8787,

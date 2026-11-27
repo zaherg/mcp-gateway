@@ -1,6 +1,6 @@
 import { afterEach } from 'bun:test';
 import { chmod, writeFile } from 'node:fs/promises';
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { join } from 'node:path';
 
 import { type RenderResult, render } from '@testing-library/react';
@@ -22,7 +22,6 @@ import type {
   LoginStatus,
   MenuCommand,
   QuitStatus,
-  UpdateStatus,
 } from '@mcp-gateway/shared/rpc';
 import type { KeyStore } from '@mcp-gateway/shared/types';
 import { registerTempDirLifecycle } from './core';
@@ -43,7 +42,7 @@ afterEach(async () => {
 
 const { makeTempDir } = registerTempDirLifecycle('mcp-gateway-e2e-');
 
-export const reserveLoopbackPort = async (): Promise<number> => {
+export const reserveLoopbackPort = async () => {
   const server = createServer();
   try {
     return await listen(server);
@@ -85,14 +84,14 @@ export interface UpstreamHttpMcpServer {
   close: () => Promise<void>;
 }
 
-const sendJson = (res: ServerResponse, status: number, payload: unknown): void => {
+const sendJson = (res: ServerResponse, status: number, payload: unknown) => {
   res.writeHead(status, { 'content-type': 'application/json' });
   res.end(JSON.stringify(payload));
 };
 
-export const startUpstreamHttpMcpServer = async (): Promise<UpstreamHttpMcpServer> => {
+export const startUpstreamHttpMcpServer = async () => {
   const requests: RecordedUpstreamRequest[] = [];
-  const handlePost = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+  const handlePost = async (req: IncomingMessage, res: ServerResponse) => {
     const raw = await readBodyText(req);
     const body: unknown = raw.length > 0 ? JSON.parse(raw) : null;
     requests.push({ method: req.method ?? 'POST', headers: { ...req.headers }, body });
@@ -169,7 +168,7 @@ export const startUpstreamHttpMcpServer = async (): Promise<UpstreamHttpMcpServe
     }
   };
 
-  const server: Server = createServer((req, res) => {
+  const server = createServer((req, res) => {
     if (req.method === 'DELETE') {
       requests.push({ method: 'DELETE', headers: { ...req.headers }, body: null });
       res.writeHead(200).end();
@@ -187,7 +186,7 @@ export const startUpstreamHttpMcpServer = async (): Promise<UpstreamHttpMcpServe
 
   const port = await listen(server);
   let closed = false;
-  const close = async (): Promise<void> => {
+  const close = async () => {
     if (closed) return;
     closed = true;
     await closeServer(server);
@@ -197,7 +196,7 @@ export const startUpstreamHttpMcpServer = async (): Promise<UpstreamHttpMcpServe
   return { url: `http://127.0.0.1:${port}/mcp`, requests, close };
 };
 
-export const createMemoryKeyStore = (): { store: KeyStore; entries: Map<string, string> } => {
+export const createMemoryKeyStore = () => {
   const entries = new Map<string, string>();
   const store: KeyStore = {
     get: async (refs) => {
@@ -285,7 +284,7 @@ export const bootFullStackApp = async (
   let confirmDiscardResult = options.confirmDiscardResult ?? true;
   let loginStatus: LoginStatus = { enabled: false, supported: true, error: null };
   const idleQuit: QuitStatus = { attempt: 0, phase: 'idle', error: null };
-  let updateStatus: UpdateStatus = makeUpdateStatus();
+  let updateStatus = makeUpdateStatus();
 
   const login: LoginManager = {
     status: () => ({ ...loginStatus }),
@@ -336,14 +335,12 @@ export const bootFullStackApp = async (
 
   const snapshotListeners = new Set<(snapshot: AppSnapshot) => void>();
   const menuListeners = new Set<(command: MenuCommand) => void>();
-  const pushSnapshot = (): void => {
+  const pushSnapshot = () => {
     const next = service.currentSnapshot();
     for (const listener of snapshotListeners) listener(next);
   };
-  const wrapHandler = <Args extends unknown[], Res>(
-    handler: (...args: Args) => Promise<Res>,
-  ): ((...args: Args) => Promise<Res>) => {
-    return async (...args: Args): Promise<Res> => {
+  const wrapHandler = <Args extends unknown[], Res>(handler: (...args: Args) => Promise<Res>) => {
+    return async (...args: Args) => {
       const result = await handler(...args);
       pushSnapshot();
       return result;

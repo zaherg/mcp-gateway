@@ -34,18 +34,16 @@ import type {
   GatewayConfig,
   GatewayController,
   GatewayOperation,
-  GatewaySnapshot,
   KeyMigration,
   KeyStore,
   LogQuery,
-  ServerCheckResult,
   VisibleError,
 } from '@mcp-gateway/shared/types';
 
 const WATCH_UNAVAILABLE =
   'Configuration watching is unavailable; reopen the controller before starting.';
 
-const createKeyRef = async (keys: KeyStore, token: string): Promise<string> => {
+const createKeyRef = async (keys: KeyStore, token: string) => {
   const ref = randomUUID();
   await keys.set(ref, token);
   if ((await keys.get([ref])).get(ref) !== token)
@@ -58,7 +56,7 @@ const resolveGatewayKeys = async (
   text: string,
   format: ConfigFormat,
   keys: KeyStore | undefined,
-): Promise<{ config: GatewayConfig; slots: KeyMigration }> => {
+) => {
   const { file, slots } = parseConfigWithSlots(text, process.env, format);
   const refs = keyRefs(file);
   if (refs.length === 0) return { config: resolveKeys(file, new Map()), slots };
@@ -77,7 +75,7 @@ const performKeyMigration = async (
   slots: KeyMigration,
   eligible: KeyMigration,
   expectedRevision: string,
-): Promise<string> => {
+) => {
   if (expectedRevision !== document.revision)
     throw failure('StaleRevision', 'Configuration changed on disk; review the keys again.');
   if (
@@ -109,12 +107,12 @@ class KeySlotCache {
   private revision = '';
   private slots: KeyMigration = { gateway: false, servers: [] };
 
-  record(revision: string, slots: KeyMigration): void {
+  record(revision: string, slots: KeyMigration) {
     this.revision = revision;
     this.slots = slots;
   }
 
-  eligible(document: ConfigDocument, format: ConfigFormat, enabled: boolean): KeyMigration {
+  eligible(document: ConfigDocument, format: ConfigFormat, enabled: boolean) {
     if (!enabled) return { gateway: false, servers: [] };
     if (this.revision !== document.revision) {
       this.revision = document.revision;
@@ -137,12 +135,12 @@ class ConfigDirectoryWatch {
     private readonly onFailed: () => void,
   ) {}
 
-  start(): VisibleError | null {
+  start() {
     try {
       const identity = lstatSync(this.directory);
       if (!identity.isDirectory() || identity.isSymbolicLink())
         throw failure('UnsafeFile', 'The configuration directory is unsafe.');
-      const verify = async (): Promise<boolean> => {
+      const verify = async () => {
         try {
           const current = await lstat(this.directory);
           if (
@@ -183,13 +181,13 @@ class ConfigDirectoryWatch {
     }
   }
 
-  private fail = (): void => {
+  private fail = () => {
     if (!this.healthy || this.isInactive()) return;
     this.healthy = false;
     this.onFailed();
   };
 
-  close(): void {
+  close() {
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
     this.healthy = false;
@@ -219,7 +217,7 @@ export class McpGatewayController implements GatewayController {
   clearLogs() {
     return this.logs.clear();
   }
-  recordLocalError(error: unknown): void {
+  recordLocalError(error: unknown) {
     this.logs.append({ server: null, level: 'error', source: 'controller' }, [
       'Local application operation failed:',
       error,
@@ -266,7 +264,7 @@ export class McpGatewayController implements GatewayController {
     preventIdleSleep: PreventIdleSleep | undefined,
     keys: KeyStore | undefined,
     port: number,
-  ): Promise<McpGatewayController> {
+  ) {
     const controller = new McpGatewayController(configPath, preventIdleSleep, keys);
     await controller.cancellable(controller.validationLifetime(), async (control) => {
       try {
@@ -308,7 +306,7 @@ export class McpGatewayController implements GatewayController {
     return controller;
   }
 
-  snapshot(): GatewaySnapshot {
+  snapshot() {
     const config = this.config;
     const running = this.ingress?.running ?? false;
     const interfaces = interfaceChoices();
@@ -336,15 +334,15 @@ export class McpGatewayController implements GatewayController {
     };
   }
 
-  activeConfig(): GatewayConfig | undefined {
+  activeConfig() {
     return this.config;
   }
 
-  private parse(text: string): Promise<{ config: GatewayConfig; slots: KeyMigration }> {
+  private parse(text: string) {
     return resolveGatewayKeys(text, this.store.format, this.keys);
   }
 
-  private keyMigration(): KeyMigration {
+  private keyMigration() {
     return this.keySlots.eligible(
       this.document,
       this.store.format,
@@ -352,17 +350,17 @@ export class McpGatewayController implements GatewayController {
     );
   }
 
-  private async validate(config: GatewayConfig, control: SelfProxyOptions): Promise<GatewayConfig> {
+  private async validate(config: GatewayConfig, control: SelfProxyOptions) {
     selectInterface(config.gateway.host);
     await rejectSelfProxy(config, control);
     return config;
   }
 
-  private event(level: 'info' | 'error', message: string): void {
+  private event(level: 'info' | 'error', message: string) {
     this.logs.append({ server: null, level, source: 'controller' }, [message]);
   }
 
-  private serial<A>(work: () => Promise<A>): Promise<A> {
+  private serial<A>(work: () => Promise<A>) {
     return this.queue(async () => {
       try {
         return await work();
@@ -378,28 +376,25 @@ export class McpGatewayController implements GatewayController {
   // Operations capture their lifetime when they are requested, so a Stop that
   // arrives while they wait for the queue still cancels them. An operation
   // requested after a Stop starts a fresh lifetime; close stays terminal.
-  private validationLifetime(): AbortSignal {
+  private validationLifetime() {
     if (this.validation.signal.aborted) this.validation = new AbortController();
     return this.validation.signal;
   }
 
-  operation(): GatewayOperation {
+  operation() {
     return { signal: this.validationLifetime() };
   }
 
   // An explicitly captured operation keeps the lifetime it was requested with;
   // only calls without one capture a fresh lifetime now.
-  private operationSignal(operation?: GatewayOperation): AbortSignal {
+  private operationSignal(operation?: GatewayOperation) {
     return operation?.signal ?? this.validationLifetime();
   }
 
   // Queued work runs under the lifetime captured when it was requested. A Stop requested
   // after it aborts that lifetime, so the work refuses at dequeue, before any side effect.
   // The deadline bounds validation, not time spent waiting for the queue.
-  private cancellable<A>(
-    signal: AbortSignal,
-    work: (control: SelfProxyOptions) => Promise<A>,
-  ): Promise<A> {
+  private cancellable<A>(signal: AbortSignal, work: (control: SelfProxyOptions) => Promise<A>) {
     return this.serial(async () => {
       if (signal.aborted)
         throw failure('Cancelled', 'The request was cancelled because the gateway stopped.');
@@ -407,29 +402,29 @@ export class McpGatewayController implements GatewayController {
     });
   }
 
-  private cancelValidation(): void {
+  private cancelValidation() {
     this.validation.abort();
   }
 
-  private ensureOpen(): void {
+  private ensureOpen() {
     if (this.closed || this.closing) throw failure('Closed', 'The controller is closed.');
   }
 
-  private watchFailure(): GatewayError {
+  private watchFailure() {
     return failure('ConfigIO', WATCH_UNAVAILABLE);
   }
 
-  private requireWatchHealthy(): void {
+  private requireWatchHealthy() {
     if (!this.directoryWatch.healthy) throw this.watchFailure();
   }
 
-  private report = (error: VisibleError): void => {
+  private report = (error: VisibleError) => {
     this.logs.append({ server: null, level: 'error', source: 'controller' }, [error]);
     this.operationalError = error;
     this.event('error', error.message);
   };
 
-  private async startOwned(control: SelfProxyOptions): Promise<void> {
+  private async startOwned(control: SelfProxyOptions) {
     this.ensureOpen();
     this.requireWatchHealthy();
     if (this.ingress?.running) return;
@@ -469,7 +464,7 @@ export class McpGatewayController implements GatewayController {
     }
   }
 
-  private async stopOwned(): Promise<void> {
+  private async stopOwned() {
     const ingress = this.ingress ?? this.closingIngress;
     this.ingress = undefined;
     this.ingressSignal = undefined;
@@ -488,7 +483,7 @@ export class McpGatewayController implements GatewayController {
     }
   }
 
-  start(operation?: GatewayOperation): Promise<GatewaySnapshot> {
+  start(operation?: GatewayOperation) {
     return this.cancellable(this.operationSignal(operation), async (control) => {
       try {
         await this.startOwned(control);
@@ -504,7 +499,7 @@ export class McpGatewayController implements GatewayController {
   // still wants it running, so reopen it once the configured address returns.
   // A Stop or close aborts the listener's lifetime and ends the wait. A fresh lifetime
   // must not be taken here: it would outlive a Stop that is still waiting in the queue.
-  private awaitInterface = (lost: GatewayIngress): void => {
+  private awaitInterface = (lost: GatewayIngress) => {
     const signal = this.ingressSignal;
     if (this.closed || this.closing || this.ingress !== lost || !signal || signal.aborted) return;
     this.cancelInterfaceRecovery();
@@ -531,12 +526,12 @@ export class McpGatewayController implements GatewayController {
     this.interfaceRecovery = timer;
   };
 
-  private cancelInterfaceRecovery(): void {
+  private cancelInterfaceRecovery() {
     if (this.interfaceRecovery) clearInterval(this.interfaceRecovery);
     this.interfaceRecovery = undefined;
   }
 
-  stop(): Promise<GatewaySnapshot> {
+  stop() {
     this.cancelValidation();
     this.cancelInterfaceRecovery();
     return this.serial(async () => {
@@ -546,7 +541,7 @@ export class McpGatewayController implements GatewayController {
     });
   }
 
-  restartServer(name: string, operation?: GatewayOperation): Promise<GatewaySnapshot> {
+  restartServer(name: string, operation?: GatewayOperation) {
     return this.cancellable(this.operationSignal(operation), async (control) => {
       this.ensureOpen();
       if (!this.ingress?.running)
@@ -564,7 +559,7 @@ export class McpGatewayController implements GatewayController {
 
   // Not queued: Stop, a reload or a save must not wait behind a slow backend. Stop and
   // reconciliation reach the test through the ingress, which aborts it.
-  async testServer(name: string, expectedRevision: string): Promise<ServerCheckResult> {
+  async testServer(name: string, expectedRevision: string) {
     this.ensureOpen();
     this.requireWatchHealthy();
     if (expectedRevision !== this.document.revision)
@@ -576,11 +571,7 @@ export class McpGatewayController implements GatewayController {
     return this.ingress.testServer(name);
   }
 
-  saveConfig(
-    text: string,
-    expectedRevision: string,
-    operation?: GatewayOperation,
-  ): Promise<GatewaySnapshot> {
+  saveConfig(text: string, expectedRevision: string, operation?: GatewayOperation) {
     return this.cancellable(this.operationSignal(operation), async (control) => {
       this.ensureOpen();
       // No file exists yet; a failed save would replace the setup remedy with a generic error.
@@ -597,11 +588,7 @@ export class McpGatewayController implements GatewayController {
     });
   }
 
-  migrateKeys(
-    slots: KeyMigration,
-    expectedRevision: string,
-    operation?: GatewayOperation,
-  ): Promise<GatewaySnapshot> {
+  migrateKeys(slots: KeyMigration, expectedRevision: string, operation?: GatewayOperation) {
     return this.cancellable(this.operationSignal(operation), async (control) => {
       this.ensureOpen();
       if (!this.keys || !this.config)
@@ -626,11 +613,7 @@ export class McpGatewayController implements GatewayController {
     });
   }
 
-  private async apply(
-    document: ConfigDocument,
-    next: GatewayConfig,
-    control: SelfProxyOptions,
-  ): Promise<void> {
+  private async apply(document: ConfigDocument, next: GatewayConfig, control: SelfProxyOptions) {
     const previous = this.config;
     const running = this.ingress?.running ?? false;
     this.document = document;
@@ -657,7 +640,7 @@ export class McpGatewayController implements GatewayController {
     }
   }
 
-  private async refresh(control: SelfProxyOptions): Promise<void> {
+  private async refresh(control: SelfProxyOptions) {
     const candidate = await this.validated(control);
     if (!candidate) return;
     // A valid document that cannot be applied (for example a busy port) is an
@@ -666,9 +649,7 @@ export class McpGatewayController implements GatewayController {
     await this.apply(candidate.document, candidate.config, control);
   }
 
-  private async validated(
-    control: SelfProxyOptions,
-  ): Promise<{ document: ConfigDocument; config: GatewayConfig; slots: KeyMigration } | null> {
+  private async validated(control: SelfProxyOptions) {
     let document: ConfigDocument | undefined;
     try {
       document = await this.store.read();
@@ -692,7 +673,7 @@ export class McpGatewayController implements GatewayController {
     }
   }
 
-  close(): Promise<void> {
+  close() {
     if (this.closePromise) return this.closePromise;
     this.closing = true;
     this.cancelValidation();

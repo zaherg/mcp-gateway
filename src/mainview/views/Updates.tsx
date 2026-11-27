@@ -9,7 +9,7 @@ import type { Translate } from '@mcp-gateway/shared/i18n';
 import type { UpdateStatus } from '@mcp-gateway/shared/rpc';
 
 // The clock format follows the macOS region, not the interface language, as it did before.
-const updateCheckedLabel = (value: string | null, t: Translate): string => {
+const updateCheckedLabel = (value: string | null, t: Translate) => {
   if (!value) return t('updates.notChecked');
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return t('updates.checkTimeUnavailable');
@@ -18,13 +18,13 @@ const updateCheckedLabel = (value: string | null, t: Translate): string => {
   });
 };
 
-const formatBytes = (bytes: number): string => {
+const formatBytes = (bytes: number) => {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
-const updateStatusText = (update: UpdateStatus, t: Translate): string => {
+const updateStatusText = (update: UpdateStatus, t: Translate) => {
   switch (update.phase) {
     case 'checking':
       return t('updates.status.checking');

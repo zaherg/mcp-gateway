@@ -30,7 +30,7 @@ import {
 
 installDomEnvironment();
 
-let unsavedRawConfigChecker: () => boolean = () => false;
+let unsavedRawConfigChecker = () => false;
 const fallbackSnapshotListeners = new Set<(snapshot: AppSnapshot) => void>();
 const fallbackMenuListeners = new Set<(command: MenuCommand) => void>();
 
@@ -71,7 +71,7 @@ const deferred = <T,>() => {
   return { promise, resolve, reject };
 };
 
-const makeFormEvent = (): FormEvent =>
+const makeFormEvent = () =>
   ({
     preventDefault: () => {},
   }) as FormEvent;
@@ -208,7 +208,7 @@ const renderOperationsHarness = (
       const [error, setError] = useState<string | null>(null);
       const [snapshot, setSnapshot] = useState<AppSnapshot | null>(initial.snapshot ?? null);
       const [doc, setDocState] = useState<Document | null>(initial.doc ?? null);
-      const docRef = useRef<Document | null>(doc);
+      const docRef = useRef(doc);
       docRef.current = doc;
 
       const ops = useOperations({
@@ -319,7 +319,7 @@ describe('useOperations', () => {
   });
 
   test('run with saved=false updates snapshot without overwriting doc', async () => {
-    const localDoc: Document = { text: '{"draft":true}', revision: DEFAULT_REVISION, dirty: true };
+    const localDoc = { text: '{"draft":true}', revision: DEFAULT_REVISION, dirty: true };
     const harness = renderOperationsHarness({ doc: localDoc });
     const nextSnapshot = makeSnapshot({ revision: SECOND_REVISION, running: true });
 
@@ -435,7 +435,7 @@ describe('useOperations', () => {
 
   test('quitGeneration guard prevents post-quit resolutions and rejections from mutating state', async () => {
     const initialSnapshot = makeSnapshot({ revision: DEFAULT_REVISION });
-    const initialDoc: Document = {
+    const initialDoc = {
       text: initialSnapshot.gateway.configText,
       revision: DEFAULT_REVISION,
       dirty: false,

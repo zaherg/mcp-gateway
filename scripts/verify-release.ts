@@ -273,7 +273,7 @@ try {
     .filter((value): value is string => !!value)
     .map((value) => Buffer.from(value));
   let files = 0;
-  const scan = async (path: string): Promise<void> => {
+  const scan = async (path: string) => {
     cancellation.signal.throwIfAborted();
     const info = await lstat(path);
     if (info.isSymbolicLink()) return;

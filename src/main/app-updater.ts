@@ -33,10 +33,7 @@ export interface UpdateRuntime {
   subscribe(listener: (status: UpdateStatus) => void): () => void;
 }
 
-export const resolveUpdateSupport = async (): Promise<{
-  supported: boolean;
-  installedVersion: string | null;
-}> => {
+export const resolveUpdateSupport = async () => {
   const info = await Updater.getLocalInfo();
   const installedVersion = STABLE_VERSION.test(info.version) ? info.version : null;
   return {
@@ -45,13 +42,13 @@ export const resolveUpdateSupport = async (): Promise<{
   };
 };
 
-const extractTeamIdentifier = (output: string): string | null =>
+const extractTeamIdentifier = (output: string) =>
   /^TeamIdentifier=(.+)$/m.exec(output)?.[1]?.trim() ?? null;
 
 export const verifyStagedAppBundleSignature = async (
   stagedAppPath: string,
   installedAppPath = resolve(dirname(process.execPath), '..', '..'),
-): Promise<void> => {
+) => {
   const verified = await runCommand('/usr/bin/codesign', [
     '--verify',
     '--deep',
@@ -104,10 +101,7 @@ export const verifyStagedAppBundleSignature = async (
   }
 };
 
-export const verifyDownloadedUpdate = async (expected: {
-  version: string;
-  hash?: string;
-}): Promise<void> => {
+export const verifyDownloadedUpdate = async (expected: { version: string; hash?: string }) => {
   const localInfo = await Updater.getLocalInfo();
   const baseUrl = localInfo.baseUrl?.replace(/\/+$/, '');
   if (baseUrl) {
@@ -185,14 +179,9 @@ export const verifyDownloadedUpdate = async (expected: {
   }
 };
 
-interface Preference {
-  automaticUpdates: boolean;
-  error: string | null;
-}
+const invalidPreference = () => ({ automaticUpdates: false, error: PREFERENCE_ERROR });
 
-const invalidPreference = (): Preference => ({ automaticUpdates: false, error: PREFERENCE_ERROR });
-
-const readPreference = async (dataDirectory: string): Promise<Preference> => {
+const readPreference = async (dataDirectory: string) => {
   const path = join(dataDirectory, PREFERENCE_FILE);
   const result = await readPrivateJson(path, (record) => {
     const keys = Object.keys(record).sort();
@@ -210,18 +199,18 @@ const readPreference = async (dataDirectory: string): Promise<Preference> => {
   return { automaticUpdates: result.value, error: null };
 };
 
-const writePreference = async (dataDirectory: string, automaticUpdates: boolean): Promise<void> => {
+const writePreference = async (dataDirectory: string, automaticUpdates: boolean) => {
   const path = join(dataDirectory, PREFERENCE_FILE);
   await writePrivateJsonAtomic(path, { automaticUpdates });
 };
 
-const errorMessage = (error: unknown, fallback = 'The update operation failed.'): string =>
+const errorMessage = (error: unknown, fallback = 'The update operation failed.') =>
   sanitizeErrorText(error, fallback, 240);
 
 const extractDownloadProgress = (
   entry?: UpdateStatusEntry,
   previous?: UpdateDownloadProgress | null,
-): UpdateDownloadProgress => {
+) => {
   const details = entry?.details;
   const info = Updater.updateInfo() as unknown as Record<string, unknown>;
   const rawBytes =
@@ -299,7 +288,7 @@ export class AppUpdater implements UpdateRuntime {
     };
   }
 
-  status(): UpdateStatus {
+  status() {
     const dp = this.value.downloadProgress ? { ...this.value.downloadProgress } : null;
     const isReady = this.value.phase === 'ready';
     const progressPercent = isReady ? 100 : (dp?.percent ?? (dp ? 0 : null));
@@ -314,12 +303,12 @@ export class AppUpdater implements UpdateRuntime {
     };
   }
 
-  subscribe(listener: (status: UpdateStatus) => void): () => void {
+  subscribe(listener: (status: UpdateStatus) => void) {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
 
-  async start(): Promise<UpdateStatus> {
+  async start() {
     if (!this.options.supported || this.started || this.stopped) return this.status();
     this.started = true;
     const preference = await readPreference(this.options.dataDirectory);
@@ -336,14 +325,14 @@ export class AppUpdater implements UpdateRuntime {
     return this.status();
   }
 
-  stop(): void {
+  stop() {
     this.stopped = true;
     this.clearTimers();
     Updater.onStatusChange(null);
     this.listeners.clear();
   }
 
-  async check(): Promise<UpdateStatus> {
+  async check() {
     this.assertAvailable();
     if (this.value.phase === 'restarting')
       throw new RequestError('An update restart is already in progress.');
@@ -351,7 +340,7 @@ export class AppUpdater implements UpdateRuntime {
     return this.performCheck();
   }
 
-  async download(): Promise<UpdateStatus> {
+  async download() {
     this.assertAvailable();
     if (this.value.phase === 'restarting')
       throw new RequestError('An update restart is already in progress.');
@@ -368,7 +357,7 @@ export class AppUpdater implements UpdateRuntime {
     return this.status();
   }
 
-  async installUpdate(): Promise<UpdateStatus> {
+  async installUpdate() {
     this.assertAvailable();
     if (this.value.phase === 'restarting')
       throw new RequestError('An update restart is already in progress.');
@@ -387,14 +376,14 @@ export class AppUpdater implements UpdateRuntime {
         if (downloaded.phase === 'ready' && !this.stopped) {
           await this.restart();
         }
-      } catch (error: unknown) {
+      } catch (error) {
         this.update({ phase: 'error', downloadProgress: null, error: errorMessage(error) });
       }
     })();
     return this.status();
   }
 
-  async setAutomatic(enabled: boolean): Promise<UpdateStatus> {
+  async setAutomatic(enabled: boolean) {
     this.assertAvailable();
     // A failed write reaches the caller as a failed request; the previous setting stays active.
     await writePreference(this.options.dataDirectory, enabled);
@@ -407,7 +396,7 @@ export class AppUpdater implements UpdateRuntime {
     return this.status();
   }
 
-  async restart(): Promise<QuitStatus> {
+  async restart() {
     this.assertAvailable();
     const info = Updater.updateInfo();
     if (!info.updateReady || !info.version || !this.eligible(info.version))
@@ -460,7 +449,7 @@ export class AppUpdater implements UpdateRuntime {
     return this.options.quit.status();
   }
 
-  private async performCheck(): Promise<UpdateStatus> {
+  private async performCheck() {
     this.update({ phase: 'checking', downloadProgress: null, error: null });
     this.lastCheckAt = Date.now();
     try {
@@ -487,7 +476,7 @@ export class AppUpdater implements UpdateRuntime {
     }
   }
 
-  private async performDownload(): Promise<UpdateStatus> {
+  private async performDownload() {
     this.update({
       phase: 'downloading',
       downloadProgress: extractDownloadProgress(undefined, this.value.downloadProgress),
@@ -523,7 +512,7 @@ export class AppUpdater implements UpdateRuntime {
     }
   }
 
-  private handleSdkStatus(entry: UpdateStatusEntry): void {
+  private handleSdkStatus(entry: UpdateStatusEntry) {
     const info = Updater.updateInfo();
     switch (entry.status) {
       case 'checking':
@@ -596,7 +585,7 @@ export class AppUpdater implements UpdateRuntime {
     }
   }
 
-  private seedFromSdk(): void {
+  private seedFromSdk() {
     const info = Updater.updateInfo();
     const terminal = [...Updater.getStatusHistory()]
       .reverse()
@@ -631,7 +620,7 @@ export class AppUpdater implements UpdateRuntime {
       this.set({ phase: 'error', downloadProgress: null, error: errorMessage(info.error) });
   }
 
-  private scheduleChecks(): void {
+  private scheduleChecks() {
     if (!this.started || this.stopped || !this.value.automaticUpdates) return;
     this.clearTimers();
     this.startupTimer = setTimeout(() => {
@@ -649,7 +638,7 @@ export class AppUpdater implements UpdateRuntime {
     }, POLL_INTERVAL_MS);
   }
 
-  private scheduledCheck(): void {
+  private scheduledCheck() {
     if (
       !this.started ||
       this.stopped ||
@@ -661,7 +650,7 @@ export class AppUpdater implements UpdateRuntime {
     void this.check().catch(() => undefined);
   }
 
-  private clearTimers(): void {
+  private clearTimers() {
     if (this.startupTimer) clearTimeout(this.startupTimer);
     if (this.intervalTimer) clearInterval(this.intervalTimer);
     this.startupTimer = undefined;
@@ -669,7 +658,7 @@ export class AppUpdater implements UpdateRuntime {
   }
 
   /** Whether `candidate` is a stable version higher than the installed one. */
-  private eligible(candidate: string): boolean {
+  private eligible(candidate: string) {
     const installed = this.options.installedVersion;
     if (!installed || !STABLE_VERSION.test(candidate) || !STABLE_VERSION.test(installed))
       return false;
@@ -680,22 +669,22 @@ export class AppUpdater implements UpdateRuntime {
     }
   }
 
-  private assertAvailable(): void {
+  private assertAvailable() {
     if (!this.options.supported) throw new RequestError('Updates are unavailable in this build.');
     if (this.stopped)
       throw new RequestError('Update work is unavailable after shutdown has started.');
   }
 
-  private set(patch: Partial<UpdateStatus>): void {
+  private set(patch: Partial<UpdateStatus>) {
     this.value = { ...this.value, ...patch };
   }
 
-  private update(patch: Partial<UpdateStatus>): void {
+  private update(patch: Partial<UpdateStatus>) {
     this.set(patch);
     this.publish();
   }
 
-  private publish(): void {
+  private publish() {
     const status = this.status();
     for (const listener of this.listeners) listener(status);
   }

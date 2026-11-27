@@ -81,10 +81,7 @@ export const useOperations = ({
     }
   };
 
-  const runUpdate = async (
-    operation: () => Promise<AppResult<UpdateStatus>>,
-    _message = '',
-  ): Promise<boolean> => {
+  const runUpdate = async (operation: () => Promise<AppResult<UpdateStatus>>, _message = '') => {
     if (updateBusy) return false;
     const terminalGeneration = quitGeneration.current;
     setUpdateBusy(true);

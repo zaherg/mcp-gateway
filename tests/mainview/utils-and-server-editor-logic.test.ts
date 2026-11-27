@@ -8,7 +8,6 @@ import {
   bearPreset,
   createKeyValueRow,
   formConfig,
-  type KeyValueRow,
   keyValueRowsToRecord,
   recordToKeyValueRows,
 } from '@mcp-gateway/mainview/dialogs/ServerEditor';
@@ -33,7 +32,7 @@ describe('generateToken', () => {
 
   test('zero-pads low byte values from crypto.getRandomValues', () => {
     const spy = spyOn(crypto, 'getRandomValues').mockImplementation(
-      <T extends ArrayBufferView | null>(array: T): T => {
+      <T extends ArrayBufferView | null>(array: T) => {
         if (array instanceof Uint8Array) {
           for (let i = 0; i < array.length; i += 1) {
             array[i] = i;
@@ -148,7 +147,7 @@ describe('ServerEditor key-value row helpers', () => {
   });
 
   test('keyValueRowsToRecord trims keys, skips blank rows, and preserves values', () => {
-    const rows: KeyValueRow[] = [
+    const rows = [
       createKeyValueRow('  FOO  ', ' bar '),
       createKeyValueRow('   ', ''),
       createKeyValueRow('', ''),
@@ -320,7 +319,7 @@ describe('formConfig', () => {
 
   test('returns null when any stdio or http server entry has invalid field types or __proto__ maps', () => {
     const gateway = { host: '127.0.0.1', port: 3100, token: 'secret' };
-    const invalidServers: unknown[] = [
+    const invalidServers = [
       null,
       'not-an-object',
       { command: 123 },

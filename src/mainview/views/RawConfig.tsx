@@ -40,10 +40,10 @@ interface SyncState {
   listener: Extension | null;
 }
 
-const staticExtensions: Extension[] = [...jsonEditing, lineNumbers()];
+const staticExtensions = [...jsonEditing, lineNumbers()];
 
 // Uniform endings survive edits; a mixed-ending draft normalizes to LF on its first real edit.
-const lineSeparatorOf = (text: string): string | null => {
+const lineSeparatorOf = (text: string) => {
   const crlf = text.match(/\r\n/g)?.length ?? 0;
   const loneCr = text.match(/\r(?!\n)/g)?.length ?? 0;
   const loneLf = text.split('\n').length - 1 - crlf;
@@ -53,7 +53,7 @@ const lineSeparatorOf = (text: string): string | null => {
   return null;
 };
 
-const fieldBehavior = (fieldId: string, locked: boolean, invalid: boolean): Extension[] => [
+const fieldBehavior = (fieldId: string, locked: boolean, invalid: boolean) => [
   EditorState.readOnly.of(locked),
   EditorView.editable.of(!locked),
   EditorView.contentAttributes.of({
@@ -66,7 +66,7 @@ const fieldBehavior = (fieldId: string, locked: boolean, invalid: boolean): Exte
   }),
 ];
 
-const positionOf = (text: string, offset: number): { line: number; column: number } => {
+const positionOf = (text: string, offset: number) => {
   const limit = Math.max(0, Math.min(offset, text.length));
   // A bare CR ends a line too, as the editor displays it.
   const lines = text.slice(0, limit).split(/\r\n|\r|\n/);
@@ -83,7 +83,7 @@ const feedbackOf = (issue: ConfigIssue | null, text: string): Feedback => {
   };
 };
 
-const feedbackText = (feedback: Feedback, t: Translate): string => {
+const feedbackText = (feedback: Feedback, t: Translate) => {
   switch (feedback.kind) {
     case 'ok':
       return t('raw.checked');
@@ -104,8 +104,7 @@ const feedbackText = (feedback: Feedback, t: Translate): string => {
   }
 };
 
-const tooLarge = (text: string): boolean =>
-  new TextEncoder().encode(text).length > MAX_CONFIG_BYTES;
+const tooLarge = (text: string) => new TextEncoder().encode(text).length > MAX_CONFIG_BYTES;
 
 interface RawConfigProps {
   visible: boolean;

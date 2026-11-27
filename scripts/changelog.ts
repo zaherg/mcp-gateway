@@ -22,14 +22,14 @@ const options = parseArgs({
 });
 
 /** Collapses blank runs inside one section; the rest of the file is never rewritten. */
-const normalize = (text: string): string => text.replace(/\n{3,}/g, '\n\n').trim();
+const normalize = (text: string) => text.replace(/\n{3,}/g, '\n\n').trim();
 
 /** Replaces `[start, end)` with `text`, keeping one blank line before the next section. */
-const splice = (original: string, start: number, end: number, text: string): string =>
+const splice = (original: string, start: number, end: number, text: string) =>
   `${original.slice(0, start)}${text}\n\n${original.slice(end)}`;
 
 /** Byte range of a `## [...]` section, from its heading to the next one or the end. */
-const section = (text: string, heading: RegExp): { start: number; end: number } => {
+const section = (text: string, heading: RegExp) => {
   const match = heading.exec(text);
   if (!match) throw new Error('CHANGELOG.md has no ## [Unreleased] section.');
   const start = match.index;
@@ -38,7 +38,7 @@ const section = (text: string, heading: RegExp): { start: number; end: number } 
   return { start, end: next ? start + match[0].length + next.index : text.length };
 };
 
-const localDate = (): string => {
+const localDate = () => {
   const now = new Date();
   const month = String(now.getMonth() + 1).padStart(2, '0');
   return `${now.getFullYear()}-${month}-${String(now.getDate()).padStart(2, '0')}`;
@@ -53,7 +53,7 @@ const spawnCliff = (args: string[]) => {
   }
 };
 
-const render = async (): Promise<string> => {
+const render = async () => {
   const child = spawnCliff(['git-cliff', '--unreleased']);
   const [stdout, stderr, code] = await Promise.all([
     new Response(child.stdout).text(),
@@ -65,7 +65,7 @@ const render = async (): Promise<string> => {
 };
 
 /** Replaces the Unreleased section with entries rendered from the commits since the last tag. */
-const refresh = async (original: string): Promise<string> => {
+const refresh = async (original: string) => {
   const { start, end } = section(original, UNRELEASED_HEADING);
   const rendered = await render();
   if (!/^## \[/m.test(rendered)) throw new Error('No changelog-worthy commits since the last tag.');
@@ -73,7 +73,7 @@ const refresh = async (original: string): Promise<string> => {
 };
 
 /** Moves the Unreleased entries under the version and opens a new Unreleased section. */
-const stamp = (original: string, tag: string): string => {
+const stamp = (original: string, tag: string) => {
   if (!STABLE_VERSION_PATTERN.test(tag))
     throw new Error('The tag must be a version, such as 0.8.0.');
   if (tag !== packageInfo.version)
@@ -106,7 +106,7 @@ const stamp = (original: string, tag: string): string => {
   return linked.replace(UNRELEASED_LINK, () => refs);
 };
 
-const main = async (): Promise<void> => {
+const main = async () => {
   const original = await readFile(changelogPath, 'utf8');
   const tag = options.values.tag;
   const next = tag === undefined ? await refresh(original) : stamp(original, tag);

@@ -32,7 +32,7 @@ const NETWORK_LABELS: Record<NetworkKind, MessageKey> = {
  * with no ranges, such as ", ,", stays an empty list so saving reports it instead of
  * silently dropping the restriction.
  */
-const peerList = (text: string): string[] | undefined => {
+const peerList = (text: string) => {
   const entries = text
     .split(',')
     .map((entry) => entry.trim())

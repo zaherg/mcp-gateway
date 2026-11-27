@@ -12,7 +12,7 @@ interface CopiedClientConfig {
   mcpServers: Record<string, { url: string; headers: Record<string, string> }>;
 }
 
-const parseJsonRpcResponse = async (response: Response): Promise<Record<string, unknown>> => {
+const parseJsonRpcResponse = async (response: Response) => {
   const contentType = response.headers.get('content-type') ?? '';
   const text = await response.text();
   if (contentType.includes('text/event-stream')) {
@@ -27,11 +27,7 @@ const parseJsonRpcResponse = async (response: Response): Promise<Record<string, 
   return JSON.parse(text) as Record<string, unknown>;
 };
 
-const postJsonRpc = (
-  url: string,
-  headers: Record<string, string>,
-  body: unknown,
-): Promise<Response> =>
+const postJsonRpc = (url: string, headers: Record<string, string>, body: unknown) =>
   fetch(url, {
     method: 'POST',
     signal: AbortSignal.timeout(10_000),
@@ -47,7 +43,7 @@ const postModernJsonRpc = (
   url: string,
   headers: Record<string, string>,
   body: { jsonrpc: '2.0'; id: number | string; method: string; params?: Record<string, unknown> },
-): Promise<Response> => {
+) => {
   const toolName = typeof body.params?.name === 'string' ? body.params.name : undefined;
   return postJsonRpc(
     url,

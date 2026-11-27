@@ -19,7 +19,7 @@ export class RequestError extends Error {
 
 let issueSequence = 0;
 
-export const failure = (code: GatewayErrorCode, message: string): GatewayError => {
+export const failure = (code: GatewayErrorCode, message: string) => {
   return new GatewayError({ code, message, occurrenceId: `issue-${++issueSequence}` });
 };
 
@@ -40,7 +40,7 @@ const QUERY_SECRET_PATTERN =
   /([?&](?:token|api_key|apikey|key|secret|password|access_token)=)[^&#\s]+/gi;
 const AUTH_SCHEME_PATTERN = /\b(Bearer|Basic)\s+[^\s,;]+/gi;
 
-export const sanitizeErrorText = (raw: unknown, fallback: string, maxLength = 240): string => {
+export const sanitizeErrorText = (raw: unknown, fallback: string, maxLength = 240) => {
   const source = typeof raw === 'string' ? raw : raw instanceof Error ? raw.message : '';
   const cleaned = source
     .replace(CONTROL_CHARS_PATTERN, ' ')

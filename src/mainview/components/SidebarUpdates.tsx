@@ -5,13 +5,6 @@ import { useI18n } from '@mcp-gateway/mainview/i18n';
 import type { Translate } from '@mcp-gateway/shared/i18n';
 import type { UpdateStatus } from '@mcp-gateway/shared/rpc';
 
-interface Presentation {
-  title: string;
-  detail: string | null;
-  ariaLabel: string;
-  announcement: string;
-}
-
 const phaseLabels = (update: UpdateStatus, t: Translate): readonly [string, string | null] => {
   switch (update.phase) {
     case 'idle':
@@ -34,7 +27,7 @@ const phaseLabels = (update: UpdateStatus, t: Translate): readonly [string, stri
   }
 };
 
-const describeUpdate = (update: UpdateStatus, t: Translate): Presentation => {
+const describeUpdate = (update: UpdateStatus, t: Translate) => {
   const [title, detail] = phaseLabels(update, t);
   const version = update.availableVersion;
   if (update.phase === 'idle') {

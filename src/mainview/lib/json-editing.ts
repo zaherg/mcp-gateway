@@ -6,7 +6,7 @@ import {
   syntaxHighlighting,
 } from '@codemirror/language';
 import { json } from '@codemirror/legacy-modes/mode/javascript';
-import { EditorState, type Extension } from '@codemirror/state';
+import { EditorState } from '@codemirror/state';
 import { keymap } from '@codemirror/view';
 import { classHighlighter, tags } from '@lezer/highlight';
 
@@ -18,7 +18,7 @@ const jsonLanguage = StreamLanguage.define({
 });
 
 /** Shared JSON/JSONC editor setup with 2-space Tab indentation. */
-export const jsonEditing: Extension[] = [
+export const jsonEditing = [
   jsonLanguage,
   syntaxHighlighting(classHighlighter),
   bracketMatching(),

@@ -30,7 +30,7 @@ const assertGatewayError = (
   error: unknown,
   code: ErrorCode,
   messageSubstring?: string | RegExp,
-): GatewayError => {
+) => {
   expect(error).toBeInstanceOf(GatewayError);
   const gatewayError = error as GatewayError;
   expect(gatewayError.code).toBe(code);
@@ -46,7 +46,7 @@ export const expectGatewayError = (
   fn: () => unknown,
   code: ErrorCode,
   messageSubstring?: string | RegExp,
-): GatewayError => {
+) => {
   try {
     fn();
   } catch (error) {
@@ -59,7 +59,7 @@ export const expectAsyncGatewayError = async (
   fn: () => Promise<unknown>,
   code: ErrorCode,
   messageSubstring?: string | RegExp,
-): Promise<GatewayError> => {
+) => {
   try {
     await fn();
   } catch (error) {
@@ -68,16 +68,16 @@ export const expectAsyncGatewayError = async (
   throw new Error(`Expected GatewayError(${code}) to be rejected.`);
 };
 
-export const registerTempDirLifecycle = (prefix = 'mcp-gateway-test-'): TempDirLifecycle => {
+export const registerTempDirLifecycle = (prefix = 'mcp-gateway-test-') => {
   const tempDirs: string[] = [];
 
-  const makeTempDir = async (customPrefix = prefix): Promise<string> => {
+  const makeTempDir = async (customPrefix = prefix) => {
     const dir = await mkdtemp(join(tmpdir(), customPrefix));
     tempDirs.push(dir);
     return dir;
   };
 
-  const cleanupTempDirs = async (): Promise<void> => {
+  const cleanupTempDirs = async () => {
     while (tempDirs.length > 0) {
       const dir = tempDirs.pop();
       if (!dir) continue;
@@ -91,7 +91,7 @@ export const registerTempDirLifecycle = (prefix = 'mcp-gateway-test-'): TempDirL
   return { makeTempDir, cleanupTempDirs };
 };
 
-export const deferred = <T = void>(): Deferred<T> => {
+export const deferred = <T = void>() => {
   let resolve!: (value: T | PromiseLike<T>) => void;
   let reject!: (reason?: unknown) => void;
   const promise = new Promise<T>((res, rej) => {
@@ -101,16 +101,14 @@ export const deferred = <T = void>(): Deferred<T> => {
   return { promise, resolve, reject };
 };
 
-export const flushMicrotasks = async (turns = 2): Promise<void> => {
+export const flushMicrotasks = async (turns = 2) => {
   for (let i = 0; i < turns; i++) {
     await Promise.resolve();
   }
   await new Promise((resolve) => setTimeout(resolve, 0));
 };
 
-export const makeGatewayConfig = (
-  overrides: GatewayConfigOverrides = {},
-): Record<string, unknown> => ({
+export const makeGatewayConfig = (overrides: GatewayConfigOverrides = {}) => ({
   gateway: {
     host: '127.0.0.1',
     port: 3333,
@@ -120,5 +118,5 @@ export const makeGatewayConfig = (
   mcpServers: overrides.mcpServers ?? {},
 });
 
-export const makeConfigText = (overrides: GatewayConfigOverrides = {}): string =>
+export const makeConfigText = (overrides: GatewayConfigOverrides = {}) =>
   JSON.stringify(makeGatewayConfig(overrides));

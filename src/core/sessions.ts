@@ -148,13 +148,13 @@ const untilDrained = (res: ServerResponse): Promise<void> =>
     res.on('close', done);
   });
 
-const drained = (responses: Iterable<ServerResponse>): Promise<void> | undefined => {
+const drained = (responses: Iterable<ServerResponse>) => {
   const full = [...responses].filter((res) => res.writableNeedDrain);
   if (full.length) return Promise.all(full.map(untilDrained)).then(() => {});
   return undefined;
 };
 
-export const readWhile = (response: Response, wait: () => Promise<void> | undefined): Response => {
+export const readWhile = (response: Response, wait: () => Promise<void> | undefined) => {
   if (!response.body) return response;
   const reader = response.body.getReader();
   const held = new Response(
@@ -190,7 +190,7 @@ const failPendingCalls = ({
   pending: Set<string | number>;
   res: GatewayResponse;
   logger: GatewayLogger;
-}): void => {
+}) => {
   const replies = [...pending].map((id) =>
     transport
       .send({
@@ -236,7 +236,7 @@ class SessionLivenessProbe {
     private readonly logger: GatewayLogger,
   ) {}
 
-  start(): boolean {
+  start() {
     if (this.active || this.closed) return false;
     this.active = true;
     this.missed = 0;
@@ -246,19 +246,19 @@ class SessionLivenessProbe {
     return true;
   }
 
-  stop(): void {
+  stop() {
     this.active = false;
     this.revision++;
     clearTimeout(this.timer);
     clearTimeout(this.graceTimer);
   }
 
-  close(): void {
+  close() {
     this.closed = true;
     this.stop();
   }
 
-  private activity(): void {
+  private activity() {
     if (!this.active) return;
     this.missed = 0;
     this.resetGrace();
@@ -267,17 +267,17 @@ class SessionLivenessProbe {
     if (!this.activeRequests) this.schedule();
   }
 
-  requestStarted(): void {
+  requestStarted() {
     this.activeRequests++;
     this.activity();
   }
 
-  requestFinished(): void {
+  requestFinished() {
     if (this.activeRequests) this.activeRequests--;
     this.activity();
   }
 
-  accept(message: JSONRPCMessage): boolean {
+  accept(message: JSONRPCMessage) {
     if (
       !('id' in message) ||
       'method' in message ||
@@ -290,7 +290,7 @@ class SessionLivenessProbe {
     return true;
   }
 
-  private schedule(): void {
+  private schedule() {
     this.revision++;
     clearTimeout(this.timer);
     const revision = this.revision;
@@ -303,7 +303,7 @@ class SessionLivenessProbe {
     this.timer.unref();
   }
 
-  private resetGrace(): void {
+  private resetGrace() {
     clearTimeout(this.graceTimer);
     this.staleEligible = false;
     this.graceTimer = setTimeout(() => {
@@ -312,7 +312,7 @@ class SessionLivenessProbe {
     this.graceTimer.unref();
   }
 
-  private probe(): void {
+  private probe() {
     this.firstProbe = false;
     const id = `${this.idPrefix}${++this.nextId}`;
     const revision = ++this.revision;
@@ -330,7 +330,7 @@ class SessionLivenessProbe {
       });
   }
 
-  private miss(revision: number): void {
+  private miss(revision: number) {
     if (!this.active || this.revision !== revision) return;
     if (++this.missed < 2) {
       this.probe();
@@ -365,7 +365,7 @@ class SessionAccessCounter {
     private readonly logger: GatewayLogger,
   ) {}
 
-  inc(sessionId: string, reason: string): void {
+  inc(sessionId: string, reason: string) {
     this.logger.info(`SessionAccessCounter.inc() ${sessionId}, caused by ${reason}`);
     const session = this.sessions.get(sessionId);
     if (!session) {
@@ -380,7 +380,7 @@ class SessionAccessCounter {
     }
   }
 
-  dec(sessionId: string, reason: string): void {
+  dec(sessionId: string, reason: string) {
     this.logger.info(`SessionAccessCounter.dec() ${sessionId}, caused by ${reason}`);
     const session = this.sessions.get(sessionId);
     if (!session || 'timeout' in session) return;
@@ -398,7 +398,7 @@ class SessionAccessCounter {
     }
   }
 
-  clear(sessionId: string, runCleanup: boolean, reason: string): void {
+  clear(sessionId: string, runCleanup: boolean, reason: string) {
     this.logger.info(`SessionAccessCounter.clear() ${sessionId}, caused by ${reason}`);
     const session = this.sessions.get(sessionId);
     if (!session) return;
@@ -428,7 +428,7 @@ class ManagedSession {
       transport: StreamableHTTPServerTransport,
       responses: Set<GatewayResponse>,
     ) => PeerFactory,
-  ): Promise<ManagedSession> {
+  ) {
     let session!: ManagedSession;
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
@@ -494,12 +494,12 @@ class ManagedSession {
     };
   }
 
-  private initialized(sessionId: string): void {
+  private initialized(sessionId: string) {
     this.initializedSessionId = sessionId;
     this.sessions.register(sessionId, this.transport, this.probe);
   }
 
-  private fromChild(jsonMsg: JSONRPCMessage, line: string): void {
+  private fromChild(jsonMsg: JSONRPCMessage, line: string) {
     this.logger.info('Child → StreamableHttp:', line);
     if ('id' in jsonMsg && !('method' in jsonMsg)) {
       const id = jsonMsg.id;
@@ -514,7 +514,7 @@ class ManagedSession {
       });
   }
 
-  private relatedRequest(message: JSONRPCMessage): string | number | undefined {
+  private relatedRequest(message: JSONRPCMessage) {
     const own =
       'method' in message && message.method === 'notifications/progress'
         ? this.progressOf.get(
@@ -524,14 +524,14 @@ class ManagedSession {
     return own ?? this.pendingRequests.values().next().value;
   }
 
-  private settle(requestId: string | number): boolean {
+  private settle(requestId: string | number) {
     for (const [token, id] of this.progressOf) {
       if (id === requestId) this.progressOf.delete(token);
     }
     return this.pendingRequests.delete(requestId);
   }
 
-  private fromClient(msg: JSONRPCMessage): void {
+  private fromClient(msg: JSONRPCMessage) {
     if (this.probe.accept(msg)) return;
     if ('id' in msg && 'method' in msg) {
       this.pendingRequests.add(msg.id);
@@ -548,13 +548,13 @@ class ManagedSession {
     }
   }
 
-  private endCancelled(requestId: string | number): void {
+  private endCancelled(requestId: string | number) {
     if (!this.settle(requestId)) return;
     if (typeof this.transport.closeSSEStream === 'function')
       this.transport.closeSSEStream(requestId);
   }
 
-  stopChild(reason: string): void {
+  stopChild(reason: string) {
     if (this.childStopped) return;
     this.childStopped = true;
     if (this.initializedSessionId) this.sessions.forget(this.initializedSessionId, reason);
@@ -562,7 +562,7 @@ class ManagedSession {
     void this.peer.stop();
   }
 
-  private fail(err?: Error): void {
+  private fail(err?: Error) {
     if (this.childFailed) return;
     this.childFailed = true;
     if (err) this.logger.error('Child process failure:', err);
@@ -576,7 +576,7 @@ class ManagedSession {
   }
 }
 
-const rejectSession = (res: GatewayResponse, sessionId: string | string[] | undefined): void => {
+const rejectSession = (res: GatewayResponse, sessionId: string | string[] | undefined) => {
   if (sessionId) {
     res.status(404).json({
       jsonrpc: '2.0',
@@ -618,7 +618,7 @@ class DirectSessions implements SessionMultiplexer {
     );
   }
 
-  private timedOut(sessionId: string): void {
+  private timedOut(sessionId: string) {
     this.logger.info(`Session ${sessionId} timed out, cleaning up`);
     const transport = this.transports.get(sessionId);
     transport?.close().catch((err) => {
@@ -631,13 +631,13 @@ class DirectSessions implements SessionMultiplexer {
     sessionId: string,
     transport: StreamableHTTPServerTransport,
     probe: SessionLivenessProbe,
-  ): void {
+  ) {
     this.liveness.set(sessionId, probe);
     this.transports.set(sessionId, transport);
     this.counter.inc(sessionId, 'session initialization');
   }
 
-  forget(sessionId: string, reason: string): void {
+  forget(sessionId: string, reason: string) {
     this.liveness.delete(sessionId);
     this.counter.clear(sessionId, false, reason);
     this.transports.delete(sessionId);
@@ -648,7 +648,7 @@ class DirectSessions implements SessionMultiplexer {
     method: string,
     sessionId: () => string | undefined,
     ended?: (id: string) => void,
-  ): void {
+  ) {
     let responseEnded = false;
     const handleResponseEnd = (event: string) => {
       const id = sessionId();
@@ -662,14 +662,14 @@ class DirectSessions implements SessionMultiplexer {
     res.on('close', () => handleResponseEnd('closed'));
   }
 
-  private watch(transport: StreamableHTTPServerTransport, res: GatewayResponse): void {
+  private watch(transport: StreamableHTTPServerTransport, res: GatewayResponse) {
     const responses = this.openResponses.get(transport);
     if (!responses) return;
     responses.add(res);
     res.once('close', () => responses.delete(res));
   }
 
-  async post(req: GatewayRequest, res: GatewayResponse): Promise<void> {
+  async post(req: GatewayRequest, res: GatewayResponse) {
     const sessionId = req.headers['mcp-session-id'];
     let transport: StreamableHTTPServerTransport | undefined;
     if (typeof sessionId === 'string' && this.transports.has(sessionId)) {
@@ -694,7 +694,7 @@ class DirectSessions implements SessionMultiplexer {
     await activeTransport.handleRequest(req, res, req.body);
   }
 
-  async request(req: GatewayRequest, res: GatewayResponse): Promise<void> {
+  async request(req: GatewayRequest, res: GatewayResponse) {
     const sessionId = req.headers['mcp-session-id'];
     if (typeof sessionId !== 'string' || !sessionId) {
       res.status(400).send('Invalid or missing session ID');
@@ -726,14 +726,14 @@ export const createSessions = (options: SessionOptions): SessionMultiplexer => {
 
   // Session bookkeeping logs several info lines per request; they would push
   // useful entries out of the bounded Logs buffer. Keep its warnings and errors.
-  const bookkeeping: GatewayLogger = {
+  const bookkeeping = {
     ...sessionLogger(log, () => true),
     info: () => {},
     debug: () => {},
   };
 
   let sessions!: DirectSessions;
-  const open = async (res: GatewayResponse): Promise<StreamableHTTPServerTransport> => {
+  const open = async (res: GatewayResponse) => {
     if (children.closing) throw failure('Closed', 'The backend is closing.');
     const leases = reserve();
     const work = calls.owner();
@@ -807,7 +807,7 @@ export const createSessions = (options: SessionOptions): SessionMultiplexer => {
     // A request whose response ended early (the request deadline or a client
     // disconnect) is cancelled the way a client cancel is. The call stays
     // charged until its backend answers or the session's cleanup ends it.
-    post: async (req: GatewayRequest, res: GatewayResponse): Promise<void> => {
+    post: async (req, res) => {
       const sessionId = req.headers['mcp-session-id'];
       const transport =
         typeof sessionId === 'string' ? sessions.transports.get(sessionId) : undefined;
@@ -828,8 +828,7 @@ export const createSessions = (options: SessionOptions): SessionMultiplexer => {
         });
       await sessions.post(req, res);
     },
-    request: (req: GatewayRequest, res: GatewayResponse): Promise<void> =>
-      sessions.request(req, res),
+    request: (req, res) => sessions.request(req, res),
   };
 };
 

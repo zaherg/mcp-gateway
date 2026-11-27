@@ -17,7 +17,7 @@ const NETWORK_NOTICES: Record<NetworkKind, readonly [MessageKey, MessageKey]> = 
 const NO_NETWORK_NOTICE = ['shell.network.unavailable', 'shell.network.unavailableDetail'] as const;
 const LOADING_NOTICE = ['shell.network.loading', 'shell.network.loadingDetail'] as const;
 
-const networkNotice = (snapshot: AppSnapshot | null): readonly [MessageKey, MessageKey] => {
+const networkNotice = (snapshot: AppSnapshot | null) => {
   if (!snapshot) return LOADING_NOTICE;
   const network = snapshot.gateway.network;
   return network ? NETWORK_NOTICES[network] : NO_NETWORK_NOTICE;

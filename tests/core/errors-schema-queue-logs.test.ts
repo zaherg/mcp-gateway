@@ -17,7 +17,7 @@ import { deferred } from '../helpers/core';
 
 const ISSUE_ID_PATTERN = /^issue-(\d+)$/;
 
-const issueNumber = (id: string): number => {
+const issueNumber = (id: string) => {
   const match = ISSUE_ID_PATTERN.exec(id);
   if (!match) throw new Error(`Expected issue-N occurrenceId, got: ${id}`);
   return Number(match[1]);
