@@ -44,17 +44,19 @@ It stops at the first failure, and nothing is uploaded before verification passe
 1. **Preflight.**
    It requires a macOS arm64 host, `MCP_GATEWAY_TEST_FEED` unset, a clean working tree, `HEAD` on a remote branch, a signed-in `gh` and a dated `CHANGELOG.md` section for the version.
    It refuses a version whose tag exists locally or on any remote, or whose release already exists.
-2. **Build** with `bun run release`, which signs and notarizes into `build/v<version>/` and `artifacts/v<version>/`.
-3. **Verify** with `bun scripts/verify-release.ts`: signatures, notarization tickets, Gatekeeper, versions, the feed and identifier inside the payload, the manifests, the archive and the DMG.
-4. **Publish** with `gh release create`, adding `SHA256SUMS` to the four artifacts.
+2. **Build** with `bun run release`, which signs, notarizes and enables delta update patch generation (`generatePatch: true`) into `build/v<version>/` and `artifacts/v<version>/`.
+3. **Verify** with `bun scripts/verify-release.ts`: signatures, notarization tickets, Gatekeeper, embedded metadata (`identifier`, `channel`, `hash`, `version`, `baseUrl`) across wrapper, DMG app and payload, manifests, archive and DMG.
+   The verifier refuses `SIGN_VERIFY_SKIP`, requires all 11 production signature, ticket and Gatekeeper checks to pass with exit code `0`, and fails if Apple notarization credentials are only partially configured.
+4. **Publish** with `gh release create`, adding `SHA256SUMS` to the release artifacts.
    It first checks again that the working tree is clean and `HEAD` is still the preflight commit, and refuses to publish otherwise; an edit made and undone during the build is not detected.
    The release targets the built commit, so the tag lands there, and its notes are the version's `CHANGELOG.md` section.
-5. **Read back** the release and download every file from `releases/latest/download`, comparing each with `SHA256SUMS`.
+5. **Read back** the release and download every file from `releases/latest/download` over HTTPS (TLS 1.2+ with per-file size limits), verify `stable-macos-arm64-update-v2.json` metadata and compare each file with `SHA256SUMS`.
+   Logged URLs and errors redact credentials and query strings.
    A failure here says the release IS published; inspect it on GitHub instead of publishing again.
 
 ### When a step fails
 
-The Electrobun signing step writes a redacted log to `.cache/build-stable.log`.
+The Electrobun signing step writes a redacted (`0600`) log to `.cache/build-stable.log` (or `.cache/build-stable-test.log` for test builds), stripping Apple credentials and signing identity lines.
 A build refuses output folders that are not empty, and kept artifacts must never be deleted to make room.
 To build the same version again, set `MCP_GATEWAY_BUILD_ROOT` and `MCP_GATEWAY_ARTIFACTS_DIR` to new project-relative folders; every step reads the same values.
 Builds share intermediate files, so run only one build per checkout at a time.
@@ -65,7 +67,7 @@ Builds share intermediate files, so run only one build per checkout at a time.
 - `stable-macos-arm64-update.json`: the legacy update manifest.
 - `stable-macos-arm64-update-v2.json`: the manifest with the expanded archive's digest and size, which Electrobun 2.0.6 uses.
 - `stable-macos-arm64-MCPGateway.app.tar.zst`: the update payload.
-- `SHA256SUMS`: checksums of the four files above.
+- `SHA256SUMS`: checksums of the published files above.
 
 The verifier also writes `release-verification.json` to the artifacts folder, or to `MCP_GATEWAY_VERIFICATION_OUTPUT` when set.
 It is local evidence and is not published.
@@ -76,7 +78,7 @@ The DMG holds an installer wrapper that replaces itself on first launch.
 ### Updates
 
 Production builds use the fixed feed `https://github.com/zaherg/mcp-gateway/releases/latest/download`; only `release:test` builds use another feed.
-An update must match the installed app's identifier, channel and version metadata; the updater does not compare the signing team.
+Before restarting to apply an update, the updater verifies the v2 manifest metadata when present, checks the staged app bundle with `codesign --verify --deep --strict`, and requires its Apple `TeamIdentifier` to match the installed app.
 Version `0.3.0` has no updater and must be upgraded by hand with the DMG.
 Passing the verifier does not prove that in-app updates work; test them with [UPDATE-TESTING.md](UPDATE-TESTING.md).
 

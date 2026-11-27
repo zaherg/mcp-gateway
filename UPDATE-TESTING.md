@@ -98,7 +98,7 @@ Test builds write to `build/test-v<version>/` and `artifacts/test-v<version>/` i
 If an output already exists, reuse its verified candidate.
 Otherwise choose new project-local `MCP_GATEWAY_BUILD_ROOT` and `MCP_GATEWAY_ARTIFACTS_DIR` values for both the build and the verifier.
 Never delete kept outputs just to let a build continue.
-The test verifier still checks signatures, manifest and payload identity, the expanded archive and every file in the DMG.
+The test verifier still checks signatures, manifest and payload identity, the expanded archive and every file in the DMG, and refuses `SIGN_VERIFY_SKIP`.
 Its record states that it skipped the notarization and Gatekeeper checks.
 Without the test identifier and feed arguments, the verifier runs the production checks and refuses a test candidate.
 
@@ -108,9 +108,9 @@ Without the test identifier and feed arguments, the verifier runs the production
 bun scripts/publish-test-feed.ts "$B_ARTIFACTS"
 ```
 
-Before uploading, the publisher checks both manifests, the expanded TAR digest and size, and the test identity and feed inside the payload.
-It uploads the archive first, then the v2 manifest, then the legacy manifest.
-It then downloads each file anonymously over HTTPS and compares it with the local copy.
+Before uploading, the publisher checks that every candidate file resolves inside the candidate folder (`realpath`), checks both manifests, the expanded TAR digest and size, and the test identity and feed inside the payload.
+It uploads the archive first (with `Content-Disposition: attachment`), then the v2 manifest, then the legacy manifest (both with `Cache-Control: no-cache`).
+It then downloads each file anonymously over HTTPS and compares it with the local copy, redacting URLs and secrets from output and errors.
 Publishing is not atomic: during an upload, a client can see files that do not match and must try again later.
 Keep both manifests so older clients keep working.
 
@@ -165,10 +165,10 @@ printf '%s\n' "$!" > "$RUN/initial-launcher.pid"
 ```
 
 Wait for the automatic check, about 10 seconds after launch, and then for the download.
-Open Updates in the sidebar and confirm that B is ready.
-Before you accept the restart, make an unsaved configuration change, choose Restart to Update, and cancel the confirmation.
-The unsaved change, the running app, the saved configuration and the A bundle must stay the same.
-Then choose Restart to Update again, confirm, and wait for the new window.
+Confirm in **Updates** (or from the sidebar **Update ready** item) that B is ready.
+Before you accept the restart, make an unsaved edit in **Settings → Authoritative configuration**, choose **Install and Relaunch** in **Updates** (or **Update ready** in the sidebar), and cancel the native **Discard unsaved changes?** dialog.
+The unsaved raw edit, the running app, the saved configuration and the A bundle must stay the same.
+Then choose **Install and Relaunch** again, confirm discarding the unsaved edit, and wait for the new window.
 The installed metadata must show B, its signature must pass, and both configuration checks must still match:
 
 ```sh
@@ -184,24 +184,24 @@ Do not register the test app as a login item.
 
 ## Failure cases and cleanup
 
-- Publish A's folder, then choose Check in the running B app.
+- Publish A's folder, then choose **Check for Updates** in the running B app.
   The app must report the version as not eligible and must not prepare an update.
   Afterward, publish B again.
 - To test a missing feed, remove only the two manifest keys this procedure owns, so the feed looks unpublished again.
-  Choose Check in the running app; an error must appear while the gateway keeps running.
+  Choose **Check for Updates** in the running app; an error must appear while the gateway keeps running.
   Afterward, publish the verified B folder again, including its archive.
 - Test a cleanup failure only in another throwaway source copy of A.
   In the native entry point, add a throw controlled by a flag file just before `await controller.close()`.
   Build and verify that private copy, and use a new scratch home and install.
-  With the flag file present, Restart to Update must leave A installed and the app running with a cleanup error.
-  Remove the flag file, choose Retry Quit, then reopen the same scratch copy and try the update again.
+  With the flag file present, **Install and Relaunch** must leave A installed and the app running with a cleanup error.
+  Remove the flag file, quit the app (`Cmd+Q` or from the menu-bar icon), then reopen the same scratch copy and try the update again.
   Never add this throw to the product source.
 
 Use the app's status text, configuration hashes, listener checks, anonymous downloads and, where available, S3 access logs as evidence.
 An object listing or a `curl` download alone does not prove which requests the app made.
 The "Rehearse the GitHub redirect shape" section below gives a separate request log without changing the shared S3 service.
 
-Quit the test app from its window.
+Quit the test app (`Cmd+Q` or from the menu-bar icon).
 Confirm that no process command points into `$RUN/install` and that nothing listens on port 18770.
 Only then delete the scratch run folder.
 Its test updater data lives inside `$RUN/home`, not in your real home folder.

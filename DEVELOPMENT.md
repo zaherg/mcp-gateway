@@ -34,14 +34,14 @@ For the signed `MCP Gateway Dev.app` build with Keychain support, see [Testing u
 `bun run build` and release builds load the bundled files and need no development server.
 A running app can read or change its configuration; see [Configuration](docs/configuration.md).
 
-The build prepares the toolchain by itself.
+The build prepares the toolchain by itself and compiles the Objective-C sources in `src/native/` (`keychain.m`, `locale.m`, `login.m`, `notifications.m`, `power.m`, `signals.m`, `tray.m`, `window.m`) into `.cache/native/login.dylib`, linked against `Foundation`, `ServiceManagement`, `AppKit`, `Security` and `UserNotifications`.
 It writes generated files under `.cache/`, `.hutch/`, `.hutch-home/`, `dist/`, `assets/` and the chosen build folder.
 Builds share these folders, so use a separate checkout for each build that runs at the same time.
 
 ## Toolchain
 
 `hutch.config.ts` pins Electrobun 2.0.6 and the matching Hutch 0.29.0.
-`bun run prepare:sdk` uses the installed Electrobun bootstrap to download and verify that toolchain under `.hutch-home/`.
+`bun run prepare:sdk` verifies that `node_modules/electrobun/bin/electrobun.cjs` is installed as a regular file, then uses it to download and verify that toolchain under `.hutch-home/`.
 It then copies the SDK into `.hutch/devkit/`.
 You do not need a global `hutch` installation.
 
@@ -55,7 +55,7 @@ This builds and launches the development app with React hot reload and main-proc
 It starts Vite on `127.0.0.1:5173` and stops if that port is already in use.
 Renderer edits reload in place with React Fast Refresh.
 Main-process and shared-code edits rebuild and restart the app.
-A restart discards unsaved drafts and interrupts gateway requests.
+A restart discards unsaved raw configuration drafts and interrupts gateway requests.
 Press `Ctrl+C` to stop the command; it closes Vite and the development app.
 Run the command again after changing native code, dependencies or build scripts.
 
@@ -71,13 +71,22 @@ Run the available checks:
 ```sh
 bun run typecheck
 bun run lint
-bun --no-env-file test tests/discovery-cache.test.ts
+bun run test
 ```
 
-The discovery-cache regression check uses synthetic loopback HTTP servers and the real gateway ingress.
-It covers retry after connection failure, interrupted response bodies and HTTP 503; positive and negative caching; malformed JSON and invalid UTF-8; and the 64 KiB discovery-response boundary, for JSON and SSE.
-It uses no real configuration, Keychain items or external services.
-This is the approved, narrowly scoped exception to the project's no-tests policy; broader unit, component, browser and packaged-acceptance suites remain absent.
+`bun run format` formats `src`, `tests`, `scripts`, root `*.ts` and `*.json` files with Biome.
+
+`bun run test` runs the Bun test suite (`bun test`), covering 19 test files across six areas:
+
+- `tests/core/`: stateless `2026-07-28` and session-based MCP adapters, upstream discovery caching, config validation and locking, ingress, `test-server`, controller lifecycle, IPv4/network checks, child process isolation, limits and log redaction.
+- `tests/shared/`: configuration document editing and secret detection, i18n formatting, identity, changelog parsing and RPC schemas.
+- `tests/main/`: `AppService` RPC handlers, updater verification, quit lifecycle, native FFI wrappers and private preference stores.
+- `tests/mainview/`: React components, dialogs, views, `GatewayViewContext`, hooks and renderer utilities under Happy-DOM.
+- `tests/scripts/`: build config, toolchain helpers, release artifact verification and DMG/inventory helpers.
+- `tests/e2e/`: full-stack tests wiring `<App />`, `AppService` and `McpGatewayController` to live loopback ports, real stdio MCP servers, real Streamable HTTP upstreams and an in-memory Keychain store.
+
+Tests run against temporary folders, loopback ports and mock or in-memory stores; they do not touch your real configuration, Keychain items or external services.
+Run a subset with `bun test tests/<folder>`, such as `bun test tests/core` or `bun test tests/e2e`.
 
 `.github/workflows/lint.yml` runs on branch pushes, pull requests, manual runs and calls from the release workflow.
 It uses Actionlint 1.7.12, ShellCheck 0.11.0 and Typos 1.52.0, each pinned by checksum.
@@ -101,12 +110,12 @@ To add a locale:
 
 1. Copy `src/shared/locales/en_US.json` to the new file and translate every value.
 2. In `src/shared/i18n.ts`, import the file and add its code to `CATALOG_LOCALES` and `CATALOGS`.
-3. Run `bun run typecheck` and `bun run lint`.
+3. Run `bun run typecheck`, `bun run lint` and `bun run test`.
 
 Current locales: `en_US`, `fr_FR`, `de_DE` and `tr_TR`.
 When no catalog matches a region exactly, the first listed catalog in the same language is used, so list the preferred regional variant first.
 The app picks the first macOS language that matches a locale, by language and region and then by language alone, and falls back to `en_US`.
-The sidebar shows a language picker under the tabs; the choice is stored in `language.json` next to `mcp.json`.
+**Settings → General** shows the language picker; the choice is stored in `language.json` next to `mcp.json`.
 Messages from the gateway, servers and logs are not translated.
 Right-to-left languages are not supported yet.
 
@@ -116,8 +125,9 @@ Write ordinary functions as named `const` arrow functions, including React compo
 Keep class and object methods, constructors, accessors and declaration-only signatures as they are, so their behavior does not change.
 Import TypeScript and JavaScript under `src/` through `@mcp-gateway/...`, even from the same folder.
 TypeScript, Bun and Vite all understand this alias.
+`tsconfig.json` also maps `jsonc-parser` to `./node_modules/jsonc-parser/lib/esm/main`.
 Imports from outside `src/`, such as script helpers and the root `package.json`, stay relative.
 CSS and resource paths stay relative too.
 Do not use `..` inside the alias, and do not add a second root alias.
-`dependencies` lists only packages loaded from `node_modules` at runtime, which are the externals in `electrobun.config.ts`.
-Bundled packages belong in `devDependencies`.
+All runtime JavaScript dependencies (`dependencies` in `package.json`) are bundled directly into the app; `electrobun.config.ts` defines no externals and ships no `node_modules` directory.
+Build, UI, lint, typecheck and test packages belong in `devDependencies`.

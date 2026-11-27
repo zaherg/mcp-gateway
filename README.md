@@ -19,13 +19,13 @@ Copy the app to a writable location, then open it.
 
 ## Quick start
 
-1. Add a server: a local executable or an HTTP(S) MCP server.
-2. In Settings, choose a private IPv4 address and a port.
+1. Add a server: a local executable or an HTTP(S) MCP server, or import existing servers from Claude Desktop or Cursor in **Settings → Advanced**.
+2. In **Settings → Network**, choose a private IPv4 address and a port.
    On a fresh install, the signed app has already generated the global bearer token and stored it in the macOS Keychain.
 3. Optionally, give a server its own key in the server dialog.
 4. Start the gateway, then copy its configuration into your MCP client.
 
-If an existing configuration contains plaintext keys, **Settings → Move keys to Keychain** moves them without changing the keys your clients use.
+If an existing configuration contains plaintext keys, **Settings → Security → Move keys to Keychain** moves them without changing the keys your clients use.
 
 Each server gets its own endpoint, such as `http://192.168.1.120:8765/mcp/bear`.
 [Getting started](docs/getting-started.md) walks through the same steps with the fields to fill in.
@@ -33,8 +33,8 @@ Each server gets its own endpoint, such as `http://192.168.1.120:8765/mcp/bear`.
 ## Documentation
 
 - [Getting started](docs/getting-started.md): install the app and serve your first server.
-- [Using the app](docs/using-the-app.md): the window, drafts, language, the menu-bar icon, logs and updates.
-- [Servers](docs/servers.md): local commands, HTTP servers, keys and the Bear preset.
+- [Using the app](docs/using-the-app.md): the window, saving changes, language, menus, logs and updates.
+- [Servers](docs/servers.md): local commands, HTTP servers, importing servers, keys and the Bear preset.
 - [Connect a client](docs/clients.md): setup for six clients, and protocol compatibility.
 - [Remote access](docs/remote-access.md): LAN, Tailscale and WireGuard addresses.
 - [Security](docs/security.md): what the gateway enforces and how to share safely.

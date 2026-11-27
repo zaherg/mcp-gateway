@@ -2,38 +2,45 @@
 
 ## Editing in the app
 
-Most settings are structured fields: the gateway preferences in **Settings**, and the server dialog on **Overview**.
+Most settings are structured fields: the gateway preferences in **Settings** (**General**, **Network**, **Security** and **Advanced**), and the server dialog on **Overview**.
+Structured edits save immediately: switches, toggles, key-generation buttons and server actions save on click, while text fields in **Settings** save when you leave the field or press `Return`.
 Structured edits rewrite only the values you change; a removed value also takes its line with it when nothing else is on that line.
-**Authoritative configuration**, a collapsible section in **Settings**, shows the file path and the full contents, including credentials.
+
+**Authoritative configuration**, a collapsible section in **Settings**, shows the file path and the full contents, including credentials, in a draft editor.
 A key stored in the macOS Keychain appears there only as its `tokenRef`.
 Use it to edit the file directly, or to repair one that structured editing cannot load.
-**Show in Finder** in that section selects the file in Finder, so you can open it in another editor; if the file is missing, it opens the folder instead.
+**Show in Finder** and **Open in External Editor** (in both **Settings → Advanced** and **Authoritative configuration**) let you locate or open the file in another editor; if the file is missing, **Show in Finder** opens the folder instead.
+**Settings → Advanced** and **Authoritative configuration** also provide an importer for Claude Desktop and Cursor server definitions.
 The section below describes the file itself.
 
 ## The configuration file
 
-The app edits this configuration for you, and **Authoritative configuration** in **Settings** opens the whole file in an editor.
-The editor colors JSON and JSONC, numbers lines and matches brackets.
-It checks the draft as you type and shows the problem with its line and column.
-**Format** tidies the draft, **Reset** returns to the saved file after a confirmation, and **Save** stays off while the draft has a problem.
+The app edits this configuration for you, and **Authoritative configuration** in **Settings** opens the whole file in a CodeMirror 6 editor.
+The editor colors JSON and JSONC, numbers lines, supports 2-space Tab indentation and matches brackets.
+It checks the draft as you type, shows the problem with its line and column, and provides a clickable **Line N** button that jumps straight to that line.
+A **`?`** button next to the file path opens a collapsible schema reference popover.
+**Format** tidies the draft, **Reset** returns to the saved file after a native confirmation, and **Save** stays off while the draft has a problem or no changes.
 Saving always validates the file again.
 
 Use one configuration file, either `mcp.json` or `mcp.jsonc`.
 It lives in `~/Library/Application Support/MCP Gateway/`, and this location cannot be changed.
-The same folder holds `updates.json`, the automatic-update setting, `seen-version.json`, the version whose release notes you closed, `language.json`, the app language you chose in the sidebar, and `key-reminder.json`, which records that the Keychain reminder was closed.
+The same folder holds `updates.json` (the automatic-update setting), `seen-version.json` (the version whose release notes you closed), `language.json` (the app language you chose in **Settings → General**) and `key-reminder.json` (which records that the Keychain reminder was closed).
+All four preference files use owner-only (`0600`) atomic file I/O with symlink protection and a 64 KiB size limit.
+Window size and position are stored natively by macOS AppKit rather than in a file in this folder.
+
 `mcp.json` must be strict JSON.
 `mcp.jsonc` also allows comments and trailing commas.
 If both files exist, the app reports an error.
 To rename the file, quit the app first, then reopen it.
 The files must be readable only by you, and symlinks are refused.
 The app reloads the file when another app saves it.
-Save or discard unsaved changes in the app first; otherwise its next save is refused as stale.
+Save or reset unsaved edits in **Authoritative configuration** first; otherwise its next save is refused as stale.
 If the app reports that the configuration must be an owner-only regular file after an outside edit, run `chmod 600` on the file.
 If it reports a second hard link after the app stopped during its first launch, delete the hidden `.mcp.json.<id>.tmp` (or `.mcp.jsonc.<id>.tmp`) file in the same folder, then reopen the app.
 
-After a crash, an `mcp.json.lock` file may remain next to the configuration.
-Quit every running copy of the app and make sure nothing else is writing the file.
-Then delete the lock and try again.
+The app coordinates writes using advisory `flock` locking on `mcp.json.lock` next to the configuration.
+That lock file stays on disk between saves and does not need to be deleted after a crash, because macOS releases the advisory lock automatically when the holding process exits.
+Like the configuration file, `mcp.json.lock` must remain an owner-only regular file (`0600`).
 
 ```json
 {
@@ -66,11 +73,15 @@ Earlier releases reject a configuration that contains `allowedPeers`, because th
 The port must be between 1 and 65535.
 `${NAME}` reads a variable from the app's environment, not from your shell startup files.
 A missing variable is an error.
-Stdio servers accept `command`, `args`, `env`, `cwd`, `token` or `tokenRef`, and `disabled`.
-HTTP servers accept `url`, `headers`, `token` or `tokenRef`, and `disabled`.
+
+Stdio servers accept `command`, `args`, `env`, `cwd`, `token` or `tokenRef`, `legacyProtocol` and `disabled`.
+Dangerous loader and runtime keys (`NODE_OPTIONS`, `BUN_OPTIONS`, `DYLD_*`, `LD_*`) are rejected in `env`.
+HTTP servers accept `url`, `headers`, `token` or `tokenRef`, `legacyProtocol` and `disabled`.
+HTTP `url` values pointing to link-local or cloud metadata addresses (`169.254.0.0/16`, `0.0.0.0/8`, `fe80::/10`, `::`, or IPv4-mapped IPv6 equivalents) are rejected.
+
 `token` is optional on a server.
 Without it, the server accepts the global `gateway.token`.
-With it, the server accepts only its own key, and the global key gets 401 on that endpoint.
+With it, the server accepts only its own key, and the global key gets `401` on that endpoint.
 A server `token` accepts the same `${NAME}` references as the global key.
 An invalid explicit value is an error, never a silent fallback to the global key.
 Bearer strings carry no identity, so give each shared server its own generated key.
@@ -91,9 +102,9 @@ An upgrade leaves existing files and keys unchanged.
 You can move the global key and each server's own key to Keychain without rotating them.
 Upstream `headers` values and `env` values always stay in the file.
 
-To move them, choose **Review keys** in the Overview reminder or **Move keys to Keychain** in **Settings**.
-Save or discard any draft first.
-The dialog lists the keys by name, never by value, and asks you to confirm a one-way move.
+To move them, choose **Review keys** in the Overview reminder or **Move keys to Keychain** in **Settings → Security**.
+Save or reset any unsaved edits in **Authoritative configuration** first.
+The dialog lists the keys by name with masked bullets (`••••••••`), never by value, and asks you to confirm a one-way move.
 All listed keys move together, or none do.
 Choosing **Stop gateway** while a requested move is still waiting to run cancels it, and nothing changes.
 
@@ -108,13 +119,14 @@ After the move, each slot holds `tokenRef` instead of `token`, for example:
 ```
 
 A slot holds either `token` or `tokenRef`, never both.
-The app writes `tokenRef` values itself; it creates and replaces Keychain items but never deletes one.
+The app writes `tokenRef` values itself; it accesses the macOS login Keychain directly through `Security.framework` (storing newly created items with `kSecAttrAccessibleWhenUnlocked`), falling back to `Bun.secrets` only when the native library is absent.
+It creates and replaces Keychain items but never deletes one.
 In Keychain Access, look for the service `MCP Gateway APP` (`MCP Gateway APP Test` for signed test builds) and match the **Account** to the `tokenRef` UUID.
 If storing or reading back a key fails, or the file changed in the meantime, the file is left unchanged and any item already created stays unused in Keychain; remove it in Keychain Access if you want.
 
 The move cannot be undone in the app.
 To go back by hand, find the matching service and account in Keychain Access, copy the item's password, and replace `"tokenRef": "…"` with `"token": "<the copied key>"` in the file.
-To replace a stored key instead, choose **Generate secure token** in Settings or **Generate secure key** in the server dialog, then save; this writes a new literal key that you can move again.
+To replace a stored key instead, choose **Generate secure token** in **Settings → Security** (which saves immediately) or **Generate secure key** in the server dialog and submit; this writes a new literal key that you can move again.
 
 Limits:
 
@@ -122,12 +134,11 @@ Limits:
 - Copying the configuration file to another Mac does not copy the Keychain items.
 - Unsigned development builds never access Keychain: they create new files with a literal `token` and report an error for a file with `tokenRef`.
   The signed `MCP Gateway Dev` build uses Keychain like the production app.
-- When the Keychain is locked, macOS may ask for your password; the app stops waiting after 5 seconds and shows a configuration error until the key can be read.
-  After unlocking, choose **Start gateway** to read the key again.
+- When the Keychain is locked, macOS may ask for your password; if the key cannot be read, the app shows a configuration error until Keychain is unlocked and you choose **Start gateway** to read the key again.
 
 The reminder on Overview appears once, until you close it, choose **Keep keys in file**, or start a move.
 It does not come back after that, even after a restart or an update.
-A new installation shows no reminder; the **Settings** button stays available while a key can move.
+A new installation shows no reminder; the **Settings → Security** button stays available while a key can move.
 
 ## Environment variables
 
@@ -139,7 +150,8 @@ A Mac app opened from Finder or at login receives launchd's environment, so vari
 Quit and reopen MCP Gateway after setting it.
 To keep a gateway key out of the file without an environment variable, write it as a literal key and move it to the macOS Keychain; see [Keys in Keychain](#keys-in-keychain).
 
-This describes standard macOS behavior; it was not tested with this release.
+Local stdio commands do not inherit the app's full environment; they receive only a minimal allowlist of parent variables (`PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `LANG`, `TMPDIR`, `TERM`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `__CF_USER_TEXT_ENCODING`, plus `LC_*` and `XDG_*`), overlaid with the server's configured `env`.
+Dangerous loader and runtime keys (`NODE_OPTIONS`, `BUN_OPTIONS`, `DYLD_*`, `LD_*`) are rejected in `env` and stripped from the child environment.
 
-To extend the `PATH` of a local command, set it in the server's **Environment (JSON object)**, for example `"PATH": "/opt/homebrew/bin:${PATH}"`.
+To extend the `PATH` of a local command, add a `PATH` row in the server's **Environment (JSON object)** table, for example `/opt/homebrew/bin:${PATH}`.
 See [Commands that work in Terminal but not in the app](servers.md#commands-that-work-in-terminal-but-not-in-the-app).

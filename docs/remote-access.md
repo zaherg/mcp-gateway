@@ -2,7 +2,7 @@
 
 ## Choosing an address
 
-The gateway listens on one address at a time, the value in **Interface / address**.
+The gateway listens on one address at a time, the value in **Settings → Network → Interface / address**.
 The choices are loopback, a LAN address, a Tailscale address or a WireGuard address.
 Settings suggests addresses with a label for each network: "this computer only", "LAN", "Tailscale" or "VPN tunnel".
 
@@ -11,8 +11,8 @@ The sidebar notice names the network of the saved address: this Mac only, LAN, T
 
 ## Using it from another device on your LAN
 
-1. In **Settings**, choose the LAN address of this Mac and a port.
-2. Choose **Save changes**, then **Start gateway**.
+1. In **Settings → Network**, choose the LAN address of this Mac and a port, then leave the field or press `Return` to save.
+2. Choose **Start gateway**.
 3. On the other device, use `http://<lan-address>:<port>/mcp/<name>` in the client.
 
 DHCP can give this Mac a new address.
@@ -22,7 +22,7 @@ If the saved address comes back, the listener restarts by itself, unless you cho
 ## Keeping the endpoints reachable
 
 Sleep takes the endpoints offline.
-In **Settings**, turn on **Keep the Mac awake while the gateway runs** and choose **Save changes** to prevent idle sleep.
+In **Settings → General**, turn on **Keep the Mac awake while the gateway runs** (it saves immediately) to prevent idle sleep.
 The setting is off by default and can shorten battery life.
 Closing the window leaves it in effect; stopping the gateway or quitting the app releases it.
 The display can still sleep, and the Mac can still sleep if you choose Sleep or close the lid.
@@ -31,12 +31,12 @@ Reachability from other devices is not verified by the app.
 ## Tailscale and WireGuard
 
 The gateway can listen on a Tailscale or WireGuard address, so clients reach it through an encrypted tunnel.
-In **Settings**, select the tunnel address, such as this Mac's `100.x.y.z` Tailscale address.
+In **Settings → Network**, select the tunnel address, such as this Mac's `100.x.y.z` Tailscale address.
 Then set **Allowed client ranges**, which is `allowedPeers` in `mcp.json`.
 A `100.64.0.0/10` address cannot be saved without it, and a WireGuard interface may report a single-address netmask that admits no other device.
 For Tailscale, use `100.64.0.0/10`; for WireGuard, use the tunnel's network, such as `10.8.0.0/24`.
 Clients must put the tunnel address in the endpoint URL.
-A MagicDNS or other host name gets 403, because the `Host` header must match the configured address.
+A MagicDNS or other host name gets `403`, because the `Host` header must match the configured address.
 Every device in a listed range can reach the endpoints, including devices shared into your tailnet, so keep each key private.
 Tailscale access controls or WireGuard `AllowedIPs` decide which devices can connect at all.
 
@@ -44,7 +44,7 @@ Tailscale access controls or WireGuard `AllowedIPs` decide which devices can con
 
 **Allowed client ranges** limits which clients may connect.
 The placeholder, "Selected interface's subnet", is the default: clients in the subnet of the chosen address.
-Enter IPv4 ranges separated by commas to name the clients explicitly.
+Enter IPv4 ranges separated by commas to name the clients explicitly, then leave the field or press `Return` to save.
 Only a blank field returns to the default; a field that holds only commas, such as `, ,`, is refused on save with "allowedPeers must list 1 to 16 address ranges."
 Leave the field empty with a loopback address such as `127.0.0.1`; the two cannot be combined.
 [The configuration file](configuration.md#the-configuration-file) describes the `allowedPeers` field and its validation rules.

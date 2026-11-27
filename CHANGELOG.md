@@ -7,7 +7,45 @@ Release dates are the dates each section was stamped for release.
 
 ## [Unreleased]
 
-Changes after `0.9.0`.
+### Added
+
+- Save structured edits in **Settings**, **Overview** and the server dialog immediately, keeping draft mode for **Authoritative configuration**
+- Replace the raw JSON editors in the server dialog with structured **Arguments**, **Environment** and **Headers** row editors, including automatic secret masking and warnings for sensitive environment variable overrides
+- Import existing server definitions from Claude Desktop (`claude_desktop_config.json`) and Cursor (`~/.cursor/mcp.json`) from **Settings → Advanced** or **Authoritative configuration**
+- Add **Open in External Editor** to **Settings → Advanced** and **Authoritative configuration**
+- Add a collapsible schema reference popover (`?`), 2-space Tab indentation and clickable **Line N** links on validation errors in **Authoritative configuration**
+- Redesign **Logs** with a single-row toolbar, **Follow Tail**, `Cmd+F` search focus, single-line tabular rows, per-row copy buttons and a collapsible info popover
+- Add **View** (`Cmd+1`–`Cmd+4`, `Cmd+R`), **Server** (`Cmd+N`), **Window** (`Cmd+M`, `Cmd+W`), **About** and **Hide** items to the application menu
+- Add **Copy Gateway Endpoint URL**, per-server quick-toggle items and direct **Restart to Update** to the menu-bar icon menu
+- Show determinate download progress and a single **Install and Relaunch** button in **Updates**, auto-check when opening **Updates** while idle, and allow clicking **Update ready** in the sidebar to restart directly
+- Post native macOS notifications for background startup errors, ready updates and failed menu-bar actions when the window is closed
+- Add an automated unit, integration and full-stack end-to-end test suite (`bun run test`)
+
+### Changed
+
+- Replace `supergateway`, `express` and `cors` with an in-repo MCP `2026-07-28` adapter and direct `@modelcontextprotocol/sdk` Streamable HTTP transports, bundling all runtime dependencies into the app
+- Switch **Overview** from a card grid to a compact server table with a gateway status pill, enable/disable switches and inline copy feedback
+- Reorganize **Settings** into **General**, **Network**, **Security** and **Advanced** groups, moving the **Language** picker and **Retry login registration** into **General**
+- Replace the top-of-window banner stack, header **Quit** button, page footer and in-app confirmation dialogs with a compact configuration blocker bar, per-view alerts and native macOS confirmation dialogs
+- Replace periodic status polling with native push updates and persist window size and position natively through AppKit instead of `window.json`
+- Access the macOS Keychain directly through `Security.framework` FFI (with `kSecAttrAccessibleWhenUnlocked`), falling back to `Bun.secrets` only when the native library is absent
+- Coordinate configuration writes with advisory `flock` locking on `mcp.json.lock` so stale locks clear automatically when a writer exits
+- Keep the window hidden on background launches even when release notes are pending, posting a notification on startup errors instead
+- Enable delta update patch generation in release builds and update libraries
+
+### Security
+
+- Redact tokens, authorization and API key headers, JSON secret fields, query secrets and configured server secrets in **Logs** and sanitized error messages, and suppress raw stdio `stderr` output by default
+- Restrict local stdio servers to a minimal safe allowlist of parent environment variables and reject dangerous loader and runtime environment keys (`NODE_OPTIONS`, `BUN_OPTIONS`, `DYLD_*`, `LD_*`)
+- Block link-local and cloud metadata upstream addresses (`169.254.0.0/16`, `0.0.0.0/8`, `fe80::/10`, `::` and IPv4-mapped IPv6 forms) and refuse HTTP redirects on all HTTP upstreams
+- Reject HTTP `Upgrade` / WebSocket requests (`403` on invalid `Host` or `Origin`, `405` otherwise), strip `Access-Control-Allow-Origin` headers and enforce a 30-second request body read timeout
+- Verify downloaded update manifests when present and check the staged app bundle's code signature and `TeamIdentifier` against the installed app before restarting to update
+- Harden `seen-version.json` and `key-reminder.json` with atomic owner-only file I/O, scrub Electrobun window secret globals after renderer RPC initialization and default `Bun.serve` to loopback binding
+- Refuse `SIGN_VERIFY_SKIP` during release verification and require all production signature, notarization and Gatekeeper checks to pass
+
+### Fixed
+
+- Preserve concurrent edits in **Authoritative configuration** when a save finishes
 
 ## [0.9.0] - 2026-11-25
 
@@ -84,6 +122,7 @@ Changes after `0.9.0`.
 - Show release notes once after an update
 - Add a full-width draggable title bar with a bottom border
 - Add Help menu and sidebar documentation link
+- Open the window when release notes are pending after an update
 
 ### Changed
 

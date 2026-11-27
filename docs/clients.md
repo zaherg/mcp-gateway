@@ -5,7 +5,7 @@ Client formats change; if a step no longer matches, check the linked source.
 
 ## What the app copies
 
-**Copy client configuration** on a server card copies this JSON, with the server's real endpoint and its effective key:
+**Copy client configuration** on a server row copies this JSON, with the server's real endpoint and its effective key:
 
 ```json
 {
@@ -22,12 +22,12 @@ Client formats change; if a step no longer matches, check the linked source.
 
 The key is in plain text, even when the app keeps it in the macOS Keychain.
 Keep the paste target private.
-**Copy endpoint** copies only the URL.
+The copy icon next to `/mcp/<name>` copies only the URL.
 
 ## Before you connect
 
 - Start the gateway.
-  The client cannot connect while the footer reads "No active listener".
+  The client cannot connect while **Overview** shows **Gateway stopped**.
 - Use the IP address from the endpoint.
   A host name such as a MagicDNS name gets `403`, because the `Host` header must match the configured address.
 - Turn on **Allow session-based clients (MCP 2025-11-25 and earlier)** for any server used from the clients below.
@@ -203,10 +203,10 @@ OpenClaw's own "Gateway" is a different program from MCP Gateway.
 ## Protocol compatibility
 
 By default, an endpoint speaks only MCP protocol `2026-07-28`.
-This version is stateless: every message is a `POST` to `/mcp/<name>`.
-`GET` and `DELETE` return 405.
-Requests that use an older protocol version or the `initialize` handshake return 400.
-The gateway bridges stdio servers itself.
+This version is stateless: every message is a `POST` to `/mcp/<name>` with `Content-Type: application/json` (else `415`) and `Accept` including both `application/json` and `text/event-stream` (else `406`), along with matching `_meta` and `mcp-*` headers.
+`GET` and `DELETE` return `405`.
+Requests that use an older protocol version or the `initialize` handshake return `400`.
+The gateway bridges stdio and HTTP servers directly using its built-in `2026-07-28` adapter and `@modelcontextprotocol/sdk` Streamable HTTP transports.
 An HTTP server must answer `server/discover` with `2026-07-28`, or the gateway refuses it.
 The gateway reuses that answer for 60 seconds; a check that timed out, lost its connection or got a 5xx reply is asked again on the next request.
 
@@ -218,8 +218,9 @@ On such an endpoint, an HTTP server is reached with sessions too, so it does not
 Each session runs its own backend process or upstream session.
 At most 8 sessions can be open across all endpoints.
 Each session also takes one of the 16 shared backend slots.
-A new session beyond either limit gets 429.
+A new session beyond either limit gets `429`.
 A session ends after 60 seconds without an open request or event stream, and the client must initialize again.
+On active `GET` event streams, the gateway sends liveness pings and closes a session after two unanswered pings if the client previously answered pings (clients that never answer pings are preserved for compatibility).
 Session requests count toward the same 16-call limit and 4 MiB message limit as stateless requests.
 A stateless request that fails frees its call slot once its backend has closed.
 App versions up to `0.3.2` reject a configuration that contains `legacyProtocol`.
