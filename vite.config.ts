@@ -23,12 +23,13 @@ export default defineConfig({
       transformIndexHtml: {
         order: 'pre',
         handler: (html) => {
-          const policy = "script-src 'self'; style-src 'self'; connect-src ws://127.0.0.1:*;";
+          const policy =
+            "script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src ws://127.0.0.1:*;";
           if (!html.includes(policy))
             throw new Error('The development CSP transform must match the renderer policy.');
           return html.replace(
             policy,
-            `script-src 'self' 'nonce-${nonce}'; style-src 'self' 'nonce-${nonce}'; connect-src 'self' ws://127.0.0.1:*;`,
+            `script-src 'self' 'nonce-${nonce}'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws://127.0.0.1:*;`,
           );
         },
       },

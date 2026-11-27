@@ -1,24 +1,54 @@
 {
-  "compilerOptions": {
-    "paths": {
-      "@mcp-gateway/*": ["./src/*"],
-      "electrobun": ["./.hutch/devkit/api/sdks/main/index.ts"],
-      "electrobun/main": ["./.hutch/devkit/api/sdks/main/index.ts"],
-      "electrobun/view": ["./.hutch/devkit/api/browser/index.ts"],
-      "electrobun/rpc": ["./.hutch/devkit/api/sdks/main/entries/rpc.ts"]
+    "compilerOptions": {
+        "paths": {
+            "@mcp-gateway/*": [
+                "./src/*"
+            ],
+            "jsonc-parser": [
+                "./node_modules/jsonc-parser/lib/esm/main"
+            ],
+            "electrobun": [
+                "./.hutch/devkit/api/sdks/main/index.ts"
+            ],
+            "electrobun/main": [
+                "./.hutch/devkit/api/sdks/main/index.ts"
+            ],
+            "electrobun/view": [
+                "./.hutch/devkit/api/browser/index.ts"
+            ],
+            "electrobun/rpc": [
+                "./.hutch/devkit/api/sdks/main/entries/rpc.ts"
+            ]
+        },
+        "target": "ES2022",
+        "module": "ESNext",
+        "moduleResolution": "Bundler",
+        "jsx": "react-jsx",
+        "strict": true,
+        "noEmit": true,
+        "skipLibCheck": true,
+        "allowImportingTsExtensions": true,
+        "resolveJsonModule": true,
+        "types": [
+            "bun"
+        ],
+        "lib": [
+            "ES2022",
+            "DOM",
+            "DOM.Iterable"
+        ]
     },
-    "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "Bundler",
-    "jsx": "react-jsx",
-    "strict": true,
-    "noEmit": true,
-    "skipLibCheck": true,
-    "allowImportingTsExtensions": true,
-    "resolveJsonModule": true,
-    "types": ["bun"],
-    "lib": ["ES2022", "DOM", "DOM.Iterable"]
-  },
-  "include": ["src", "tests", "scripts", "*.ts"],
-  "exclude": ["node_modules", ".cache", ".hutch-home", "build", "dist"]
+    "include": [
+        "src",
+        "tests",
+        "scripts",
+        "*.ts"
+    ],
+    "exclude": [
+        "node_modules",
+        ".cache",
+        ".hutch-home",
+        "build",
+        "dist"
+    ]
 }
