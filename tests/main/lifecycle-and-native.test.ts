@@ -1,0 +1,632 @@
+import { afterEach, describe, expect, test } from 'bun:test';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { GatewayError } from '@mcp-gateway/core/errors';
+import { openKeychain } from '@mcp-gateway/main/keychain';
+import { InteractiveQuitGate, QuitCoordinator } from '@mcp-gateway/main/lifecycle';
+import {
+  configurationDirectory,
+  installedIdentifier,
+  postNativeNotification,
+  restoreWindow,
+} from '@mcp-gateway/main/native';
+import { PRODUCTION_IDENTIFIER, TEST_IDENTIFIER } from '@mcp-gateway/shared/identity';
+
+const tempDirs: string[] = [];
+
+const makeTempDir = async (): Promise<string> => {
+  const dir = await mkdtemp(join(tmpdir(), 'mcp-gateway-lifecycle-test-'));
+  tempDirs.push(dir);
+  return dir;
+};
+
+const flushMicrotasks = async (): Promise<void> => {
+  await Promise.resolve();
+  await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+};
+
+const deferred = <T = void>() => {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+};
+
+afterEach(async () => {
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop();
+    if (dir) await rm(dir, { recursive: true, force: true });
+  }
+});
+
+describe('QuitCoordinator', () => {
+  test('starts idle, returns defensive status copies, and reports updateRestartActive false', () => {
+    const coordinator = new QuitCoordinator(
+      async () => {},
+      () => {},
+      () => {},
+    );
+
+    const status = coordinator.status();
+    expect(status).toEqual({ attempt: 0, phase: 'idle', error: null });
+    expect(coordinator.updateRestartActive()).toBe(false);
+
+    status.phase = 'ready';
+    expect(coordinator.status().phase).toBe('idle');
+  });
+
+  test('vetoes first quit, dedupes concurrent cleanup calls, calls quitAgain, and allows ready quit', async () => {
+    const gate = deferred();
+    let cleanupCalls = 0;
+    let quitAgainCalls = 0;
+    const failures: Array<{ error: unknown; kind: 'quit' | 'update' }> = [];
+
+    const coordinator = new QuitCoordinator(
+      async () => {
+        cleanupCalls++;
+        await gate.promise;
+      },
+      () => {
+        quitAgainCalls++;
+      },
+      (error, kind) => failures.push({ error, kind }),
+    );
+
+    let veto1 = 0;
+    let veto2 = 0;
+    coordinator.handle(() => veto1++);
+    coordinator.handle(() => veto2++);
+
+    expect(veto1).toBe(1);
+    expect(veto2).toBe(1);
+    expect(coordinator.status()).toEqual({ attempt: 1, phase: 'pending', error: null });
+
+    await flushMicrotasks();
+    expect(cleanupCalls).toBe(1);
+    expect(quitAgainCalls).toBe(0);
+
+    gate.resolve();
+    await flushMicrotasks();
+
+    expect(cleanupCalls).toBe(1);
+    expect(quitAgainCalls).toBe(1);
+    expect(coordinator.status()).toEqual({ attempt: 1, phase: 'ready', error: null });
+    expect(failures).toEqual([]);
+
+    // Once ready, native quit is no longer vetoed.
+    let veto3 = 0;
+    coordinator.handle(() => veto3++);
+    expect(veto3).toBe(0);
+    expect(coordinator.armQuit()).toBe(false);
+  });
+
+  test('armQuit() is idempotent while pending and overrides an unapproved update restart', async () => {
+    const gate = deferred();
+    const coordinator = new QuitCoordinator(
+      () => gate.promise,
+      () => {},
+      () => {},
+    );
+
+    const updatePromise = coordinator.beginUpdateRestart();
+    expect(coordinator.updateRestartActive()).toBe(true);
+    expect(coordinator.status()).toEqual({ attempt: 1, phase: 'pending', error: null });
+
+    expect(coordinator.armQuit()).toBe(true);
+    expect(coordinator.updateRestartActive()).toBe(false);
+    expect(coordinator.status()).toEqual({ attempt: 2, phase: 'pending', error: null });
+
+    // Calling armQuit again while already pending quit does not bump attempt.
+    expect(coordinator.armQuit()).toBe(true);
+    expect(coordinator.status().attempt).toBe(2);
+
+    gate.resolve();
+    expect(await updatePromise).toBe(false);
+  });
+
+  test('recovers from cleanup failure on ordinary quit and allows retry', async () => {
+    let attempts = 0;
+    let quitAgainCalls = 0;
+    const failures: Array<{ error: unknown; kind: 'quit' | 'update' }> = [];
+
+    const coordinator = new QuitCoordinator(
+      async () => {
+        attempts++;
+        if (attempts === 1) throw new Error('stop failed');
+      },
+      () => {
+        quitAgainCalls++;
+      },
+      (error, kind) => failures.push({ error, kind }),
+    );
+
+    let veto1 = 0;
+    coordinator.handle(() => veto1++);
+    await flushMicrotasks();
+
+    expect(veto1).toBe(1);
+    expect(quitAgainCalls).toBe(0);
+    expect(coordinator.status()).toEqual({
+      attempt: 1,
+      phase: 'failed',
+      error: 'Quit cleanup failed. The app has not exited. Retry Quit.',
+    });
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.kind).toBe('quit');
+
+    let veto2 = 0;
+    coordinator.handle(() => veto2++);
+    await flushMicrotasks();
+
+    expect(veto2).toBe(1);
+    expect(attempts).toBe(2);
+    expect(quitAgainCalls).toBe(1);
+    expect(coordinator.status()).toEqual({ attempt: 2, phase: 'ready', error: null });
+  });
+
+  test('recovers when quitAgain throws by resetting cleanup state and reporting quit failure', async () => {
+    let cleanupCalls = 0;
+    let quitAgainCalls = 0;
+    const failures: Array<{ error: unknown; kind: 'quit' | 'update' }> = [];
+
+    const coordinator = new QuitCoordinator(
+      async () => {
+        cleanupCalls++;
+      },
+      () => {
+        quitAgainCalls++;
+        if (quitAgainCalls === 1) throw new Error('native quit failed');
+      },
+      (error, kind) => failures.push({ error, kind }),
+    );
+
+    coordinator.handle(() => {});
+    await flushMicrotasks();
+
+    expect(cleanupCalls).toBe(1);
+    expect(quitAgainCalls).toBe(1);
+    expect(coordinator.status()).toEqual({
+      attempt: 1,
+      phase: 'failed',
+      error: 'Quit cleanup failed. The app has not exited. Retry Quit.',
+    });
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.kind).toBe('quit');
+
+    // Retry re-runs cleanup because cleanupDone was reset on quitAgain error.
+    coordinator.handle(() => {});
+    await flushMicrotasks();
+
+    expect(cleanupCalls).toBe(2);
+    expect(quitAgainCalls).toBe(2);
+    expect(coordinator.status()).toEqual({ attempt: 2, phase: 'ready', error: null });
+  });
+
+  test('coordinates update restart approval, clearUpdateRestart, and signal override', async () => {
+    let cleanupCalls = 0;
+    let quitAgainCalls = 0;
+
+    const coordinator = new QuitCoordinator(
+      async () => {
+        cleanupCalls++;
+      },
+      () => {
+        quitAgainCalls++;
+      },
+      () => {},
+    );
+
+    expect(await coordinator.beginUpdateRestart()).toBe(true);
+    expect(cleanupCalls).toBe(1);
+    expect(quitAgainCalls).toBe(0);
+    expect(coordinator.updateRestartActive()).toBe(true);
+
+    coordinator.approveUpdateRestart();
+    await expect(coordinator.beginUpdateRestart()).resolves.toBe(false);
+    expect(coordinator.armQuit()).toBe(false);
+
+    // Non-signal quit during approved update restart is allowed without veto.
+    let nonSignalVeto = 0;
+    coordinator.handle(() => nonSignalVeto++, false);
+    expect(nonSignalVeto).toBe(0);
+
+    // A native signal overrides approved update restart and finishes ordinary quit without re-running cleanup.
+    let signalVeto = 0;
+    coordinator.handle(() => signalVeto++, true);
+    await flushMicrotasks();
+
+    expect(signalVeto).toBe(1);
+    expect(cleanupCalls).toBe(1);
+    expect(quitAgainCalls).toBe(1);
+    expect(coordinator.updateRestartActive()).toBe(false);
+    expect(coordinator.status().phase).toBe('ready');
+  });
+
+  test('clearUpdateRestart clears active update intent and updateRestartFailed records failure', async () => {
+    const failures: Array<{ error: unknown; kind: 'quit' | 'update' }> = [];
+    const coordinator = new QuitCoordinator(
+      async () => {},
+      () => {},
+      (error, kind) => failures.push({ error, kind }),
+    );
+
+    expect(await coordinator.beginUpdateRestart()).toBe(true);
+    expect(coordinator.updateRestartActive()).toBe(true);
+
+    coordinator.clearUpdateRestart();
+    expect(coordinator.updateRestartActive()).toBe(false);
+
+    expect(await coordinator.beginUpdateRestart()).toBe(true);
+    coordinator.approveUpdateRestart();
+    coordinator.updateRestartFailed('Installer launch refused.');
+
+    expect(coordinator.updateRestartActive()).toBe(false);
+    expect(coordinator.status()).toEqual({
+      attempt: 2,
+      phase: 'failed',
+      error: 'Installer launch refused.',
+    });
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.kind).toBe('update');
+    expect(failures[0]?.error).toBeInstanceOf(Error);
+    expect((failures[0]?.error as Error | undefined)?.message).toBe('Installer launch refused.');
+  });
+
+  test('beginUpdateRestart reports update failure and rethrows when cleanup fails', async () => {
+    const failures: Array<{ error: unknown; kind: 'quit' | 'update' }> = [];
+    const boom = new Error('shutdown boom');
+    const coordinator = new QuitCoordinator(
+      async () => {
+        throw boom;
+      },
+      () => {},
+      (error, kind) => failures.push({ error, kind }),
+    );
+
+    await expect(coordinator.beginUpdateRestart()).rejects.toThrow('shutdown boom');
+    expect(coordinator.updateRestartActive()).toBe(false);
+    expect(coordinator.status()).toEqual({
+      attempt: 1,
+      phase: 'failed',
+      error:
+        'Update cleanup failed. The app has not exited. Use Quit, then reopen the app to retry the update.',
+    });
+    expect(failures).toEqual([{ error: boom, kind: 'update' }]);
+  });
+});
+
+describe('InteractiveQuitGate', () => {
+  test('signalRequested() true delegates immediately with signal override, bypassing draft prompt', async () => {
+    let quitAgainCalls = 0;
+    const lifecycle = new QuitCoordinator(
+      async () => {},
+      () => {
+        quitAgainCalls++;
+      },
+      () => {},
+    );
+    await lifecycle.beginUpdateRestart();
+    lifecycle.approveUpdateRestart();
+
+    let checkedDraft = 0;
+    let prompted = 0;
+    const gate = new InteractiveQuitGate(
+      lifecycle,
+      () => {
+        checkedDraft++;
+        return Promise.resolve(true);
+      },
+      async () => {
+        prompted++;
+        return false;
+      },
+      () => {},
+      () => true,
+    );
+
+    let vetoCalls = 0;
+    gate.handle(() => vetoCalls++);
+    await flushMicrotasks();
+
+    expect(vetoCalls).toBe(1);
+    expect(checkedDraft).toBe(0);
+    expect(prompted).toBe(0);
+    expect(lifecycle.updateRestartActive()).toBe(false);
+    expect(lifecycle.status().phase).toBe('ready');
+    expect(quitAgainCalls).toBe(1);
+  });
+
+  test('bypasses draft check when lifecycle is non-idle, update restart is active, or check returns undefined', async () => {
+    let quitAgainCalls = 0;
+    const lifecycle = new QuitCoordinator(
+      async () => {},
+      () => {
+        quitAgainCalls++;
+      },
+      () => {},
+    );
+    let prompted = 0;
+    const gate = new InteractiveQuitGate(
+      lifecycle,
+      () => undefined,
+      async () => {
+        prompted++;
+        return false;
+      },
+      () => {},
+    );
+
+    let vetoCalls = 0;
+    gate.handle(() => vetoCalls++);
+    await flushMicrotasks();
+
+    expect(vetoCalls).toBe(1);
+    expect(prompted).toBe(0);
+    expect(quitAgainCalls).toBe(1);
+    expect(lifecycle.status().phase).toBe('ready');
+
+    // Subsequent handle while phase !== 'idle' delegates straight to lifecycle (no veto when ready).
+    let checked = 0;
+    const gateAfterReady = new InteractiveQuitGate(
+      lifecycle,
+      () => {
+        checked++;
+        return Promise.resolve(true);
+      },
+      async () => false,
+      () => {},
+    );
+    let vetoAfterReady = 0;
+    gateAfterReady.handle(() => vetoAfterReady++);
+    expect(vetoAfterReady).toBe(0);
+    expect(checked).toBe(0);
+
+    // Approved update restart also bypasses draft check and lets native quit proceed unvetoed.
+    const updateLifecycle = new QuitCoordinator(
+      async () => {},
+      () => {},
+      () => {},
+    );
+    await updateLifecycle.beginUpdateRestart();
+    updateLifecycle.approveUpdateRestart();
+    let updateChecked = 0;
+    const updateGate = new InteractiveQuitGate(
+      updateLifecycle,
+      () => {
+        updateChecked++;
+        return Promise.resolve(true);
+      },
+      async () => false,
+      () => {},
+    );
+    let updateVeto = 0;
+    updateGate.handle(() => updateVeto++);
+    expect(updateChecked).toBe(0);
+    expect(updateVeto).toBe(0);
+  });
+
+  test('clean raw config or rejected check quits immediately without confirmation prompt', async () => {
+    for (const unsavedFactory of [
+      () => Promise.resolve(false),
+      () => Promise.reject(new Error('rpc closed')),
+    ]) {
+      const lifecycle = new QuitCoordinator(
+        async () => {},
+        () => {},
+        () => {},
+      );
+      let prompted = 0;
+      let quitCalls = 0;
+      const gate = new InteractiveQuitGate(
+        lifecycle,
+        unsavedFactory,
+        async () => {
+          prompted++;
+          return false;
+        },
+        () => {
+          quitCalls++;
+        },
+      );
+
+      let vetoCalls = 0;
+      gate.handle(() => vetoCalls++);
+      await flushMicrotasks();
+
+      expect(vetoCalls).toBe(1);
+      expect(prompted).toBe(0);
+      expect(quitCalls).toBe(1);
+      expect(lifecycle.status().phase).toBe('pending');
+    }
+  });
+
+  test('dirty raw config prompts for confirmation, cancels cleanly on reject, and dedupes concurrent calls', async () => {
+    const lifecycle = new QuitCoordinator(
+      async () => {},
+      () => {},
+      () => {},
+    );
+    let confirmDeferred = deferred<boolean>();
+    let promptCalls = 0;
+    let quitCalls = 0;
+
+    const gate = new InteractiveQuitGate(
+      lifecycle,
+      () => Promise.resolve(true),
+      () => {
+        promptCalls++;
+        return confirmDeferred.promise;
+      },
+      () => {
+        quitCalls++;
+      },
+    );
+
+    // Concurrent calls while prompt is pending are deduplicated.
+    let veto1 = 0;
+    let veto2 = 0;
+    gate.handle(() => veto1++);
+    gate.handle(() => veto2++);
+    await flushMicrotasks();
+
+    expect(veto1).toBe(1);
+    expect(veto2).toBe(1);
+    expect(promptCalls).toBe(1);
+    expect(quitCalls).toBe(0);
+
+    // User cancels discard: stays idle and clears pending so a later quit can prompt again.
+    confirmDeferred.resolve(false);
+    await flushMicrotasks();
+    expect(quitCalls).toBe(0);
+    expect(lifecycle.status().phase).toBe('idle');
+
+    // Second attempt: user confirms discard.
+    confirmDeferred = deferred<boolean>();
+    gate.handle(() => {});
+    await flushMicrotasks();
+    expect(promptCalls).toBe(2);
+
+    confirmDeferred.resolve(true);
+    await flushMicrotasks();
+    expect(quitCalls).toBe(1);
+    expect(lifecycle.status().phase).toBe('pending');
+  });
+});
+
+describe('native helpers', () => {
+  test('installedIdentifier reads production and test identifiers from version.json', async () => {
+    const prodDir = await makeTempDir();
+    await writeFile(
+      join(prodDir, 'version.json'),
+      JSON.stringify({ identifier: PRODUCTION_IDENTIFIER }),
+    );
+    expect(installedIdentifier(prodDir)).toBe(PRODUCTION_IDENTIFIER);
+
+    const testDir = await makeTempDir();
+    await writeFile(join(testDir, 'version.json'), JSON.stringify({ identifier: TEST_IDENTIFIER }));
+    expect(installedIdentifier(testDir)).toBe(TEST_IDENTIFIER);
+  });
+
+  test('installedIdentifier throws on missing, malformed, or unsupported version.json', async () => {
+    const missingDir = await makeTempDir();
+    expect(() => installedIdentifier(missingDir)).toThrow(
+      "The app's version.json is missing or invalid.",
+    );
+
+    const invalidJsonDir = await makeTempDir();
+    await writeFile(join(invalidJsonDir, 'version.json'), '{bad json');
+    expect(() => installedIdentifier(invalidJsonDir)).toThrow(
+      "The app's version.json is missing or invalid.",
+    );
+
+    const unknownIdDir = await makeTempDir();
+    await writeFile(
+      join(unknownIdDir, 'version.json'),
+      JSON.stringify({ identifier: 'com.example.other' }),
+    );
+    expect(() => installedIdentifier(unknownIdDir)).toThrow(
+      'Unsupported app identifier in version.json.',
+    );
+  });
+
+  test('configurationDirectory resolves app support paths and validates configBase', () => {
+    const base = '/Users/example/Library/Application Support';
+    expect(configurationDirectory(base, PRODUCTION_IDENTIFIER)).toBe(join(base, 'MCP Gateway'));
+    expect(configurationDirectory(base, TEST_IDENTIFIER)).toBe(join(base, 'MCP Gateway Test'));
+
+    expect(() => configurationDirectory('relative/path', PRODUCTION_IDENTIFIER)).toThrow(
+      'Configuration base must be an absolute path.',
+    );
+    expect(() => configurationDirectory('', TEST_IDENTIFIER)).toThrow(
+      'Configuration base must be an absolute path.',
+    );
+    expect(() => configurationDirectory('/tmp/bad\0dir', PRODUCTION_IDENTIFIER)).toThrow(
+      'Configuration base must be an absolute path.',
+    );
+  });
+
+  test('restoreWindow invokes unminimize, show, and activate in order', () => {
+    const calls: string[] = [];
+    restoreWindow({
+      unminimize: () => calls.push('unminimize'),
+      show: () => calls.push('show'),
+      activate: () => calls.push('activate'),
+    });
+    expect(calls).toEqual(['unminimize', 'show', 'activate']);
+  });
+
+  test('postNativeNotification is a safe no-op when no native library is loaded and reports missing library errors', async () => {
+    const errors: unknown[] = [];
+    expect(() =>
+      postNativeNotification('Title', 'Body', undefined, (error) => errors.push(error)),
+    ).not.toThrow();
+    expect(errors).toEqual([]);
+
+    const dir = await makeTempDir();
+    const missingLib = join(dir, 'nonexistent.dylib');
+    expect(() =>
+      postNativeNotification('Title', 'Body', missingLib, (error) => errors.push(error)),
+    ).not.toThrow();
+    expect(errors).toHaveLength(1);
+
+    // Without onError callback, missing library still does not throw.
+    expect(() => postNativeNotification('Title', 'Body', missingLib)).not.toThrow();
+  });
+});
+
+describe('openKeychain', () => {
+  test('rejects empty secret value with GatewayError ConfigIO before touching Keychain', async () => {
+    const dir = await makeTempDir();
+    const missingDylib = join(dir, 'no-native.dylib');
+
+    for (const identifier of [PRODUCTION_IDENTIFIER, TEST_IDENTIFIER]) {
+      const keychain = openKeychain(identifier, missingDylib);
+
+      for (const ref of ['', 'gateway.token']) {
+        let thrown: unknown;
+        try {
+          await keychain.set(ref, '');
+        } catch (error) {
+          thrown = error;
+        }
+        expect(thrown).toBeInstanceOf(GatewayError);
+        const gatewayError = thrown as GatewayError;
+        expect(gatewayError.code).toBe('ConfigIO');
+        expect(gatewayError.message).toBe('A key could not be stored in Keychain.');
+      }
+    }
+  });
+
+  test('get([]) resolves to an empty Map without accessing native FFI or Bun.secrets', async () => {
+    const dir = await makeTempDir();
+    const keychain = openKeychain(TEST_IDENTIFIER, join(dir, 'no-native.dylib'));
+
+    const keys = await keychain.get([]);
+    expect(keys).toBeInstanceOf(Map);
+    expect(keys.size).toBe(0);
+  });
+
+  test('falls back cleanly when given an invalid dylib path without throwing during openKeychain', async () => {
+    const dir = await makeTempDir();
+    const corruptDylib = join(dir, 'corrupt.dylib');
+    await writeFile(corruptDylib, 'not-a-mach-o-binary');
+
+    const keychain = openKeychain(TEST_IDENTIFIER, corruptDylib);
+    expect((await keychain.get([])).size).toBe(0);
+
+    let thrown: unknown;
+    try {
+      await keychain.set('server.token', '');
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(GatewayError);
+    expect((thrown as GatewayError).code).toBe('ConfigIO');
+  });
+});
