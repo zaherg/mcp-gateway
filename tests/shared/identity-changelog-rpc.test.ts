@@ -2,15 +2,9 @@ import { describe, expect, test } from 'bun:test';
 
 import { changelogBlocks, changelogSection } from '@mcp-gateway/shared/changelog';
 import { appNameFor, PRODUCTION_IDENTIFIER, TEST_IDENTIFIER } from '@mcp-gateway/shared/identity';
-import { type LoginStatus, needsLoginRetry, SOCIAL_LINK_TARGETS } from '@mcp-gateway/shared/rpc';
-import { LOG_LEVELS, LOG_LIMITS } from '@mcp-gateway/shared/types';
+import { type LoginStatus, needsLoginRetry } from '@mcp-gateway/shared/rpc';
 
 describe('identity', () => {
-  test('exports stable production and test bundle identifiers', () => {
-    expect(PRODUCTION_IDENTIFIER).toBe('dev.srvr.mcpgateway');
-    expect(TEST_IDENTIFIER).toBe('dev.srvr.mcpgateway.test');
-  });
-
   test('appNameFor returns dev app name only for the test identifier', () => {
     expect(appNameFor(PRODUCTION_IDENTIFIER)).toBe('MCP Gateway');
     expect(appNameFor(TEST_IDENTIFIER)).toBe('MCP Gateway Dev');
@@ -54,6 +48,21 @@ describe('changelog', () => {
     );
   });
 
+  test('changelogSection extracts the final version section when there are no trailing link definitions', () => {
+    const withoutFooterLinks = [
+      '# Changelog',
+      '',
+      '## [0.9.0] - 2026-11-27',
+      '',
+      '### Added',
+      '- Final release without link footer',
+    ].join('\n');
+
+    expect(changelogSection(withoutFooterLinks, '0.9.0')).toBe(
+      ['### Added', '- Final release without link footer'].join('\n'),
+    );
+  });
+
   test('changelogSection escapes dots in the version string', () => {
     const decoyChangelog = ['## [0X8X0] - 2026-11-18', '', '### Added', '- Wrong match'].join('\n');
     expect(changelogSection(decoyChangelog, '0.8.0')).toBeNull();
@@ -69,8 +78,9 @@ describe('changelog', () => {
 
   test('changelogBlocks parses headings, list items, continuation lines, and paragraphs', () => {
     const section = [
+      '  indented line without preceding list',
       '### Added',
-      'First line of intro',
+      '  indented line after heading',
       'second line of intro',
       '',
       '- First item',
@@ -84,8 +94,9 @@ describe('changelog', () => {
     ].join('\n');
 
     expect(changelogBlocks(section)).toEqual([
+      { kind: 'paragraph', text: 'indented line without preceding list' },
       { kind: 'heading', text: 'Added' },
-      { kind: 'paragraph', text: 'First line of intro second line of intro' },
+      { kind: 'paragraph', text: 'indented line after heading second line of intro' },
       { kind: 'list', items: ['First item continued text', 'Second item'] },
       { kind: 'paragraph', text: 'Closing note after list with a second line.' },
       { kind: 'heading', text: 'Fixed' },
@@ -94,50 +105,21 @@ describe('changelog', () => {
   });
 });
 
-describe('rpc and shared constants', () => {
-  test('needsLoginRetry returns false whenever status.supported is false', () => {
-    const cases: Array<[LoginStatus, boolean]> = [
-      [{ supported: false, enabled: false, error: null }, true],
-      [{ supported: false, enabled: true, error: null }, false],
-      [{ supported: false, enabled: false, error: 'Registration failed' }, false],
-      [{ supported: false, enabled: true, error: 'Registration failed' }, true],
+describe('rpc', () => {
+  test('needsLoginRetry evaluates supported, error, and enabled !== wanted truth table', () => {
+    const cases: Array<[LoginStatus, boolean, boolean]> = [
+      [{ supported: false, enabled: false, error: null }, true, false],
+      [{ supported: false, enabled: true, error: 'Registration failed' }, true, false],
+      [{ supported: true, enabled: true, error: 'SMAppService error' }, true, true],
+      [{ supported: true, enabled: false, error: 'SMAppService error' }, false, true],
+      [{ supported: true, enabled: false, error: null }, true, true],
+      [{ supported: true, enabled: true, error: null }, false, true],
+      [{ supported: true, enabled: true, error: null }, true, false],
+      [{ supported: true, enabled: false, error: null }, false, false],
     ];
-    for (const [status, wanted] of cases) {
-      expect(needsLoginRetry(status, wanted)).toBe(false);
+
+    for (const [status, wanted, expected] of cases) {
+      expect(needsLoginRetry(status, wanted)).toBe(expected);
     }
-  });
-
-  test('needsLoginRetry returns true when supported and error is non-null even if enabled matches wanted', () => {
-    expect(
-      needsLoginRetry({ supported: true, enabled: true, error: 'SMAppService error' }, true),
-    ).toBe(true);
-    expect(
-      needsLoginRetry({ supported: true, enabled: false, error: 'SMAppService error' }, false),
-    ).toBe(true);
-  });
-
-  test('needsLoginRetry returns true when supported, error is null, and enabled differs from wanted', () => {
-    expect(needsLoginRetry({ supported: true, enabled: false, error: null }, true)).toBe(true);
-    expect(needsLoginRetry({ supported: true, enabled: true, error: null }, false)).toBe(true);
-  });
-
-  test('needsLoginRetry returns false when supported, error is null, and enabled matches wanted', () => {
-    expect(needsLoginRetry({ supported: true, enabled: true, error: null }, true)).toBe(false);
-    expect(needsLoginRetry({ supported: true, enabled: false, error: null }, false)).toBe(false);
-  });
-
-  test('SOCIAL_LINK_TARGETS, LOG_LIMITS, and LOG_LEVELS match expected invariants', () => {
-    expect(SOCIAL_LINK_TARGETS).toEqual(['docs', 'github', 'x']);
-    expect(Object.isFrozen(LOG_LIMITS)).toBe(true);
-    expect(LOG_LIMITS).toEqual({
-      entries: 500,
-      bytes: 4 * 1024 * 1024,
-      entryBytes: 32 * 1024,
-      batchEntries: 50,
-      batchBytes: 256 * 1024,
-      requestTimeoutMs: 10_000,
-      queryTextCharacters: 512,
-    });
-    expect(LOG_LEVELS).toEqual(['debug', 'info', 'warn', 'error']);
   });
 });

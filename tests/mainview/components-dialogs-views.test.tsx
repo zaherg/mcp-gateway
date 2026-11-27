@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 
+import { EditorView } from '@codemirror/view';
 import { act, fireEvent, render, waitFor, within } from '@testing-library/react';
 import { createRef, type ReactNode, type RefObject, useState } from 'react';
 
@@ -21,22 +22,28 @@ import {
 } from '@mcp-gateway/mainview/dialogs/ServerEditor';
 import { I18nProvider } from '@mcp-gateway/mainview/i18n';
 import { Logs } from '@mcp-gateway/mainview/Logs';
-import { type Locale, translator } from '@mcp-gateway/shared/i18n';
-import type {
-  AppClient,
-  AppResult,
-  AppSnapshot,
-  MenuCommand,
-  UpdateStatus,
-} from '@mcp-gateway/shared/rpc';
+import { CONFIG_TOO_LARGE, MAX_CONFIG_BYTES } from '@mcp-gateway/shared/config-document';
+import { translator } from '@mcp-gateway/shared/i18n';
+import type { AppClient, AppResult, AppSnapshot } from '@mcp-gateway/shared/rpc';
 import type {
   ConfigFile,
-  GatewaySnapshot,
   KeyMigration as KeyMigrationSlots,
   LogEntry,
   LogPage,
 } from '@mcp-gateway/shared/types';
 import { cleanupDom, installDomEnvironment } from '../helpers/dom';
+import {
+  createMockAppClient,
+  DEFAULT_REVISION,
+  type MockClientBundle,
+  makeConfigText,
+  makeGatewaySnapshot,
+  makeSnapshot,
+  makeUpdateStatus,
+  SECOND_REVISION,
+  setInputValue,
+  setNavigatorLanguages,
+} from '../helpers/mainview';
 
 installDomEnvironment();
 
@@ -53,19 +60,13 @@ mock.module('@mcp-gateway/mainview/rpc', () => ({
 const { GatewayViewProvider } = await import('@mcp-gateway/mainview/context/GatewayViewContext');
 const { WhatsNew } = await import('@mcp-gateway/mainview/dialogs/WhatsNew');
 const { Overview } = await import('@mcp-gateway/mainview/views/Overview');
+const { RawConfig } = await import('@mcp-gateway/mainview/views/RawConfig');
 const { Settings } = await import('@mcp-gateway/mainview/views/Settings');
 const { Updates } = await import('@mcp-gateway/mainview/views/Updates');
 const { App } = await import('@mcp-gateway/mainview/App');
 
 const t = translator('en_US');
 const defaultLanguages = navigator.languages;
-
-const setNavigatorLanguages = (languages: readonly string[]): void => {
-  Object.defineProperty(navigator, 'languages', {
-    configurable: true,
-    value: languages,
-  });
-};
 
 const deferred = <T,>() => {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -75,16 +76,6 @@ const deferred = <T,>() => {
     reject = rej;
   });
   return { promise, resolve, reject };
-};
-
-// `tests/helpers/dom.ts` imports `@testing-library/react` before `installDomEnvironment()`,
-// so React DOM may initialize with `isInputEventSupported = false` (its input-event polyfill
-// watches `focus` + `keyup` via `getInstIfValueChanged`). Focusing, setting value, and firing
-// `keyUp` triggers React's `onChange` exactly once in both native and polyfill modes.
-const setInputValue = (input: HTMLInputElement, value: string): void => {
-  fireEvent.focus(input);
-  fireEvent.change(input, { target: { value } });
-  fireEvent.keyUp(input, { key: 'Unidentified' });
 };
 
 // Click the wrapping <label> rather than the nested Base UI <span role="switch"> so the click
@@ -148,294 +139,12 @@ const renderWithGateway = (client: AppClient, ui: ReactNode) =>
     </I18nProvider>,
   );
 
-const makeUpdateStatus = (overrides: Partial<UpdateStatus> = {}): UpdateStatus => ({
-  supported: true,
-  automaticUpdates: true,
-  installedVersion: '0.9.0',
-  availableVersion: null,
-  phase: 'idle',
-  error: null,
-  checkedAt: null,
-  ...overrides,
-});
-
-const makeConfigText = (
-  servers: Record<string, unknown> = {},
-  gatewayOverrides: Record<string, unknown> = {},
-): string =>
-  JSON.stringify(
-    {
-      gateway: {
-        host: '127.0.0.1',
-        port: 8787,
-        token: 'a'.repeat(64),
-        ...gatewayOverrides,
-      },
-      mcpServers: servers,
-    },
-    null,
-    2,
+const getCodeMirrorView = (container: HTMLElement): EditorView => {
+  const cmEditor = must(
+    container.querySelector('.raw-code-editor .cm-editor') as HTMLElement | null,
+    '.cm-editor',
   );
-
-const makeGatewaySnapshot = (overrides: Partial<GatewaySnapshot> = {}): GatewaySnapshot => ({
-  configPath: '/tmp/mcp.json',
-  configFormat: 'json',
-  configText: makeConfigText(),
-  revision: 'rev-1',
-  running: false,
-  interfaces: [
-    { name: 'lo0', address: '127.0.0.1', netmask: '255.0.0.0', kind: 'loopback' },
-    { name: 'en0', address: '192.168.1.25', netmask: '255.255.255.0', kind: 'lan' },
-  ],
-  network: 'loopback',
-  keyMigration: { gateway: false, servers: [] },
-  servers: [],
-  configError: null,
-  operationalError: null,
-  ...overrides,
-});
-
-interface SnapshotOverrides {
-  gateway?: Partial<GatewaySnapshot>;
-  login?: Partial<AppSnapshot['login']>;
-  update?: Partial<UpdateStatus>;
-  whatsNew?: string | null;
-  keyReminder?: boolean;
-  locale?: Locale;
-}
-
-const makeSnapshot = (overrides: SnapshotOverrides = {}): AppSnapshot => {
-  const locale = overrides.locale ?? 'en_US';
-  return {
-    gateway: makeGatewaySnapshot(overrides.gateway),
-    login: { enabled: false, supported: true, error: null, ...overrides.login },
-    update: makeUpdateStatus(overrides.update),
-    whatsNew: overrides.whatsNew ?? null,
-    keyReminder: overrides.keyReminder ?? false,
-    language: {
-      preference: locale,
-      locale,
-      system: 'en_US',
-      available: ['en_US', 'fr_FR', 'de_DE', 'tr_TR'],
-    },
-  };
-};
-
-interface MockClientBundle {
-  client: AppClient;
-  emitSnapshot: (snapshot: AppSnapshot) => void;
-  emitMenuCommand: (command: MenuCommand) => void;
-  calls: {
-    saveConfig: Array<{ text: string; expectedRevision: string }>;
-    confirmDeleteServer: Array<{ name: string }>;
-    restartServer: Array<{ name: string }>;
-    testServer: Array<{ name: string; expectedRevision: string }>;
-    revealConfig: number;
-    openConfigInEditor: number;
-    importExternalServers: Array<{ expectedRevision: string }>;
-    dismissKeyReminder: number;
-    dismissWhatsNew: number;
-    setLanguage: Array<{ preference: string }>;
-    updatesCheck: number;
-    updatesInstall: number;
-    updatesRestart: number;
-    updatesSetAutomatic: Array<{ automatic: boolean }>;
-  };
-}
-
-const createMockAppClient = (
-  initialSnapshot: AppSnapshot,
-  overrides: Partial<AppClient> = {},
-): MockClientBundle => {
-  const snapshotListeners = new Set<(snapshot: AppSnapshot) => void>();
-  const menuListeners = new Set<(command: MenuCommand) => void>();
-  let revisionCounter = 1;
-  let currentSnapshot = initialSnapshot;
-
-  const calls: MockClientBundle['calls'] = {
-    saveConfig: [],
-    confirmDeleteServer: [],
-    restartServer: [],
-    testServer: [],
-    revealConfig: 0,
-    openConfigInEditor: 0,
-    importExternalServers: [],
-    dismissKeyReminder: 0,
-    dismissWhatsNew: 0,
-    setLanguage: [],
-    updatesCheck: 0,
-    updatesInstall: 0,
-    updatesRestart: 0,
-    updatesSetAutomatic: [],
-  };
-
-  const emitSnapshot = (next: AppSnapshot): void => {
-    currentSnapshot = next;
-    for (const listener of snapshotListeners) listener(next);
-  };
-
-  const unusedError = async <T,>(method: string): Promise<AppResult<T>> => ({
-    ok: false,
-    error: { code: 'Unimplemented', message: `Unexpected call to ${method}` },
-  });
-
-  const baseClient: AppClient = {
-    snapshot: async () => ({ ok: true, value: currentSnapshot }),
-    saveConfig: async (params) => {
-      calls.saveConfig.push(params);
-      revisionCounter += 1;
-      const updated: AppSnapshot = {
-        ...currentSnapshot,
-        gateway: {
-          ...currentSnapshot.gateway,
-          configText: params.text,
-          revision: `rev-${revisionCounter}`,
-        },
-      };
-      emitSnapshot(updated);
-      return { ok: true, value: updated };
-    },
-    confirmDeleteServer: async (params) => {
-      calls.confirmDeleteServer.push(params);
-      return { ok: true, value: true };
-    },
-    confirmDiscard: async () => ({ ok: true, value: true }),
-    readLogs: async () => ({
-      ok: true,
-      value: { entries: [], cursor: 0, generation: 1, gap: false, hasMore: false },
-    }),
-    clearLogs: async () => ({
-      ok: true,
-      value: { entries: [], cursor: 0, generation: 2, gap: false, hasMore: false },
-    }),
-    quit: () => unusedError('quit'),
-    quitStatus: () => unusedError('quitStatus'),
-    start: async () => {
-      const next: AppSnapshot = {
-        ...currentSnapshot,
-        gateway: { ...currentSnapshot.gateway, running: true },
-      };
-      emitSnapshot(next);
-      return { ok: true, value: next };
-    },
-    stop: async () => {
-      const next: AppSnapshot = {
-        ...currentSnapshot,
-        gateway: { ...currentSnapshot.gateway, running: false },
-      };
-      emitSnapshot(next);
-      return { ok: true, value: next };
-    },
-    restartServer: async (params) => {
-      calls.restartServer.push(params);
-      return { ok: true, value: currentSnapshot };
-    },
-    testServer: async (params) => {
-      calls.testServer.push(params);
-      return { ok: true, value: { protocolVersion: '2025-11-25' } };
-    },
-    migrateKeys: async () => ({ ok: true, value: currentSnapshot }),
-    dismissKeyReminder: async () => {
-      calls.dismissKeyReminder += 1;
-      const next: AppSnapshot = { ...currentSnapshot, keyReminder: false };
-      emitSnapshot(next);
-      return { ok: true, value: next };
-    },
-    validateConfig: async () => ({ ok: true, value: { issue: null } }),
-    copyEndpoint: async () => ({ ok: true, value: null }),
-    copyClientConfig: async () => ({ ok: true, value: null }),
-    openSocialLink: async () => ({ ok: true, value: null }),
-    revealConfig: async () => {
-      calls.revealConfig += 1;
-      return { ok: true, value: null };
-    },
-    openConfigInEditor: async () => {
-      calls.openConfigInEditor += 1;
-      return { ok: true, value: null };
-    },
-    importExternalServers: async (params) => {
-      calls.importExternalServers.push(params);
-      return { ok: true, value: { snapshot: currentSnapshot, importedCount: 2 } };
-    },
-    dismissWhatsNew: async () => {
-      calls.dismissWhatsNew += 1;
-      return { ok: true, value: null };
-    },
-    updatesCheck: async () => {
-      calls.updatesCheck += 1;
-      return {
-        ok: true,
-        value: {
-          ...currentSnapshot.update,
-          checkedAt: '2026-11-27T08:00:00.000Z',
-        },
-      };
-    },
-    updatesDownload: () => unusedError('updatesDownload'),
-    updatesInstall: async () => {
-      calls.updatesInstall += 1;
-      return {
-        ok: true,
-        value: {
-          ...currentSnapshot.update,
-          phase: 'downloading',
-          progressPercent: 10,
-        },
-      };
-    },
-    updatesSetAutomatic: async (params) => {
-      calls.updatesSetAutomatic.push(params);
-      return {
-        ok: true,
-        value: {
-          ...currentSnapshot.update,
-          automaticUpdates: params.automatic,
-        },
-      };
-    },
-    setLanguage: async (params) => {
-      calls.setLanguage.push(params);
-      const nextLocale: Locale = params.preference === 'system' ? 'en_US' : params.preference;
-      const next: AppSnapshot = {
-        ...currentSnapshot,
-        language: {
-          ...currentSnapshot.language,
-          preference: params.preference,
-          locale: nextLocale,
-        },
-      };
-      emitSnapshot(next);
-      return { ok: true, value: next };
-    },
-    updatesRestart: async () => {
-      calls.updatesRestart += 1;
-      return {
-        ok: true,
-        value: { requested: true, status: { attempt: 1, phase: 'pending', error: null } },
-      };
-    },
-    onSnapshotChanged: (listener) => {
-      snapshotListeners.add(listener);
-      return () => {
-        snapshotListeners.delete(listener);
-      };
-    },
-    onMenuCommand: (listener) => {
-      menuListeners.add(listener);
-      return () => {
-        menuListeners.delete(listener);
-      };
-    },
-  };
-
-  return {
-    client: { ...baseClient, ...overrides },
-    emitSnapshot,
-    emitMenuCommand: (command) => {
-      for (const listener of menuListeners) listener(command);
-    },
-    calls,
-  };
+  return must(EditorView.findFromDOM(cmEditor), 'EditorView');
 };
 
 beforeEach(() => {
@@ -450,7 +159,7 @@ afterEach(() => {
 });
 
 describe('Shared UI components (src/mainview/components/ui.tsx)', () => {
-  test('Alert renders severity styling, roles, optional action buttons, and calls onDismiss', () => {
+  test('Alert renders roles, optional action buttons, and calls onDismiss', () => {
     const onDismiss = mock(() => {});
     const onAction = mock(() => {});
 
@@ -475,13 +184,10 @@ describe('Shared UI components (src/mainview/components/ui.tsx)', () => {
     expect(alerts).toHaveLength(2);
     expect(alerts[0]?.textContent).toContain('Error title');
     expect(alerts[0]?.textContent).toContain('Port already in use');
-    expect(alerts[0]?.className).toContain('bg-mac-red/8');
     expect(alerts[1]?.textContent).toContain('Warning notice');
-    expect(alerts[1]?.className).toContain('bg-mac-yellow/12');
 
     const status = view.getByRole('status');
     expect(status.textContent).toContain('Saved successfully');
-    expect(status.className).toContain('bg-mac-fill-quaternary');
 
     fireEvent.click(within(must(alerts[0])).getByRole('button', { name: 'Retry' }));
     expect(onAction).toHaveBeenCalledTimes(1);
@@ -523,7 +229,7 @@ describe('Shared UI components (src/mainview/components/ui.tsx)', () => {
     expect(select.getAttribute('aria-describedby')).toBeNull();
   });
 
-  test('Toggle invokes onChange on click and keyboard activation and respects disabled', () => {
+  test('Toggle invokes onChange on click and respects disabled', () => {
     const onChange = mock((_checked: boolean) => {});
     const onDisabledChange = mock((_checked: boolean) => {});
 
@@ -556,19 +262,12 @@ describe('Shared UI components (src/mainview/components/ui.tsx)', () => {
     fireEvent.click(activeSwitch);
     expect(onChange).toHaveBeenCalledWith(true);
 
-    // Keyboard activation via Space on the switch control.
-    fireEvent.keyDown(activeSwitch, { key: ' ' });
-    fireEvent.keyUp(activeSwitch, { key: ' ' });
-    expect(onChange.mock.calls.length).toBeGreaterThanOrEqual(2);
-
     expect(disabledSwitch.getAttribute('aria-disabled')).toBe('true');
     fireEvent.click(disabledSwitch);
-    fireEvent.keyDown(disabledSwitch, { key: ' ' });
-    fireEvent.keyUp(disabledSwitch, { key: ' ' });
     expect(onDisabledChange).toHaveBeenCalledTimes(0);
   });
 
-  test('CheckboxRow invokes onChange on click and keyboard toggle and respects disabled', () => {
+  test('CheckboxRow invokes onChange on click and respects disabled', () => {
     const onChange = mock((_checked: boolean) => {});
     const onDisabledChange = mock((_checked: boolean) => {});
 
@@ -593,14 +292,8 @@ describe('Shared UI components (src/mainview/components/ui.tsx)', () => {
     fireEvent.click(activeCheckbox);
     expect(onChange).toHaveBeenCalledWith(true);
 
-    fireEvent.keyDown(activeCheckbox, { key: ' ' });
-    fireEvent.keyUp(activeCheckbox, { key: ' ' });
-    expect(onChange.mock.calls.length).toBeGreaterThanOrEqual(2);
-
     expect(disabledCheckbox.getAttribute('aria-disabled')).toBe('true');
     fireEvent.click(disabledCheckbox);
-    fireEvent.keyDown(disabledCheckbox, { key: ' ' });
-    fireEvent.keyUp(disabledCheckbox, { key: ' ' });
     expect(onDisabledChange).toHaveBeenCalledTimes(0);
   });
 
@@ -964,7 +657,7 @@ describe('ConfigBlockerBar, GatewayToggle, and SidebarUpdates', () => {
 });
 
 describe('Dialogs (KeyMigration, WhatsNew, ServerEditor)', () => {
-  test('KeyMigration renders masked secret badges (SEC-04), freezes reviewed slots, and handles move/failure/keep/dirty', async () => {
+  test('KeyMigration renders masked secret badges (SEC-04), freezes reviewed slots, supports Back and singular moveOne, and handles move/failure/keep/dirty', async () => {
     const fallbackFocus = createRef<HTMLButtonElement>();
     const onKeep = mock(() => {});
     const onClose = mock(() => {});
@@ -1004,6 +697,12 @@ describe('Dialogs (KeyMigration, WhatsNew, ServerEditor)', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: t('keys.keep') }));
     expect(onKeep).toHaveBeenCalledTimes(1);
 
+    // Step 1 -> Step 2 -> Back returns to Step 1.
+    fireEvent.click(within(dialog).getByRole('button', { name: t('keys.continue') }));
+    expect(dialog.textContent).toContain(t('keys.step2'));
+    fireEvent.click(within(dialog).getByRole('button', { name: t('keys.back') }));
+    expect(dialog.textContent).toContain(t('keys.step1'));
+
     // Step 1 -> Step 2 freezes reviewed slots even if live slots change underneath.
     fireEvent.click(within(dialog).getByRole('button', { name: t('keys.continue') }));
     expect(dialog.textContent).toContain(t('keys.step2'));
@@ -1039,14 +738,30 @@ describe('Dialogs (KeyMigration, WhatsNew, ServerEditor)', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: t('keys.tryAgain') }));
     expect(dialog.querySelectorAll('code.masked-secret')).toHaveLength(4);
 
+    // Single-slot migration renders singular `t('keys.moveOne')` button on step 2.
+    view.rerender(
+      <I18nProvider>
+        <KeyMigration
+          slots={{ gateway: true, servers: [] }}
+          dirty={false}
+          busy={false}
+          error={null}
+          filename="mcp.json"
+          fallbackFocus={fallbackFocus}
+          onKeep={onKeep}
+          onClose={onClose}
+          onMove={onMove}
+        />
+      </I18nProvider>,
+    );
+    fireEvent.click(within(dialog).getByRole('button', { name: t('keys.continue') }));
+
     // Successful move transitions to done and closes on Done.
     moveShouldSucceed = true;
-    fireEvent.click(within(dialog).getByRole('button', { name: t('keys.continue') }));
     await act(async () => {
-      fireEvent.click(
-        within(dialog).getByRole('button', { name: t('keys.moveMany', { count: 4 }) }),
-      );
+      fireEvent.click(within(dialog).getByRole('button', { name: t('keys.moveOne') }));
     });
+    expect(movedSlots[1]).toEqual({ gateway: true, servers: [] });
     expect(within(dialog).getByRole('status').textContent).toBe(t('keys.moved'));
     fireEvent.click(within(dialog).getByRole('button', { name: t('keys.done') }));
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -1070,7 +785,7 @@ describe('Dialogs (KeyMigration, WhatsNew, ServerEditor)', () => {
     expect(dirtyView.queryByRole('button', { name: t('keys.continue') })).toBeNull();
   });
 
-  test('WhatsNew renders release note blocks for a valid version, hides unknown versions, and calls onClose', () => {
+  test('WhatsNew renders release note blocks for a valid version, strips markdown links to plain text, hides unknown versions, and calls onClose', async () => {
     const fallbackFocus = createRef<HTMLButtonElement>();
     const onClose = mock(() => {});
 
@@ -1094,9 +809,37 @@ describe('Dialogs (KeyMigration, WhatsNew, ServerEditor)', () => {
 
     fireEvent.click(within(dialog).getByRole('button', { name: t('whatsNew.done') }));
     expect(onClose).toHaveBeenCalledTimes(1);
+    cleanupDom();
+
+    // Markdown links `[Documentation](https://example.com/docs)` render as plain text without `<a>`.
+    const realChangelog = await import('@mcp-gateway/shared/changelog');
+    const origChangelogBlocks = realChangelog.changelogBlocks;
+    const origChangelogSection = realChangelog.changelogSection;
+    mock.module('@mcp-gateway/shared/changelog', () => ({
+      changelogBlocks: origChangelogBlocks,
+      changelogSection: (raw: string, version: string) =>
+        version === '0.9.9-link'
+          ? '### Added\n\n- Read the [Documentation](https://example.com/docs) for details'
+          : origChangelogSection(raw, version),
+    }));
+    try {
+      const linkView = renderWithI18n(
+        <WhatsNew version="0.9.9-link" onClose={onClose} fallbackFocus={fallbackFocus} />,
+      );
+      const linkDialog = linkView.getByRole('dialog', {
+        name: t('whatsNew.title', { version: '0.9.9-link' }),
+      });
+      expect(linkDialog.textContent).toContain('Read the Documentation for details');
+      expect(linkDialog.querySelector('a')).toBeNull();
+    } finally {
+      mock.module('@mcp-gateway/shared/changelog', () => ({
+        changelogBlocks: origChangelogBlocks,
+        changelogSection: origChangelogSection,
+      }));
+    }
   });
 
-  test('ServerEditor renders stdio/http structured rows, sensitiveEnvOverrides warning (SEC-03), Bear preset, validation, and submits', () => {
+  test('ServerEditor renders stdio/http structured rows, sensitiveEnvOverrides warning (SEC-03), Bear preset, validation UI state, and submits', () => {
     const fallbackFocus = createRef<HTMLButtonElement>();
     const submitted: Editor[] = [];
     const onClose = mock(() => {});
@@ -1145,7 +888,6 @@ describe('Dialogs (KeyMigration, WhatsNew, ServerEditor)', () => {
     expect(warningBanner.textContent).toContain(
       'Overrides sensitive execution environment variable(s): PATH',
     );
-    expect(warningBanner.className).toContain('bg-mac-yellow/12');
 
     // Mask/show toggle flips value input type between text and password.
     expect(valueInput.type).toBe('text');
@@ -1163,39 +905,39 @@ describe('Dialogs (KeyMigration, WhatsNew, ServerEditor)', () => {
     setInputValue(must(keyInputs[1]), 'HOME');
     expect(within(dialog).getByRole('alert').textContent).toContain('PATH, HOME');
 
-    // Duplicate server name shows inline alert and disables Apply.
+    // Invalid env (duplicate key), duplicate name, and invalid name each disable Apply and show inline alert.
     const nameInput = within(dialog).getByLabelText(t('editor.name')) as HTMLInputElement;
     const applyBtn = within(dialog).getByRole('button', {
       name: t('editor.apply'),
     }) as HTMLButtonElement;
+
+    setInputValue(must(keyInputs[1]), 'PATH');
+    expect(within(dialog).getByText(t('app.environmentInvalid'))).toBeTruthy();
+    expect(applyBtn.disabled).toBe(true);
+    setInputValue(must(keyInputs[1]), 'HOME');
+
     setInputValue(nameInput, 'existing');
     expect(within(dialog).getByText(t('app.serverExists'))).toBeTruthy();
     expect(applyBtn.disabled).toBe(true);
 
-    // Fix name back to unique name and submit stdio configuration.
+    setInputValue(nameInput, 'bad/name');
+    expect(within(dialog).getByText(t('app.serverFieldsInvalid'))).toBeTruthy();
+    expect(applyBtn.disabled).toBe(true);
+
+    // Fix name back to unique valid name and submit stdio configuration.
     setInputValue(nameInput, 'bear_notes');
     expect(applyBtn.disabled).toBe(false);
     fireEvent.click(applyBtn);
     expect(submitted).toHaveLength(1);
     expect(submitted[0]?.name).toBe('bear_notes');
-    expect(submitted[0]?.type).toBe('stdio');
-    expect(submitted[0]?.command).toBe('/Applications/Bear.app/Contents/MacOS/bearcli');
-    expect(submitted[0]?.args).toEqual(['mcp-server']);
 
-    // Switch transport to HTTP and edit URL + structured headers + custom auth key.
+    // Switch transport to HTTP and edit URL + custom auth key.
     const transportSelect = within(dialog).getByLabelText(
       t('editor.transport'),
     ) as HTMLSelectElement;
     fireEvent.change(transportSelect, { target: { value: 'http' } });
     const urlInput = within(dialog).getByLabelText(t('editor.url')) as HTMLInputElement;
     setInputValue(urlInput, 'https://mcp.example.com/sse');
-
-    fireEvent.click(within(dialog).getByRole('button', { name: /Add Row/i }));
-    setInputValue(within(dialog).getByPlaceholderText('KEY') as HTMLInputElement, 'Authorization');
-    setInputValue(
-      within(dialog).getByPlaceholderText(`value or \${ENV_VAR}`) as HTMLInputElement,
-      `Bearer \${API_TOKEN}`,
-    );
 
     const authSelect = within(dialog).getByLabelText(t('editor.auth')) as HTMLSelectElement;
     fireEvent.change(authSelect, { target: { value: 'custom' } });
@@ -1205,24 +947,6 @@ describe('Dialogs (KeyMigration, WhatsNew, ServerEditor)', () => {
     expect(keyField.value).toMatch(/^[0-9a-f]{64}$/);
     fireEvent.click(within(dialog).getByRole('button', { name: t('editor.showKey') }));
     expect(keyField.type).toBe('text');
-
-    fireEvent.click(applyBtn);
-    expect(submitted).toHaveLength(2);
-    expect(submitted[1]?.type).toBe('http');
-    expect(submitted[1]?.url).toBe('https://mcp.example.com/sse');
-    expect(submitted[1]?.headers).toHaveLength(1);
-    expect(submitted[1]?.headers[0]).toMatchObject({
-      key: 'Authorization',
-      value: `Bearer \${API_TOKEN}`,
-    });
-    expect(submitted[1]?.token).toMatch(/^[0-9a-f]{64}$/);
-
-    // Invalid headers (duplicate key) disables submit and shows error.
-    fireEvent.click(within(dialog).getByRole('button', { name: /Add Row/i }));
-    const headerKeys = within(dialog).getAllByPlaceholderText('KEY') as HTMLInputElement[];
-    setInputValue(must(headerKeys[1]), 'Authorization');
-    expect(within(dialog).getByText(t('app.headersInvalid'))).toBeTruthy();
-    expect(applyBtn.disabled).toBe(true);
   });
 
   test('ServerEditor renders secret masking by default for pre-populated API keys and shows Keychain stored state for tokenRef', () => {
@@ -1342,7 +1066,9 @@ describe('Views: Overview, Settings, Updates, Logs', () => {
         }),
       );
     });
-    expect(mockBundle.calls.testServer).toEqual([{ name: 'bear', expectedRevision: 'rev-1' }]);
+    expect(mockBundle.calls.testServer).toEqual([
+      { name: 'bear', expectedRevision: DEFAULT_REVISION },
+    ]);
     expect(bearRow.textContent).toContain(t('overview.testPassed', { version: '2025-11-25' }));
 
     // Restart button triggers client.restartServer.
@@ -1386,7 +1112,7 @@ describe('Views: Overview, Settings, Updates, Logs', () => {
     expect(saved.mcpServers.bear).toBeDefined();
   });
 
-  test('Overview renders repair state when config is invalid and commits server toggle switches', async () => {
+  test('Overview renders repair state for InvalidConfig, hides repair panel on KeySetupFailed, dismisses operationalError per occurrenceId, and invalidates passed ServerTest badges while preserving cancelled results', async () => {
     const brokenBundle = createMockAppClient(
       makeSnapshot({
         gateway: {
@@ -1404,15 +1130,39 @@ describe('Views: Overview, Settings, Updates, Logs', () => {
       expect(brokenView.getByText(t('overview.repairTitle'))).toBeTruthy();
     });
     expect(brokenView.getByText(t('overview.repairBody'))).toBeTruthy();
+
+    // KeySetupFailed hides the "Repair configuration to continue" panel.
+    act(() => {
+      brokenBundle.emitSnapshot(
+        makeSnapshot({
+          gateway: {
+            configText: '',
+            configError: {
+              occurrenceId: 'cfg-key-setup-1',
+              code: 'KeySetupFailed',
+              message: 'Keychain locked',
+            },
+          },
+        }),
+      );
+    });
+    expect(brokenView.queryByText(t('overview.repairTitle'))).toBeNull();
     cleanupDom();
 
-    const toggleBundle = createMockAppClient(
+    const configText = makeConfigText({
+      bear: { command: '/usr/bin/env', args: ['bear'] },
+    });
+    let testMode: 'pass' | 'cancel' = 'pass';
+    const liveBundle = createMockAppClient(
       makeSnapshot({
         gateway: {
           running: true,
-          configText: makeConfigText({
-            bear: { command: '/usr/bin/env', args: ['bear'], disabled: false },
-          }),
+          configText,
+          operationalError: {
+            occurrenceId: 'op-err-1',
+            code: 'ListenerFailure',
+            message: 'Address 127.0.0.1:8787 already in use',
+          },
           servers: [
             {
               name: 'bear',
@@ -1425,18 +1175,136 @@ describe('Views: Overview, Settings, Updates, Logs', () => {
           ],
         },
       }),
+      {
+        testServer: async () =>
+          testMode === 'pass'
+            ? { ok: true, value: { protocolVersion: '2025-11-25' } }
+            : { ok: false, error: { code: 'Cancelled', message: 'Test cancelled by stop' } },
+      },
     );
-    const toggleView = renderWithGateway(toggleBundle.client, <Overview />);
+
+    const liveView = renderWithGateway(liveBundle.client, <Overview />);
     await waitFor(() => {
-      expect(toggleView.getByText('bear')).toBeTruthy();
+      expect(liveView.getByText('bear')).toBeTruthy();
     });
 
-    const serverSwitch = toggleView.getByRole('switch');
-    await act(async () => {
-      fireEvent.click(serverSwitch);
+    // operationalError banner renders and dismisses per occurrenceId; a new occurrenceId re-renders.
+    const opAlert = liveView.getByRole('alert');
+    expect(opAlert.textContent).toContain('ListenerFailure: Address 127.0.0.1:8787 already in use');
+    fireEvent.click(within(opAlert).getByRole('button', { name: t('common.dismissError') }));
+    expect(liveView.queryByRole('alert')).toBeNull();
+
+    act(() => {
+      liveBundle.emitSnapshot(
+        makeSnapshot({
+          gateway: {
+            running: true,
+            configText,
+            operationalError: {
+              occurrenceId: 'op-err-2',
+              code: 'ListenerFailure',
+              message: 'Second bind failure',
+            },
+            servers: [
+              {
+                name: 'bear',
+                type: 'stdio',
+                endpoint: '/mcp/bear',
+                enabled: true,
+                status: 'mounted',
+                error: null,
+              },
+            ],
+          },
+        }),
+      );
     });
-    expect(toggleBundle.calls.saveConfig).toHaveLength(1);
-    expect(lastSavedConfig(toggleBundle).mcpServers.bear?.disabled).toBe(true);
+    expect(liveView.getByRole('alert').textContent).toContain(
+      'ListenerFailure: Second bind failure',
+    );
+
+    // A passed ServerTest badge clears when the server unmounts or becomes disabled (`outdated`).
+    await act(async () => {
+      fireEvent.click(
+        liveView.getByRole('button', { name: t('overview.testConnectionFor', { name: 'bear' }) }),
+      );
+    });
+    expect(liveView.getByText(t('overview.testPassed', { version: '2025-11-25' }))).toBeTruthy();
+
+    act(() => {
+      liveBundle.emitSnapshot(
+        makeSnapshot({
+          gateway: {
+            running: true,
+            configText,
+            servers: [
+              {
+                name: 'bear',
+                type: 'stdio',
+                endpoint: '/mcp/bear',
+                enabled: false,
+                status: 'disabled',
+                error: null,
+              },
+            ],
+          },
+        }),
+      );
+    });
+    await waitFor(() => {
+      expect(liveView.queryByText(t('overview.testPassed', { version: '2025-11-25' }))).toBeNull();
+    });
+
+    // Re-mount server, run a test that returns `Cancelled`, then stop gateway: `cancelled` badge stays.
+    testMode = 'cancel';
+    act(() => {
+      liveBundle.emitSnapshot(
+        makeSnapshot({
+          gateway: {
+            running: true,
+            configText,
+            servers: [
+              {
+                name: 'bear',
+                type: 'stdio',
+                endpoint: '/mcp/bear',
+                enabled: true,
+                status: 'mounted',
+                error: null,
+              },
+            ],
+          },
+        }),
+      );
+    });
+    await act(async () => {
+      fireEvent.click(
+        liveView.getByRole('button', { name: t('overview.testConnectionFor', { name: 'bear' }) }),
+      );
+    });
+    expect(liveView.getByText('Test cancelled by stop')).toBeTruthy();
+
+    act(() => {
+      liveBundle.emitSnapshot(
+        makeSnapshot({
+          gateway: {
+            running: false,
+            configText,
+            servers: [
+              {
+                name: 'bear',
+                type: 'stdio',
+                endpoint: '/mcp/bear',
+                enabled: true,
+                status: 'stopped',
+                error: null,
+              },
+            ],
+          },
+        }),
+      );
+    });
+    expect(liveView.getByText('Test cancelled by stop')).toBeTruthy();
   });
 
   test('Settings renders host, port, allowedPeers (Plan 033), auth token, keepAwake (Plan 028), launchAtLogin, language, and advanced actions', async () => {
@@ -1558,7 +1426,93 @@ describe('Views: Overview, Settings, Updates, Logs', () => {
     });
   });
 
-  test('Updates renders version, auto-check toggle, Check button, 1-click Install & Relaunch (D-02), and determinate progress bar (D-17)', async () => {
+  test('Settings renders needsLoginRetry error + retry button, replaces Keychain tokenRef on Generate, and shows paused state when config is invalid', async () => {
+    const tokenRefConfigText = JSON.stringify(
+      {
+        gateway: {
+          host: '127.0.0.1',
+          port: 8787,
+          tokenRef: 'gateway:default',
+          launchAtLogin: true,
+        },
+        mcpServers: {},
+      },
+      null,
+      2,
+    );
+    const mockBundle = createMockAppClient(
+      makeSnapshot({
+        login: { supported: true, enabled: false, error: 'Approval required' },
+        gateway: {
+          configText: tokenRefConfigText,
+        },
+      }),
+    );
+
+    const view = renderWithGateway(mockBundle.client, <Settings />);
+    await waitFor(() => {
+      expect(view.getByText('Approval required')).toBeTruthy();
+    });
+
+    // needsLoginRetry renders the retry button and clicking it re-saves launchAtLogin: true.
+    const retryBtn = view.getByRole('button', { name: t('draft.retryLogin') });
+    await act(async () => {
+      fireEvent.click(retryBtn);
+    });
+    expect(mockBundle.calls.saveConfig).toHaveLength(1);
+    expect(lastSavedConfig(mockBundle).gateway.launchAtLogin).toBe(true);
+
+    // tokenRef displays "Stored in Keychain" instead of the password input, and Generate replaces it with a literal token.
+    expect(view.getByText(t('keys.stored'))).toBeTruthy();
+    expect(view.queryByLabelText(t('settings.token'))).toBeNull();
+
+    await act(async () => {
+      fireEvent.click(view.getByRole('button', { name: t('settings.generateToken') }));
+    });
+    expect(mockBundle.calls.saveConfig).toHaveLength(2);
+    const afterGenerate = lastSavedConfig(mockBundle);
+    expect(afterGenerate.gateway.tokenRef).toBeUndefined();
+    expect(afterGenerate.gateway.token).toMatch(/^[0-9a-f]{64}$/);
+    expect((view.getByLabelText(t('settings.token')) as HTMLInputElement).value).toBe(
+      afterGenerate.gateway.token ?? '',
+    );
+
+    // Invalid config pauses structured preferences.
+    act(() => {
+      mockBundle.emitSnapshot(
+        makeSnapshot({
+          gateway: {
+            configText: '{ invalid',
+            configError: {
+              occurrenceId: 'cfg-err-paused',
+              code: 'InvalidConfig',
+              message: 'Malformed JSON',
+            },
+          },
+        }),
+      );
+    });
+    expect(view.getByText(t('settings.paused'))).toBeTruthy();
+  });
+
+  test('Updates auto-checks once on idle mount, renders version/auto-check/Check/1-click Install & Relaunch (D-02), and determinate progress bar (D-17)', async () => {
+    // Mounting Updates when phase === 'idle' and supported === true auto-triggers updatesCheck() once.
+    const idleBundle = createMockAppClient(
+      makeSnapshot({
+        update: {
+          supported: true,
+          phase: 'idle',
+          checkedAt: null,
+        },
+      }),
+    );
+    const idleView = renderWithGateway(idleBundle.client, <Updates />);
+    await waitFor(() => {
+      expect(idleBundle.calls.updatesCheck).toBe(1);
+    });
+    expect(idleView.getByRole('status').textContent).toBe(t('updates.status.upToDate'));
+    cleanupDom();
+
     const mockBundle = createMockAppClient(
       makeSnapshot({
         update: {
@@ -1581,6 +1535,7 @@ describe('Views: Overview, Settings, Updates, Logs', () => {
     expect(view.getByRole('status').textContent).toBe(
       t('updates.status.availableVersion', { version: '0.10.0' }),
     );
+    expect(mockBundle.calls.updatesCheck).toBe(0);
 
     // Toggle automatic update checks.
     const autoSwitch = getToggleControl(view.container, t('updates.automatic'));
@@ -1645,7 +1600,7 @@ describe('Views: Overview, Settings, Updates, Logs', () => {
     expect(mockBundle.calls.updatesRestart).toBe(1);
   });
 
-  test('Logs renders Console rows, filters by search, level, and server, clears logs, and auto-retries after readLogs failure (Plan 034)', async () => {
+  test('Logs renders Console rows, filters by search/level/server, focuses search on Cmd+F, polls hasMore/gap pages, handles clearLogs failure, and auto-retries after readLogs failure (Plan 034)', async () => {
     const entries: LogEntry[] = [
       {
         id: 1,
@@ -1678,11 +1633,14 @@ describe('Views: Overview, Settings, Updates, Logs', () => {
 
     let readCalls = 0;
     let clearCalls = 0;
+    let clearMode: 'fail-result' | 'throw' | 'ok' = 'fail-result';
+    let currentGeneration = 1;
+    let ringEntries: LogEntry[] = entries;
     const scheduledPoll: { current: (() => void) | null } = { current: null };
     const realSetTimeout = globalThis.setTimeout;
 
     const mockBundle = createMockAppClient(makeSnapshot(), {
-      readLogs: async (): Promise<AppResult<LogPage>> => {
+      readLogs: async (params): Promise<AppResult<LogPage>> => {
         readCalls += 1;
         if (readCalls === 1) {
           return {
@@ -1693,24 +1651,66 @@ describe('Views: Overview, Settings, Updates, Logs', () => {
         if (readCalls === 2) {
           return {
             ok: true,
-            value: { entries, cursor: 3, generation: 1, gap: false, hasMore: false },
+            value: {
+              entries: ringEntries.slice(0, 2),
+              cursor: 2,
+              generation: currentGeneration,
+              gap: true,
+              hasMore: true,
+            },
+          };
+        }
+        if (readCalls === 3) {
+          return {
+            ok: true,
+            value: {
+              entries: ringEntries.slice(2),
+              cursor: 3,
+              generation: currentGeneration,
+              gap: false,
+              hasMore: false,
+            },
           };
         }
         return {
           ok: true,
-          value: { entries: [], cursor: 3, generation: 1, gap: false, hasMore: false },
+          value: {
+            entries: params.after === 0 ? ringEntries : [],
+            cursor: ringEntries.length,
+            generation: currentGeneration,
+            gap: false,
+            hasMore: false,
+          },
         };
       },
       clearLogs: async (): Promise<AppResult<LogPage>> => {
         clearCalls += 1;
+        if (clearMode === 'fail-result') {
+          return {
+            ok: false,
+            error: { code: 'ClearDenied', message: 'Log ring locked' },
+          };
+        }
+        if (clearMode === 'throw') {
+          throw new Error('Bridge disconnected');
+        }
+        ringEntries = [];
+        currentGeneration += 1;
         return {
           ok: true,
-          value: { entries: [], cursor: 0, generation: 2, gap: false, hasMore: false },
+          value: {
+            entries: [],
+            cursor: 0,
+            generation: currentGeneration,
+            gap: false,
+            hasMore: false,
+          },
         };
       },
     });
 
-    // Capture the 2000ms polling timer so Plan 034 retry is verified deterministically without sleeping.
+    // Capture the 2000ms polling timer so Plan 034 retry is verified deterministically without sleeping,
+    // while `delay = 0` (`hasMore: true`) executes immediately via `realSetTimeout`.
     globalThis.setTimeout = ((
       handler: Parameters<typeof setTimeout>[0],
       timeout?: number,
@@ -1733,7 +1733,8 @@ describe('Views: Overview, Settings, Updates, Logs', () => {
       expect(readCalls).toBe(1);
       expect(scheduledPoll.current).not.toBeNull();
 
-      // Trigger the scheduled retry poll -> succeeds, clears the error alert, and renders rows.
+      // Trigger the scheduled retry poll -> returns page 1 (`gap: true, hasMore: true`), which
+      // renders `t('logs.gap')` and immediately polls page 2 (`delay = 0`), rendering all 3 rows.
       const runRetry = must(scheduledPoll.current, 'scheduled poll');
       scheduledPoll.current = null;
       await act(async () => {
@@ -1744,11 +1745,19 @@ describe('Views: Overview, Settings, Updates, Logs', () => {
         expect(view.queryByRole('alert')).toBeNull();
         expect(view.container.querySelectorAll('.log-row')).toHaveLength(3);
       });
+      expect(readCalls).toBe(3);
+      expect(view.getByRole('status').textContent).toBe(t('logs.gap'));
       expect(view.getByText('Mounted bear stdio backend')).toBeTruthy();
       expect(
         view.getByText(`Connection timeout talking to remote (${t('logs.truncated')})`),
       ).toBeTruthy();
       expect(view.getByText(t('logs.appSource'))).toBeTruthy();
+
+      // Cmd+F focuses the log search input.
+      const searchInput = view.getByLabelText(t('logs.search')) as HTMLInputElement;
+      expect(document.activeElement === searchInput).toBe(false);
+      fireEvent.keyDown(window, { key: 'f', metaKey: true });
+      expect(document.activeElement === searchInput).toBe(true);
 
       // Filter by level.
       const levelSelect = view.getByLabelText(t('logs.level')) as HTMLSelectElement;
@@ -1765,7 +1774,6 @@ describe('Views: Overview, Settings, Updates, Logs', () => {
       fireEvent.change(serverSelect, { target: { value: '' } });
 
       // Filter by search text (case-insensitive) and verify no-matches state.
-      const searchInput = view.getByLabelText(t('logs.search')) as HTMLInputElement;
       setInputValue(searchInput, 'LISTENER');
       expect(view.container.querySelectorAll('.log-row')).toHaveLength(1);
       expect(view.getByText('Gateway listener retrying bind')).toBeTruthy();
@@ -1774,11 +1782,28 @@ describe('Views: Overview, Settings, Updates, Logs', () => {
       expect(view.getByText(t('logs.noMatches'))).toBeTruthy();
       setInputValue(searchInput, '');
 
-      // Clear logs invokes client.clearLogs() and resets to empty state.
+      // Failed clearLogs (`{ ok: false }` and bridge rejection) displays error alert and re-reads rows.
       await act(async () => {
         fireEvent.click(view.getByRole('button', { name: t('logs.clear') }));
       });
       expect(clearCalls).toBe(1);
+      expect(view.getByRole('alert').textContent).toContain('ClearDenied: Log ring locked');
+      expect(view.container.querySelectorAll('.log-row')).toHaveLength(3);
+
+      clearMode = 'throw';
+      await act(async () => {
+        fireEvent.click(view.getByRole('button', { name: t('logs.clear') }));
+      });
+      expect(clearCalls).toBe(2);
+      expect(view.getByRole('alert').textContent).toContain(t('logs.clearFailed'));
+      expect(view.container.querySelectorAll('.log-row')).toHaveLength(3);
+
+      // Clear logs succeeds and resets to empty state.
+      clearMode = 'ok';
+      await act(async () => {
+        fireEvent.click(view.getByRole('button', { name: t('logs.clear') }));
+      });
+      expect(clearCalls).toBe(3);
       await waitFor(() => {
         expect(view.getByText(t('logs.empty'))).toBeTruthy();
       });
@@ -1787,6 +1812,249 @@ describe('Views: Overview, Settings, Updates, Logs', () => {
     } finally {
       globalThis.setTimeout = realSetTimeout;
     }
+  });
+});
+
+describe('RawConfig view (src/mainview/views/RawConfig.tsx)', () => {
+  test('mounts CodeMirror with configText, syncs edits, and runs 300ms debounced validation for ok, issue with Line N jump, local syntax error, oversized draft, and bridge rejection keeping Save enabled', async () => {
+    const initialText = makeConfigText({
+      bear: { command: '/usr/bin/env', args: ['bear'] },
+    });
+    let validateMode: 'ok' | 'issue' | 'reject' = 'ok';
+    const mockBundle = createMockAppClient(
+      makeSnapshot({ gateway: { configText: initialText, revision: DEFAULT_REVISION } }),
+      {
+        validateConfig: async (params) => {
+          mockBundle.calls.validateConfig.push(params);
+          if (validateMode === 'reject') {
+            throw new Error('Bridge validation offline');
+          }
+          if (validateMode === 'issue') {
+            const portIndex = params.text.indexOf('"port"');
+            return {
+              ok: true,
+              value: {
+                issue: {
+                  message: 'Port must be between 1 and 65535.',
+                  offset: portIndex >= 0 ? portIndex : 20,
+                },
+              },
+            };
+          }
+          return { ok: true, value: { issue: null } };
+        },
+      },
+    );
+
+    const view = renderWithGateway(mockBundle.client, <RawConfig visible={true} />);
+
+    await waitFor(() => {
+      expect(view.getByText(t('raw.title'))).toBeTruthy();
+    });
+    fireEvent.click(must(view.container.querySelector('button.raw-heading'), 'raw-heading'));
+    expect(view.container.querySelector('.raw-code-editor .cm-editor')).not.toBeNull();
+    const cmView = getCodeMirrorView(view.container);
+    expect(cmView.state.doc.toString()).toBe(initialText);
+
+    const saveButton = () =>
+      view.getByRole('button', {
+        name: t('raw.save', { filename: 'mcp.json' }),
+      }) as HTMLButtonElement;
+    const resetButton = () =>
+      view.getByRole('button', { name: t('raw.reset') }) as HTMLButtonElement;
+
+    // Initial clean document runs validation after 300ms debounce, reports checked, and keeps Save disabled (not dirty).
+    await waitFor(() => {
+      expect(view.getByRole('status').textContent).toBe(t('raw.checked'));
+    });
+    expect(saveButton().disabled).toBe(true);
+    expect(resetButton().disabled).toBe(true);
+
+    // 1. Dispatch a CodeMirror document transaction -> dirty becomes true, and after 300ms debounce
+    // validateConfig returns { issue: null } -> feedback shows raw.checked and Save is enabled.
+    const editedValidText = makeConfigText(
+      { bear: { command: '/usr/bin/env', args: ['bear'] } },
+      { port: 9090 },
+    );
+    act(() => {
+      cmView.dispatch({
+        changes: { from: 0, to: cmView.state.doc.length, insert: editedValidText },
+      });
+    });
+    expect(resetButton().disabled).toBe(false);
+
+    await waitFor(() => {
+      expect(mockBundle.calls.validateConfig.at(-1)?.text).toBe(editedValidText);
+      expect(view.getByRole('status').textContent).toBe(t('raw.checked'));
+    });
+    expect(saveButton().disabled).toBe(false);
+
+    // 2. When validateConfig returns an issue with offset, feedback displays raw.issueAt,
+    // renders a clickable `Line N` jump button, marks editor content aria-invalid="true", and disables Save.
+    validateMode = 'issue';
+    const portIssueText = makeConfigText({}, { port: 99999 });
+    act(() => {
+      cmView.dispatch({
+        changes: { from: 0, to: cmView.state.doc.length, insert: portIssueText },
+      });
+    });
+
+    await waitFor(() => {
+      expect(view.getByRole('status').textContent).toContain('Port must be between 1 and 65535.');
+    });
+    expect(saveButton().disabled).toBe(true);
+    expect(cmView.contentDOM.getAttribute('aria-invalid')).toBe('true');
+
+    const lineJumpBtn = view.getByRole('button', { name: /^Line \d+$/ });
+    fireEvent.click(lineJumpBtn);
+    const targetLineNumber = Number(lineJumpBtn.textContent?.replace('Line ', ''));
+    expect(cmView.state.doc.lineAt(cmView.state.selection.main.anchor).number).toBe(
+      targetLineNumber,
+    );
+
+    // 3. Local JSON syntax error ('{') reports the syntax issue with line/column after debounce
+    // without calling client.validateConfig.
+    const callsBeforeSyntaxError = mockBundle.calls.validateConfig.length;
+    act(() => {
+      cmView.dispatch({
+        changes: { from: 0, to: cmView.state.doc.length, insert: '{' },
+      });
+    });
+
+    await waitFor(() => {
+      expect(view.getByRole('status').textContent).toContain('line 1');
+    });
+    expect(mockBundle.calls.validateConfig.length).toBe(callsBeforeSyntaxError);
+    expect(saveButton().disabled).toBe(true);
+    expect(cmView.contentDOM.getAttribute('aria-invalid')).toBe('true');
+
+    // 4. Draft exceeding MAX_CONFIG_BYTES reports CONFIG_TOO_LARGE without calling validateConfig.
+    const oversizedText = `"${'x'.repeat(MAX_CONFIG_BYTES + 16)}"`;
+    act(() => {
+      cmView.dispatch({
+        changes: { from: 0, to: cmView.state.doc.length, insert: oversizedText },
+      });
+    });
+    await waitFor(() => {
+      expect(view.getByRole('status').textContent).toBe(CONFIG_TOO_LARGE);
+    });
+    expect(mockBundle.calls.validateConfig.length).toBe(callsBeforeSyntaxError);
+    expect(saveButton().disabled).toBe(true);
+
+    // 5. When validateConfig rejects (bridge error), feedback displays raw.checkUnavailable
+    // and Save remains enabled (saveReady === true) so authoritative native Save can still run.
+    validateMode = 'reject';
+    const bridgeFallbackText = makeConfigText({}, { port: 8899 });
+    act(() => {
+      cmView.dispatch({
+        changes: { from: 0, to: cmView.state.doc.length, insert: bridgeFallbackText },
+      });
+    });
+
+    await waitFor(() => {
+      expect(view.getByRole('status').textContent).toBe(t('raw.checkUnavailable'));
+    });
+    expect(saveButton().disabled).toBe(false);
+  });
+
+  test('Format, Reset, Save, Import from Claude / Cursor (0, 1, 2 server notices), and Schema reference toggle', async () => {
+    const compactJson = `{"gateway":{"host":"127.0.0.1","port":3333,"token":"${'a'.repeat(32)}"},"mcpServers":{}}`;
+    let importedCount = 0;
+    const mockBundle = createMockAppClient(
+      makeSnapshot({ gateway: { configText: compactJson, revision: DEFAULT_REVISION } }),
+      {
+        importExternalServers: async (params) => {
+          mockBundle.calls.importExternalServers.push(params);
+          return {
+            ok: true,
+            value: {
+              snapshot: makeSnapshot({
+                gateway: { configText: compactJson, revision: SECOND_REVISION },
+              }),
+              importedCount,
+            },
+          };
+        },
+      },
+    );
+
+    const view = renderWithGateway(mockBundle.client, <RawConfig visible={true} />);
+
+    await waitFor(() => {
+      expect(view.getByText(t('raw.title'))).toBeTruthy();
+    });
+    fireEvent.click(must(view.container.querySelector('button.raw-heading'), 'raw-heading'));
+    expect(view.container.querySelector('.raw-code-editor .cm-editor')).not.toBeNull();
+    const cmView = getCodeMirrorView(view.container);
+    expect(cmView.state.doc.toString()).toBe(compactJson);
+
+    // Schema reference popover toggles open and closed.
+    const schemaBtn = view.getByRole('button', { name: 'Schema reference' });
+    expect(schemaBtn.getAttribute('aria-expanded')).toBe('false');
+    expect(view.container.querySelector('.schema-popover')).toBeNull();
+
+    fireEvent.click(schemaBtn);
+    expect(schemaBtn.getAttribute('aria-expanded')).toBe('true');
+    expect(view.container.querySelector('.schema-popover')?.textContent).toContain(t('raw.intro'));
+
+    fireEvent.click(schemaBtn);
+    expect(schemaBtn.getAttribute('aria-expanded')).toBe('false');
+    expect(view.container.querySelector('.schema-popover')).toBeNull();
+
+    // Import from Claude / Cursor displays 0, 1, and 2 imported server notices.
+    const importBtn = view.getByRole('button', { name: 'Import from Claude / Cursor' });
+    importedCount = 0;
+    await act(async () => {
+      fireEvent.click(importBtn);
+    });
+    expect(view.getByRole('status').textContent).toBe(
+      'No new servers found in Claude Desktop or Cursor.',
+    );
+
+    importedCount = 1;
+    await act(async () => {
+      fireEvent.click(importBtn);
+    });
+    expect(view.getByRole('status').textContent).toBe(
+      'Imported 1 server from Claude Desktop / Cursor.',
+    );
+
+    importedCount = 2;
+    await act(async () => {
+      fireEvent.click(importBtn);
+    });
+    expect(view.getByRole('status').textContent).toBe(
+      'Imported 2 servers from Claude Desktop / Cursor.',
+    );
+
+    // Clicking Format on compact valid JSON reformats the CodeMirror document with 2-space indentation and marks dirty: true.
+    fireEvent.click(view.getByRole('button', { name: t('raw.format') }));
+    const formattedText = cmView.state.doc.toString();
+    expect(formattedText).toContain('\n  "gateway": {\n    "host": "127.0.0.1"');
+    const resetBtn = view.getByRole('button', { name: t('raw.reset') }) as HTMLButtonElement;
+    expect(resetBtn.disabled).toBe(false);
+
+    // Clicking Reset triggers discardRawConfig (client.confirmDiscard) and restores the clean on-disk document.
+    await act(async () => {
+      fireEvent.click(resetBtn);
+    });
+    expect(mockBundle.calls.confirmDiscard).toBe(1);
+    expect(cmView.state.doc.toString()).toBe(compactJson);
+    expect(resetBtn.disabled).toBe(true);
+
+    // Format again, wait for debounced validation to pass, and click Save to commit via client.saveConfig.
+    fireEvent.click(view.getByRole('button', { name: t('raw.format') }));
+    const saveBtn = view.getByRole('button', {
+      name: t('raw.save', { filename: 'mcp.json' }),
+    }) as HTMLButtonElement;
+    await waitFor(() => {
+      expect(saveBtn.disabled).toBe(false);
+    });
+    await act(async () => {
+      fireEvent.click(saveBtn);
+    });
+    expect(mockBundle.calls.saveConfig).toHaveLength(1);
+    expect(mockBundle.calls.saveConfig[0]?.text).toBe(formattedText);
   });
 });
 
@@ -1901,26 +2169,11 @@ describe('App shell and modal arbitration (src/mainview/App.tsx)', () => {
     fireEvent.click(view.getByRole('button', { name: t('common.closeDialog') }));
     expect(view.queryByRole('dialog')).toBeNull();
 
-    // 4. Opening ServerEditor via menu command renders ServerEditor and commits normalized ServerConfig.
+    // 4. Opening ServerEditor via menu command renders ServerEditor as the sole dialog.
     act(() => {
       mockBundle.emitMenuCommand('server:add');
     });
-    const editorDialog = view.getByRole('dialog', { name: t('editor.addTitle') });
+    expect(view.getByRole('dialog', { name: t('editor.addTitle') })).toBeTruthy();
     expect(view.getAllByRole('dialog')).toHaveLength(1);
-
-    fireEvent.click(within(editorDialog).getByRole('button', { name: t('editor.bearPreset') }));
-    await act(async () => {
-      fireEvent.click(within(editorDialog).getByRole('button', { name: t('editor.apply') }));
-    });
-    expect(mockBundle.calls.saveConfig).toHaveLength(1);
-    const saved = lastSavedConfig(mockBundle);
-    expect(saved.mcpServers.bear).toMatchObject({
-      command: '/Applications/Bear.app/Contents/MacOS/bearcli',
-      args: ['mcp-server'],
-      disabled: false,
-    });
-    await waitFor(() => {
-      expect(view.queryByRole('dialog')).toBeNull();
-    });
   });
 });

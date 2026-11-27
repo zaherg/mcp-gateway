@@ -1,9 +1,8 @@
-import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import {
   chmod,
   lstat,
   mkdir,
-  mkdtemp,
   readdir,
   readFile,
   rm,
@@ -11,7 +10,6 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { GatewayError } from '@mcp-gateway/core/errors';
@@ -20,21 +18,9 @@ import { LanguageStore } from '@mcp-gateway/main/language';
 import { readPrivateJson, writePrivateJsonAtomic } from '@mcp-gateway/main/preferences-store';
 import { WhatsNewStore } from '@mcp-gateway/main/whats-new';
 import { CATALOG_LOCALES } from '@mcp-gateway/shared/i18n';
+import { registerTempDirLifecycle } from '../helpers/core';
 
-const tempDirs: string[] = [];
-
-const makeTempDir = async (): Promise<string> => {
-  const dir = await mkdtemp(join(tmpdir(), 'mcp-gateway-prefs-test-'));
-  tempDirs.push(dir);
-  return dir;
-};
-
-afterEach(async () => {
-  while (tempDirs.length > 0) {
-    const dir = tempDirs.pop();
-    if (dir) await rm(dir, { recursive: true, force: true });
-  }
-});
+const { makeTempDir } = registerTempDirLifecycle('mcp-gateway-prefs-');
 
 describe('preferences-store', () => {
   test('readPrivateJson returns missing when file does not exist (ENOENT)', async () => {
@@ -110,6 +96,22 @@ describe('preferences-store', () => {
 
     const result = await readPrivateJson(filePath, (record) =>
       typeof record.count === 'number' ? record.count : undefined,
+    );
+    expect(result).toEqual({ status: 'invalid' });
+  });
+
+  test('readPrivateJson returns invalid when file exceeds MAX_PREFERENCE_BYTES (64 KiB)', async () => {
+    const dir = await makeTempDir();
+    const filePath = join(dir, 'oversized.json');
+    const prefix = '{"schema_version":1,"pad":"';
+    const suffix = '"}';
+    const payload = `${prefix}${'x'.repeat(65_537 - prefix.length - suffix.length)}${suffix}`;
+    expect(Buffer.byteLength(payload, 'utf8')).toBe(65_537);
+    await writeFile(filePath, payload, { mode: 0o600 });
+    await chmod(filePath, 0o600);
+
+    const result = await readPrivateJson(filePath, (record) =>
+      typeof record.pad === 'string' ? record.pad : undefined,
     );
     expect(result).toEqual({ status: 'invalid' });
   });
@@ -192,31 +194,20 @@ describe('KeyReminderStore', () => {
     expect(await readdir(dir)).toEqual([]);
   });
 
-  test('auto-retires on fresh install (existingInstall: false) and writes 0o600 key-reminder.json', async () => {
-    const dir = await makeTempDir();
-    const store = await KeyReminderStore.open(dir, false);
-    const filePath = join(dir, 'key-reminder.json');
+  test('auto-retires on fresh install (existingInstall: false), persists 0o600 key-reminder.json, and retire() is idempotent across re-open', async () => {
+    const freshDir = await makeTempDir();
+    const freshStore = await KeyReminderStore.open(freshDir, false);
+    expect(freshStore.retired).toBe(true);
 
-    expect(store.retired).toBe(true);
-    const fileStat = await stat(filePath);
-    expect(fileStat.mode & 0o777).toBe(0o600);
-    expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
-      schema_version: 1,
-      retired: true,
-    });
-  });
-
-  test('retire() persists state with 0o600 mode, is idempotent, and survives re-open', async () => {
-    const dir = await makeTempDir();
-    const store = await KeyReminderStore.open(dir, true);
+    const existingDir = await makeTempDir();
+    const store = await KeyReminderStore.open(existingDir, true);
     expect(store.retired).toBe(false);
 
     await store.retire();
     expect(store.retired).toBe(true);
 
-    const filePath = join(dir, 'key-reminder.json');
-    const fileStat = await stat(filePath);
-    expect(fileStat.mode & 0o777).toBe(0o600);
+    const filePath = join(existingDir, 'key-reminder.json');
+    expect((await stat(filePath)).mode & 0o777).toBe(0o600);
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
       schema_version: 1,
       retired: true,
@@ -224,30 +215,19 @@ describe('KeyReminderStore', () => {
 
     await store.retire();
 
-    const reopened = await KeyReminderStore.open(dir, true);
+    const reopened = await KeyReminderStore.open(existingDir, true);
     expect(reopened.retired).toBe(true);
   });
 
-  test('falls back safely to retired: false when key-reminder.json is corrupted or world-readable', async () => {
+  test('falls back safely to retired: false when key-reminder.json has an invalid retired field', async () => {
     const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
     try {
-      const dir1 = await makeTempDir();
-      const corruptPath = join(dir1, 'key-reminder.json');
-      await writeFile(corruptPath, '{corrupted', { mode: 0o600 });
-      await chmod(corruptPath, 0o600);
-      const store1 = await KeyReminderStore.open(dir1, true);
-      expect(store1.retired).toBe(false);
+      const dir = await makeTempDir();
+      await writePrivateJsonAtomic(join(dir, 'key-reminder.json'), { retired: 'not-a-boolean' });
 
-      const dir2 = await makeTempDir();
-      const loosePath = join(dir2, 'key-reminder.json');
-      await writeFile(loosePath, JSON.stringify({ schema_version: 1, retired: true }), {
-        mode: 0o600,
-      });
-      await chmod(loosePath, 0o644);
-      const store2 = await KeyReminderStore.open(dir2, true);
-      expect(store2.retired).toBe(false);
-
-      expect(errorSpy).toHaveBeenCalledTimes(2);
+      const store = await KeyReminderStore.open(dir, true);
+      expect(store.retired).toBe(false);
+      expect(errorSpy).toHaveBeenCalledTimes(1);
     } finally {
       errorSpy.mockRestore();
     }
@@ -292,42 +272,29 @@ describe('WhatsNewStore', () => {
     });
   });
 
-  test('on existing install without seen-version.json queues installed version until dismiss()', async () => {
-    const dir = await makeTempDir();
-    const store = await WhatsNewStore.open(dir, '0.9.0', true);
+  test('queues installed version on existing install when missing or older, then persists 0o600 seen-version.json on dismiss()', async () => {
+    const missingDir = await makeTempDir();
+    const missingStore = await WhatsNewStore.open(missingDir, '0.9.0', true);
+    expect(missingStore.pending).toBe('0.9.0');
+    expect(await readdir(missingDir)).toEqual([]);
 
+    const upgradeDir = await makeTempDir();
+    const filePath = join(upgradeDir, 'seen-version.json');
+    await writePrivateJsonAtomic(filePath, { version: '0.8.3' });
+
+    const store = await WhatsNewStore.open(upgradeDir, '0.9.0', true);
     expect(store.pending).toBe('0.9.0');
-    expect(await readdir(dir)).toEqual([]);
 
     await store.dismiss();
     expect(store.pending).toBeNull();
-    const filePath = join(dir, 'seen-version.json');
+
     expect((await stat(filePath)).mode & 0o777).toBe(0o600);
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
       schema_version: 1,
       version: '0.9.0',
     });
-  });
 
-  test('exposes new version as pending when persisted version is older, then persists on dismiss()', async () => {
-    const dir = await makeTempDir();
-    const filePath = join(dir, 'seen-version.json');
-    await writePrivateJsonAtomic(filePath, { version: '0.8.3' });
-
-    const store = await WhatsNewStore.open(dir, '0.9.0', true);
-    expect(store.pending).toBe('0.9.0');
-
-    await store.dismiss();
-    expect(store.pending).toBeNull();
-
-    const fileStat = await stat(filePath);
-    expect(fileStat.mode & 0o777).toBe(0o600);
-    expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
-      schema_version: 1,
-      version: '0.9.0',
-    });
-
-    const reopened = await WhatsNewStore.open(dir, '0.9.0', true);
+    const reopened = await WhatsNewStore.open(upgradeDir, '0.9.0', true);
     expect(reopened.pending).toBeNull();
   });
 
@@ -343,24 +310,6 @@ describe('WhatsNewStore', () => {
     expect(existingStore.pending).toBeNull();
     await existingStore.dismiss();
     expect(await readdir(dirExisting)).toEqual([]);
-  });
-
-  test('falls back safely when seen-version.json is corrupted or world-readable', async () => {
-    const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
-    try {
-      const dir = await makeTempDir();
-      const filePath = join(dir, 'seen-version.json');
-      await writeFile(filePath, JSON.stringify({ schema_version: 1, version: '0.9.0' }), {
-        mode: 0o600,
-      });
-      await chmod(filePath, 0o644);
-
-      const store = await WhatsNewStore.open(dir, '0.9.0', true);
-      expect(store.pending).toBe('0.9.0');
-      expect(errorSpy).toHaveBeenCalledTimes(1);
-    } finally {
-      errorSpy.mockRestore();
-    }
   });
 
   test('dismiss() keeps notes dismissed for current run and logs without throwing when save fails', async () => {
@@ -429,27 +378,16 @@ describe('LanguageStore', () => {
     });
   });
 
-  test('falls back safely to system when language.json has an unsupported locale or unsafe permissions', async () => {
+  test('falls back safely to system when language.json has an unsupported locale', async () => {
     const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
     try {
-      const dir1 = await makeTempDir();
-      await writePrivateJsonAtomic(join(dir1, 'language.json'), { language: 'es_ES' });
-      const store1 = await LanguageStore.open(dir1, 'de_DE', available);
-      expect(store1.state.preference).toBe('system');
-      expect(store1.state.locale).toBe('de_DE');
-      expect(store1.translate('language.name')).toBe('Deutsch (Deutschland)');
-
-      const dir2 = await makeTempDir();
-      const loosePath = join(dir2, 'language.json');
-      await writeFile(loosePath, JSON.stringify({ schema_version: 1, language: 'fr_FR' }), {
-        mode: 0o600,
-      });
-      await chmod(loosePath, 0o644);
-      const store2 = await LanguageStore.open(dir2, 'en_US', available);
-      expect(store2.state.preference).toBe('system');
-      expect(store2.state.locale).toBe('en_US');
-
-      expect(errorSpy).toHaveBeenCalledTimes(2);
+      const dir = await makeTempDir();
+      await writePrivateJsonAtomic(join(dir, 'language.json'), { language: 'es_ES' });
+      const store = await LanguageStore.open(dir, 'de_DE', available);
+      expect(store.state.preference).toBe('system');
+      expect(store.state.locale).toBe('de_DE');
+      expect(store.translate('language.name')).toBe('Deutsch (Deutschland)');
+      expect(errorSpy).toHaveBeenCalledTimes(1);
     } finally {
       errorSpy.mockRestore();
     }

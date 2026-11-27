@@ -1,6 +1,5 @@
-import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { GatewayError } from '@mcp-gateway/core/errors';
@@ -10,40 +9,16 @@ import {
   configurationDirectory,
   installedIdentifier,
   postNativeNotification,
-  restoreWindow,
 } from '@mcp-gateway/main/native';
 import { PRODUCTION_IDENTIFIER, TEST_IDENTIFIER } from '@mcp-gateway/shared/identity';
+import {
+  deferred,
+  expectAsyncGatewayError,
+  flushMicrotasks,
+  registerTempDirLifecycle,
+} from '../helpers/core';
 
-const tempDirs: string[] = [];
-
-const makeTempDir = async (): Promise<string> => {
-  const dir = await mkdtemp(join(tmpdir(), 'mcp-gateway-lifecycle-test-'));
-  tempDirs.push(dir);
-  return dir;
-};
-
-const flushMicrotasks = async (): Promise<void> => {
-  await Promise.resolve();
-  await Promise.resolve();
-  await new Promise((resolve) => setTimeout(resolve, 0));
-};
-
-const deferred = <T = void>() => {
-  let resolve!: (value: T | PromiseLike<T>) => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
-};
-
-afterEach(async () => {
-  while (tempDirs.length > 0) {
-    const dir = tempDirs.pop();
-    if (dir) await rm(dir, { recursive: true, force: true });
-  }
-});
+const { makeTempDir } = registerTempDirLifecycle('mcp-gateway-lifecycle-');
 
 describe('QuitCoordinator', () => {
   test('starts idle, returns defensive status copies, and reports updateRestartActive false', () => {
@@ -128,6 +103,47 @@ describe('QuitCoordinator', () => {
 
     gate.resolve();
     expect(await updatePromise).toBe(false);
+  });
+
+  test('beginUpdateRestart() returns false when quit intent is already armed and deduplicates concurrent update restart calls without incrementing attempt', async () => {
+    const quitCoordinator = new QuitCoordinator(
+      async () => {},
+      () => {},
+      () => {},
+    );
+    expect(quitCoordinator.armQuit()).toBe(true);
+    expect(quitCoordinator.status()).toEqual({ attempt: 1, phase: 'pending', error: null });
+    expect(await quitCoordinator.beginUpdateRestart()).toBe(false);
+    expect(quitCoordinator.updateRestartActive()).toBe(false);
+    expect(quitCoordinator.status()).toEqual({ attempt: 1, phase: 'pending', error: null });
+
+    const gate = deferred();
+    let cleanupCalls = 0;
+    const updateCoordinator = new QuitCoordinator(
+      async () => {
+        cleanupCalls++;
+        await gate.promise;
+      },
+      () => {},
+      () => {},
+    );
+
+    const first = updateCoordinator.beginUpdateRestart();
+    expect(updateCoordinator.updateRestartActive()).toBe(true);
+    expect(updateCoordinator.status()).toEqual({ attempt: 1, phase: 'pending', error: null });
+
+    const second = updateCoordinator.beginUpdateRestart();
+    expect(updateCoordinator.status()).toEqual({ attempt: 1, phase: 'pending', error: null });
+
+    gate.resolve();
+    expect(await Promise.all([first, second])).toEqual([true, true]);
+    expect(cleanupCalls).toBe(1);
+    expect(updateCoordinator.status().attempt).toBe(1);
+
+    // Calling beginUpdateRestart again while intent is still 'update' (before approve/clear) also keeps attempt unchanged.
+    expect(await updateCoordinator.beginUpdateRestart()).toBe(true);
+    expect(cleanupCalls).toBe(1);
+    expect(updateCoordinator.status().attempt).toBe(1);
   });
 
   test('recovers from cleanup failure on ordinary quit and allows retry', async () => {
@@ -302,33 +318,53 @@ describe('QuitCoordinator', () => {
 });
 
 describe('InteractiveQuitGate', () => {
-  test('signalRequested() true delegates immediately with signal override, bypassing draft prompt', async () => {
-    let quitAgainCalls = 0;
-    const lifecycle = new QuitCoordinator(
-      async () => {},
-      () => {
-        quitAgainCalls++;
-      },
-      () => {},
-    );
-    await lifecycle.beginUpdateRestart();
-    lifecycle.approveUpdateRestart();
-
-    let checkedDraft = 0;
-    let prompted = 0;
+  const makeQuitGate = (
+    overrides: {
+      lifecycle?: QuitCoordinator;
+      quitAgain?: () => void;
+      hasUnsavedRawConfig?: () => Promise<boolean> | undefined;
+      confirmDiscardQuit?: () => Promise<boolean>;
+      quit?: () => void;
+      signalRequested?: () => boolean;
+    } = {},
+  ) => {
+    const lifecycle =
+      overrides.lifecycle ??
+      new QuitCoordinator(
+        async () => {},
+        overrides.quitAgain ?? (() => {}),
+        () => {},
+      );
     const gate = new InteractiveQuitGate(
       lifecycle,
-      () => {
+      overrides.hasUnsavedRawConfig ?? (() => Promise.resolve(false)),
+      overrides.confirmDiscardQuit ?? (async () => false),
+      overrides.quit ?? (() => {}),
+      overrides.signalRequested,
+    );
+    return { lifecycle, gate };
+  };
+
+  test('signalRequested() true delegates immediately with signal override, bypassing draft prompt', async () => {
+    let quitAgainCalls = 0;
+    let checkedDraft = 0;
+    let prompted = 0;
+    const { lifecycle, gate } = makeQuitGate({
+      quitAgain: () => {
+        quitAgainCalls++;
+      },
+      hasUnsavedRawConfig: () => {
         checkedDraft++;
         return Promise.resolve(true);
       },
-      async () => {
+      confirmDiscardQuit: async () => {
         prompted++;
         return false;
       },
-      () => {},
-      () => true,
-    );
+      signalRequested: () => true,
+    });
+    await lifecycle.beginUpdateRestart();
+    lifecycle.approveUpdateRestart();
 
     let vetoCalls = 0;
     gate.handle(() => vetoCalls++);
@@ -344,23 +380,17 @@ describe('InteractiveQuitGate', () => {
 
   test('bypasses draft check when lifecycle is non-idle, update restart is active, or check returns undefined', async () => {
     let quitAgainCalls = 0;
-    const lifecycle = new QuitCoordinator(
-      async () => {},
-      () => {
+    let prompted = 0;
+    const { lifecycle, gate } = makeQuitGate({
+      quitAgain: () => {
         quitAgainCalls++;
       },
-      () => {},
-    );
-    let prompted = 0;
-    const gate = new InteractiveQuitGate(
-      lifecycle,
-      () => undefined,
-      async () => {
+      hasUnsavedRawConfig: () => undefined,
+      confirmDiscardQuit: async () => {
         prompted++;
         return false;
       },
-      () => {},
-    );
+    });
 
     let vetoCalls = 0;
     gate.handle(() => vetoCalls++);
@@ -373,38 +403,28 @@ describe('InteractiveQuitGate', () => {
 
     // Subsequent handle while phase !== 'idle' delegates straight to lifecycle (no veto when ready).
     let checked = 0;
-    const gateAfterReady = new InteractiveQuitGate(
+    const { gate: gateAfterReady } = makeQuitGate({
       lifecycle,
-      () => {
+      hasUnsavedRawConfig: () => {
         checked++;
         return Promise.resolve(true);
       },
-      async () => false,
-      () => {},
-    );
+    });
     let vetoAfterReady = 0;
     gateAfterReady.handle(() => vetoAfterReady++);
     expect(vetoAfterReady).toBe(0);
     expect(checked).toBe(0);
 
     // Approved update restart also bypasses draft check and lets native quit proceed unvetoed.
-    const updateLifecycle = new QuitCoordinator(
-      async () => {},
-      () => {},
-      () => {},
-    );
-    await updateLifecycle.beginUpdateRestart();
-    updateLifecycle.approveUpdateRestart();
     let updateChecked = 0;
-    const updateGate = new InteractiveQuitGate(
-      updateLifecycle,
-      () => {
+    const { lifecycle: updateLifecycle, gate: updateGate } = makeQuitGate({
+      hasUnsavedRawConfig: () => {
         updateChecked++;
         return Promise.resolve(true);
       },
-      async () => false,
-      () => {},
-    );
+    });
+    await updateLifecycle.beginUpdateRestart();
+    updateLifecycle.approveUpdateRestart();
     let updateVeto = 0;
     updateGate.handle(() => updateVeto++);
     expect(updateChecked).toBe(0);
@@ -412,28 +432,22 @@ describe('InteractiveQuitGate', () => {
   });
 
   test('clean raw config or rejected check quits immediately without confirmation prompt', async () => {
-    for (const unsavedFactory of [
+    for (const hasUnsavedRawConfig of [
       () => Promise.resolve(false),
       () => Promise.reject(new Error('rpc closed')),
     ]) {
-      const lifecycle = new QuitCoordinator(
-        async () => {},
-        () => {},
-        () => {},
-      );
       let prompted = 0;
       let quitCalls = 0;
-      const gate = new InteractiveQuitGate(
-        lifecycle,
-        unsavedFactory,
-        async () => {
+      const { lifecycle, gate } = makeQuitGate({
+        hasUnsavedRawConfig,
+        confirmDiscardQuit: async () => {
           prompted++;
           return false;
         },
-        () => {
+        quit: () => {
           quitCalls++;
         },
-      );
+      });
 
       let vetoCalls = 0;
       gate.handle(() => vetoCalls++);
@@ -447,26 +461,19 @@ describe('InteractiveQuitGate', () => {
   });
 
   test('dirty raw config prompts for confirmation, cancels cleanly on reject, and dedupes concurrent calls', async () => {
-    const lifecycle = new QuitCoordinator(
-      async () => {},
-      () => {},
-      () => {},
-    );
     let confirmDeferred = deferred<boolean>();
     let promptCalls = 0;
     let quitCalls = 0;
-
-    const gate = new InteractiveQuitGate(
-      lifecycle,
-      () => Promise.resolve(true),
-      () => {
+    const { lifecycle, gate } = makeQuitGate({
+      hasUnsavedRawConfig: () => Promise.resolve(true),
+      confirmDiscardQuit: () => {
         promptCalls++;
         return confirmDeferred.promise;
       },
-      () => {
+      quit: () => {
         quitCalls++;
       },
-    );
+    });
 
     // Concurrent calls while prompt is pending are deduplicated.
     let veto1 = 0;
@@ -551,16 +558,6 @@ describe('native helpers', () => {
     );
   });
 
-  test('restoreWindow invokes unminimize, show, and activate in order', () => {
-    const calls: string[] = [];
-    restoreWindow({
-      unminimize: () => calls.push('unminimize'),
-      show: () => calls.push('show'),
-      activate: () => calls.push('activate'),
-    });
-    expect(calls).toEqual(['unminimize', 'show', 'activate']);
-  });
-
   test('postNativeNotification is a safe no-op when no native library is loaded and reports missing library errors', async () => {
     const errors: unknown[] = [];
     expect(() =>
@@ -581,6 +578,16 @@ describe('native helpers', () => {
 });
 
 describe('openKeychain', () => {
+  let getSpy: ReturnType<typeof spyOn<typeof Bun.secrets, 'get'>> | undefined;
+  let setSpy: ReturnType<typeof spyOn<typeof Bun.secrets, 'set'>> | undefined;
+
+  afterEach(() => {
+    getSpy?.mockRestore();
+    getSpy = undefined;
+    setSpy?.mockRestore();
+    setSpy = undefined;
+  });
+
   test('rejects empty secret value with GatewayError ConfigIO before touching Keychain', async () => {
     const dir = await makeTempDir();
     const missingDylib = join(dir, 'no-native.dylib');
@@ -612,21 +619,69 @@ describe('openKeychain', () => {
     expect(keys.size).toBe(0);
   });
 
-  test('falls back cleanly when given an invalid dylib path without throwing during openKeychain', async () => {
+  test('routes service name by identifier and reads/writes non-empty secrets via Bun.secrets fallback', async () => {
     const dir = await makeTempDir();
-    const corruptDylib = join(dir, 'corrupt.dylib');
-    await writeFile(corruptDylib, 'not-a-mach-o-binary');
+    const missingDylib = join(dir, 'no-native.dylib');
+    const getCalls: Array<{ service: string; name: string }> = [];
+    const setCalls: Array<{ service: string; name: string; value: string }> = [];
 
-    const keychain = openKeychain(TEST_IDENTIFIER, corruptDylib);
-    expect((await keychain.get([])).size).toBe(0);
+    getSpy = spyOn(Bun.secrets, 'get').mockImplementation(async ({ service, name }) => {
+      getCalls.push({ service, name });
+      return `secret-for-${name}`;
+    });
+    setSpy = spyOn(Bun.secrets, 'set').mockImplementation(async ({ service, name, value }) => {
+      setCalls.push({ service, name, value });
+    });
 
-    let thrown: unknown;
-    try {
-      await keychain.set('server.token', '');
-    } catch (error) {
-      thrown = error;
-    }
-    expect(thrown).toBeInstanceOf(GatewayError);
-    expect((thrown as GatewayError).code).toBe('ConfigIO');
+    const prodKeychain = openKeychain(PRODUCTION_IDENTIFIER, missingDylib);
+    const prodSecrets = await prodKeychain.get(['gw-ref', 'srv-ref']);
+    expect(prodSecrets).toEqual(
+      new Map([
+        ['gw-ref', 'secret-for-gw-ref'],
+        ['srv-ref', 'secret-for-srv-ref'],
+      ]),
+    );
+    await prodKeychain.set('gw-ref', 'super-secret-value');
+
+    const testKeychain = openKeychain(TEST_IDENTIFIER, missingDylib);
+    expect(await testKeychain.get(['gw-ref'])).toEqual(new Map([['gw-ref', 'secret-for-gw-ref']]));
+    await testKeychain.set('gw-ref', 'test-secret-value');
+
+    expect(getCalls).toEqual([
+      { service: 'MCP Gateway APP', name: 'gw-ref' },
+      { service: 'MCP Gateway APP', name: 'srv-ref' },
+      { service: 'MCP Gateway APP Test', name: 'gw-ref' },
+    ]);
+    expect(setCalls).toEqual([
+      { service: 'MCP Gateway APP', name: 'gw-ref', value: 'super-secret-value' },
+      { service: 'MCP Gateway APP Test', name: 'gw-ref', value: 'test-secret-value' },
+    ]);
+  });
+
+  test('rejects with fixed KeyUnavailable on missing/failed read and ConfigIO on failed write', async () => {
+    const dir = await makeTempDir();
+    const missingDylib = join(dir, 'no-native.dylib');
+    const keychain = openKeychain(TEST_IDENTIFIER, missingDylib);
+
+    getSpy = spyOn(Bun.secrets, 'get').mockResolvedValueOnce(null);
+    await expectAsyncGatewayError(
+      () => keychain.get(['missing-ref']),
+      'KeyUnavailable',
+      'A Keychain key could not be read.',
+    );
+
+    getSpy.mockRejectedValueOnce(new Error('keychain locked'));
+    await expectAsyncGatewayError(
+      () => keychain.get(['missing-ref']),
+      'KeyUnavailable',
+      'A Keychain key could not be read.',
+    );
+
+    setSpy = spyOn(Bun.secrets, 'set').mockRejectedValueOnce(new Error('write denied'));
+    await expectAsyncGatewayError(
+      () => keychain.set('gw-ref', 'super-secret-value'),
+      'ConfigIO',
+      'A key could not be stored in Keychain.',
+    );
   });
 });

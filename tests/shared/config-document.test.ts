@@ -109,58 +109,23 @@ describe('sensitiveEnvOverrides', () => {
 
 describe('hasUnmigratedSecretLiterals', () => {
   test('detects literal gateway.token and ignores tokenRef, env references, and out-of-range lengths', () => {
-    expect(
-      hasUnmigratedSecretLiterals(
-        JSON.stringify({ gateway: { token: VALID_TOKEN_32 }, mcpServers: {} }),
-      ),
-    ).toEqual({
-      gateway: true,
-      servers: [],
-      warnings: ['gateway.token'],
-    });
+    const cases: Array<[Record<string, unknown>, boolean]> = [
+      [{ token: VALID_TOKEN_32 }, true],
+      [{ token: VALID_TOKEN_512 }, true],
+      [{ token: VALID_TOKEN_32, tokenRef: 'keychain:gw' }, false],
+      [{ tokenRef: 'keychain:gw' }, false],
+      [{ token: envRef('GATEWAY_TOKEN') }, false],
+      [{ token: 'a'.repeat(31) }, false],
+      [{ token: 'a'.repeat(513) }, false],
+    ];
 
-    expect(
-      hasUnmigratedSecretLiterals(
-        JSON.stringify({ gateway: { token: VALID_TOKEN_512 }, mcpServers: {} }),
-      ),
-    ).toEqual({
-      gateway: true,
-      servers: [],
-      warnings: ['gateway.token'],
-    });
-
-    expect(
-      hasUnmigratedSecretLiterals(
-        JSON.stringify({
-          gateway: { token: VALID_TOKEN_32, tokenRef: 'keychain:gw' },
-          mcpServers: {},
-        }),
-      ),
-    ).toEqual({ gateway: false, servers: [], warnings: [] });
-
-    expect(
-      hasUnmigratedSecretLiterals(
-        JSON.stringify({ gateway: { tokenRef: 'keychain:gw' }, mcpServers: {} }),
-      ),
-    ).toEqual({ gateway: false, servers: [], warnings: [] });
-
-    expect(
-      hasUnmigratedSecretLiterals(
-        JSON.stringify({ gateway: { token: envRef('GATEWAY_TOKEN') }, mcpServers: {} }),
-      ),
-    ).toEqual({ gateway: false, servers: [], warnings: [] });
-
-    expect(
-      hasUnmigratedSecretLiterals(
-        JSON.stringify({ gateway: { token: 'a'.repeat(31) }, mcpServers: {} }),
-      ),
-    ).toEqual({ gateway: false, servers: [], warnings: [] });
-
-    expect(
-      hasUnmigratedSecretLiterals(
-        JSON.stringify({ gateway: { token: 'a'.repeat(513) }, mcpServers: {} }),
-      ),
-    ).toEqual({ gateway: false, servers: [], warnings: [] });
+    for (const [gateway, flagged] of cases) {
+      expect(hasUnmigratedSecretLiterals(JSON.stringify({ gateway, mcpServers: {} }))).toEqual({
+        gateway: flagged,
+        servers: [],
+        warnings: flagged ? ['gateway.token'] : [],
+      });
+    }
   });
 
   test('detects server token, secret-named env/headers, and ignores short or env-expanded values', () => {
@@ -233,48 +198,30 @@ describe('hasUnmigratedSecretLiterals', () => {
     }
   });
 
-  test('detects secret CLI flags, embedded URLs, and prefixes in args while ignoring flags and env refs', () => {
-    expect(
-      hasUnmigratedSecretLiterals(
-        JSON.stringify({ mcpServers: { s: { args: ['--api-key=secretval'] } } }),
-      ),
-    ).toEqual({ gateway: false, servers: ['s'], warnings: ['s.args'] });
+  test('detects secret CLI flags, embedded URLs, and prefixes in args while ignoring flags, trailing flags, and env refs', () => {
+    const cases: Array<[string[], boolean]> = [
+      [['--api-key=secretval'], true],
+      [['--token', 'nextArgValue'], true],
+      [['-password=my-secret-password'], true],
+      [['-apikey', 'my-secret-key'], true],
+      [['https://example.com/mcp?token=abc'], true],
+      [['sk-1234567890abcdef'], true],
+      [['--token'], false],
+      [['-token'], false],
+      [['--token', '--verbose'], false],
+      [
+        ['--token', '--other', `--api-key=${envRef('ENV_VAR')}`, '--secret', envRef('ENV_SECRET')],
+        false,
+      ],
+    ];
 
-    expect(
-      hasUnmigratedSecretLiterals(
-        JSON.stringify({ mcpServers: { s: { args: ['--token', 'nextArgValue'] } } }),
-      ),
-    ).toEqual({ gateway: false, servers: ['s'], warnings: ['s.args'] });
-
-    expect(
-      hasUnmigratedSecretLiterals(
-        JSON.stringify({ mcpServers: { s: { args: ['https://example.com/mcp?token=abc'] } } }),
-      ),
-    ).toEqual({ gateway: false, servers: ['s'], warnings: ['s.args'] });
-
-    expect(
-      hasUnmigratedSecretLiterals(
-        JSON.stringify({ mcpServers: { s: { args: ['sk-1234567890abcdef'] } } }),
-      ),
-    ).toEqual({ gateway: false, servers: ['s'], warnings: ['s.args'] });
-
-    expect(
-      hasUnmigratedSecretLiterals(
-        JSON.stringify({
-          mcpServers: {
-            s: {
-              args: [
-                '--token',
-                '--other',
-                `--api-key=${envRef('ENV_VAR')}`,
-                '--secret',
-                envRef('ENV_SECRET'),
-              ],
-            },
-          },
-        }),
-      ),
-    ).toEqual({ gateway: false, servers: [], warnings: [] });
+    for (const [args, flagged] of cases) {
+      expect(hasUnmigratedSecretLiterals(JSON.stringify({ mcpServers: { s: { args } } }))).toEqual({
+        gateway: false,
+        servers: flagged ? ['s'] : [],
+        warnings: flagged ? ['s.args'] : [],
+      });
+    }
   });
 
   test('detects URL query secrets and ignores env-referenced query values', () => {
@@ -374,6 +321,16 @@ describe('parseConfigTree', () => {
     });
   });
 
+  test('handles mismatched closing tokens without underflowing depth or crashing tooDeep', () => {
+    for (const mismatched of ['{"a": [}', '[{"a": 1]}', '}']) {
+      const result = parseConfigTree(mismatched);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.issue.message).toBe('Configuration syntax is invalid.');
+      }
+    }
+  });
+
   test('rejects comments and trailing commas in json mode with exact source range', () => {
     const withLineComment = '{\n  // line comment\n  "a": 1\n}';
     expect(parseConfigTree(withLineComment, 'json')).toEqual({
@@ -453,8 +410,9 @@ describe('parseConfigTree', () => {
 });
 
 describe('configRange', () => {
-  test('returns value range by default, property key range when key=true, and undefined when missing', () => {
-    const text = '{\n  "gateway": {\n    "port": 8080,\n    "host": "127.0.0.1"\n  }\n}';
+  test('returns value range by default, property key range when key=true, falls back to value range for root or array elements, and returns undefined when missing', () => {
+    const text =
+      '{\n  "gateway": {\n    "port": 8080,\n    "host": "127.0.0.1",\n    "allowedPeers": ["10.0.0.0/8"]\n  }\n}';
     const parsed = parseConfigTree(text);
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) throw new Error('Expected parse to succeed');
@@ -470,6 +428,16 @@ describe('configRange', () => {
     expect(keyRange).toEqual({
       offset: text.indexOf('"port"'),
       length: '"port"'.length,
+    });
+
+    expect(configRange(parsed.root, [], true)).toEqual({
+      offset: 0,
+      length: text.length,
+    });
+
+    expect(configRange(parsed.root, ['gateway', 'allowedPeers', 0], true)).toEqual({
+      offset: text.indexOf('"10.0.0.0/8"'),
+      length: '"10.0.0.0/8"'.length,
     });
 
     expect(configRange(parsed.root, ['gateway', 'missing'])).toBeUndefined();
@@ -607,7 +575,37 @@ describe('editConfigDocument', () => {
     expect(parseConfigDocument(edited, 'json')).toEqual(next);
   });
 
-  test('renames keys in place while preserving position and comments, and rejects missing or colliding targets', () => {
+  test('adds a brand-new server entry and replaces a nested object with a primitive value while preserving JSONC comments', () => {
+    const source = [
+      '{',
+      '  // top comment',
+      '  "gateway": {',
+      '    "nested": { "flag": true }',
+      '  },',
+      '  "mcpServers": {',
+      '    // alpha comment',
+      '    "alpha": { "url": "http://127.0.0.1:4000/mcp" }',
+      '  }',
+      '}',
+    ].join('\n');
+
+    const next = {
+      gateway: {
+        nested: 'replaced-primitive',
+      },
+      mcpServers: {
+        alpha: { url: 'http://127.0.0.1:4000/mcp' },
+        beta: { command: 'node', args: ['server.js'] },
+      },
+    };
+
+    const edited = editConfigDocument(source, next, 'jsonc');
+    expect(parseConfigDocument(edited, 'jsonc')).toEqual(next);
+    expect(edited).toContain('// top comment');
+    expect(edited).toContain('// alpha comment');
+  });
+
+  test('renames keys in place while preserving position and comments, handles no-op renames, and rejects missing or colliding targets', () => {
     const source = [
       '{',
       '  "mcpServers": {',
@@ -642,6 +640,21 @@ describe('editConfigDocument', () => {
     expect(renamed.indexOf('"first"')).toBeLessThan(renamed.indexOf('"newName"'));
     expect(renamed.indexOf('"newName"')).toBeLessThan(renamed.indexOf('"third"'));
     expect(renamed).not.toContain('"oldName"');
+
+    const noOpNext = {
+      mcpServers: {
+        first: { url: 'http://127.0.0.1:1/mcp' },
+        oldName: { url: 'http://127.0.0.1:2/mcp' },
+        third: { url: 'http://127.0.0.1:3/mcp' },
+      },
+    };
+    const noOpRenamed = editConfigDocument(source, noOpNext, 'jsonc', {
+      path: ['mcpServers'],
+      from: 'oldName',
+      to: 'oldName',
+    });
+    expect(noOpRenamed).toBe(source);
+    expect(parseConfigDocument(noOpRenamed, 'jsonc')).toEqual(noOpNext);
 
     expect(() =>
       editConfigDocument(source, next, 'jsonc', {

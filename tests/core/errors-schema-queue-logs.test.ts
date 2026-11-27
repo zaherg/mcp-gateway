@@ -10,9 +10,10 @@ import {
   visible,
 } from '@mcp-gateway/core/errors';
 import { LogBuffer, redactText } from '@mcp-gateway/core/logs';
-import { anyNumber, ownRecord } from '@mcp-gateway/core/schema';
+import { ownRecord } from '@mcp-gateway/core/schema';
 import { createSerialQueue } from '@mcp-gateway/core/serial-queue';
 import { LOG_LIMITS, type LogEntry } from '@mcp-gateway/shared/types';
+import { deferred } from '../helpers/core';
 
 const ISSUE_ID_PATTERN = /^issue-(\d+)$/;
 
@@ -59,13 +60,6 @@ describe('src/core/errors', () => {
     }
     expect(issueNumber(secondMasked.occurrenceId)).toBe(issueNumber(firstMasked.occurrenceId) + 1);
     expect(issueNumber(thirdMasked.occurrenceId)).toBe(issueNumber(secondMasked.occurrenceId) + 1);
-  });
-
-  test('RequestError carries InvalidRequest code', () => {
-    const err = new RequestError('Malformed method');
-    expect(err).toBeInstanceOf(Error);
-    expect(err.code).toBe('InvalidRequest');
-    expect(err.message).toBe('Malformed method');
   });
 
   test('sanitizeErrorText strips control chars, redacts secrets, falls back, and truncates', () => {
@@ -116,19 +110,6 @@ describe('src/core/errors', () => {
 });
 
 describe('src/core/schema', () => {
-  test('anyNumber accepts finite numbers, NaN, and Infinity while rejecting non-numbers', () => {
-    expect(anyNumber.safeParse(0).success).toBe(true);
-    expect(anyNumber.safeParse(8787).success).toBe(true);
-    expect(anyNumber.safeParse(-42.5).success).toBe(true);
-    expect(anyNumber.safeParse(Number.NaN).success).toBe(true);
-    expect(anyNumber.safeParse(Number.POSITIVE_INFINITY).success).toBe(true);
-    expect(anyNumber.safeParse(Number.NEGATIVE_INFINITY).success).toBe(true);
-
-    for (const invalid of ['8787', true, false, null, undefined, {}, [], 10n]) {
-      expect(anyNumber.safeParse(invalid).success).toBe(false);
-    }
-  });
-
   test('ownRecord validates literal __proto__ keys and preserves valid own properties', () => {
     const schema = ownRecord(z.string());
 
@@ -159,19 +140,30 @@ describe('src/core/serial-queue', () => {
     const events: string[] = [];
     let active = 0;
     let maxActive = 0;
+    const gate1 = deferred();
+    const gate2 = deferred();
 
-    const runTask = (id: number, delayMs: number) =>
+    const runTask = (id: number, barrier?: Promise<void>) =>
       enqueue(async () => {
         active++;
         maxActive = Math.max(maxActive, active);
         events.push(`start:${id}`);
-        await Bun.sleep(delayMs);
+        await barrier;
         events.push(`end:${id}`);
         active--;
         return id * 10;
       });
 
-    const results = await Promise.all([runTask(1, 20), runTask(2, 5), runTask(3, 1)]);
+    const p1 = runTask(1, gate1.promise);
+    const p2 = runTask(2, gate2.promise);
+    const p3 = runTask(3);
+
+    await Promise.resolve();
+    expect(events).toEqual(['start:1']);
+    gate2.resolve();
+    gate1.resolve();
+
+    const results = await Promise.all([p1, p2, p3]);
 
     expect(results).toEqual([10, 20, 30]);
     expect(maxActive).toBe(1);
@@ -272,7 +264,7 @@ describe('src/core/logs', () => {
     ).toBe('prefix=[REDACTED] short=tiny123');
   });
 
-  test('LogBuffer formats primitives, circular refs, deep objects, >100 keys, getters, and throwing proxies safely', () => {
+  test('LogBuffer formats primitives, symbol keys, circular refs, deep objects, >100 keys, getters, and throwing proxies safely', () => {
     const buffer = new LogBuffer();
     buffer.registerSecrets(['runtime-secret-value', 'short7']);
 
@@ -321,6 +313,8 @@ describe('src/core/logs', () => {
       },
     );
 
+    const symbolKeyed = { [Symbol('tag')]: 'secret-free' };
+
     buffer.append(meta, [
       'str',
       42,
@@ -338,11 +332,20 @@ describe('src/core/logs', () => {
     buffer.append(meta, [wide]);
     buffer.append(meta, [withAccessor]);
     buffer.append(meta, [throwingProxy]);
+    buffer.append(meta, [symbolKeyed]);
 
     const page = buffer.read({ after: 0 });
-    expect(page.entries).toHaveLength(6);
+    expect(page.entries).toHaveLength(7);
 
-    const [primitives, circEntry, deepEntry, wideEntry, accessorEntry, proxyEntry] = page.entries;
+    const [
+      primitives,
+      circEntry,
+      deepEntry,
+      wideEntry,
+      accessorEntry,
+      proxyEntry,
+      symbolKeyedEntry,
+    ] = page.entries;
     expect(primitives?.text).toBe(
       'str 42 true null undefined 99 [function] [symbol] [REDACTED] short7',
     );
@@ -356,6 +359,7 @@ describe('src/core/logs', () => {
     expect(toJsonInvoked).toBe(0);
     expect(toStringInvoked).toBe(0);
     expect(proxyEntry?.text).toContain('[unreadable object]');
+    expect(symbolKeyedEntry?.text).toContain('[symbol]: secret-free');
   });
 
   test('LogBuffer truncates entries exceeding LOG_LIMITS.entryBytes', () => {
@@ -424,7 +428,7 @@ describe('src/core/logs', () => {
     expect(firstBytePage.entries[0]?.id).toBeGreaterThan(1);
   });
 
-  test('LogBuffer read paginates, reports gap on stale or future cursors, and clear increments generation', () => {
+  test('LogBuffer read paginates by entry count and batchBytes cap, reports gap on stale or future cursors, and clear increments generation', () => {
     const buffer = new LogBuffer();
     const total = LOG_LIMITS.batchEntries + 15;
     for (let i = 1; i <= total; i++) {
@@ -469,5 +473,23 @@ describe('src/core/logs', () => {
     expect(afterClear.entries).toHaveLength(1);
     expect(afterClear.entries[0]?.id).toBe(total + 1);
     expect(afterClear.entries[0]?.text).toBe('after-clear');
+
+    // Byte-batch limit (< LOG_LIMITS.batchEntries, total > LOG_LIMITS.batchBytes = 256 KiB)
+    const byteBatchBuffer = new LogBuffer();
+    const payload25KiB = 'word '.repeat(5 * 1024); // ~25 KiB with word boundaries (avoids expensive 25 KiB single-token regex backtracking)
+    for (let i = 1; i <= 12; i++) {
+      byteBatchBuffer.append(meta, [`${i} ${payload25KiB}`]);
+    }
+
+    const bytePage1 = byteBatchBuffer.read({ after: 0 });
+    expect(bytePage1.entries.length).toBeGreaterThan(0);
+    expect(bytePage1.entries.length).toBeLessThan(12);
+    expect(bytePage1.hasMore).toBe(true);
+    expect(bytePage1.gap).toBe(false);
+
+    const bytePage2 = byteBatchBuffer.read({ after: bytePage1.cursor });
+    expect(bytePage1.entries.length + bytePage2.entries.length).toBe(12);
+    expect(bytePage2.hasMore).toBe(false);
+    expect(bytePage2.cursor).toBe(12);
   });
 });

@@ -1,174 +1,34 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
-import { createServer, type IncomingMessage, type Server } from 'node:http';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
   backendSummary,
   closeMount,
-  createMount,
   type GatewayMount,
   MODERN_VERSION,
 } from '@mcp-gateway/core/adapter';
 import { GatewayError } from '@mcp-gateway/core/errors';
 import { BACKEND_CAPACITY_ERROR, BackendCalls, ResourceAdmission } from '@mcp-gateway/core/limits';
-import { LogBuffer } from '@mcp-gateway/core/logs';
-import type { GatewayRequest } from '@mcp-gateway/core/sessions';
 import { isRecord } from '@mcp-gateway/shared/config-document';
-import type { HttpServerConfig, StdioServerConfig } from '@mcp-gateway/shared/types';
+import type { StdioServerConfig } from '@mcp-gateway/shared/types';
+import {
+  closeServer,
+  createMountHarness,
+  encodeBase64Header,
+  listen,
+  modernMeta,
+  parseSseMessages,
+  readBodyText,
+  registerAsyncCleanups,
+} from '../helpers/http-mount';
 
 const GENERIC_BACKEND_SUMMARY = 'A backend operation failed. Open Logs for details.';
+const DISCOVERY_BYTES = 64 * 1024;
 
-const encodeBase64Header = (value: string): string =>
-  `=?base64?${Buffer.from(value, 'utf8').toString('base64')}?=`;
-
-const modernMeta = (version: string = MODERN_VERSION): Record<string, unknown> => ({
-  'io.modelcontextprotocol/protocolVersion': version,
-  'io.modelcontextprotocol/clientInfo': { name: 'adapter-test', version: '1.0.0' },
-  'io.modelcontextprotocol/clientCapabilities': {},
-});
-
-const listen = (server: Server): Promise<number> =>
-  new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      server.off('error', reject);
-      const address = server.address();
-      if (!address || typeof address === 'string') reject(new Error('Expected a TCP listener.'));
-      else resolve(address.port);
-    });
-  });
-
-const closeServer = async (server: Server): Promise<void> => {
-  if (!server.listening) return;
-  await new Promise<void>((resolve, reject) => {
-    server.close((error) => (error ? reject(error) : resolve()));
-    server.closeAllConnections();
-  });
-};
-
-const readBodyText = async (req: IncomingMessage): Promise<string> => {
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) {
-    chunks.push(typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : chunk);
-  }
-  return Buffer.concat(chunks).toString('utf8');
-};
-
-const parseSseMessages = (raw: string): unknown[] => {
-  const messages: unknown[] = [];
-  for (const frame of raw.split(/\r?\n\r?\n/)) {
-    const dataLines = frame
-      .split(/\r?\n/)
-      .filter((line) => line.startsWith('data:'))
-      .map((line) => line.slice('data:'.length).trimStart());
-    if (dataLines.length > 0) {
-      messages.push(JSON.parse(dataLines.join('\n')));
-    }
-  }
-  return messages;
-};
-
-interface MountHarness {
-  url: string;
-  mount: GatewayMount;
-  diagnostics: string[];
-  post(body: unknown, headers?: Record<string, string>): Promise<Response>;
-  waitForIdle(): Promise<void>;
-  close(): Promise<void>;
-}
-
-const cleanups: Array<() => Promise<void>> = [];
-
-afterEach(async () => {
-  while (cleanups.length > 0) {
-    const fn = cleanups.pop();
-    if (fn) await fn();
-  }
-});
-
-const createMountHarness = async (options: {
-  name?: string;
-  server: StdioServerConfig | HttpServerConfig;
-  admission?: ResourceAdmission;
-  calls?: BackendCalls;
-  sessionAdmission?: ResourceAdmission;
-  logs?: LogBuffer;
-}): Promise<MountHarness> => {
-  const diagnostics: string[] = [];
-  const mount = createMount(
-    options.name ?? 'test-server',
-    options.server,
-    (summary) => diagnostics.push(summary),
-    options.admission ?? new ResourceAdmission(8),
-    options.calls ?? new BackendCalls(8),
-    options.sessionAdmission ?? new ResourceAdmission(8),
-    options.logs ?? new LogBuffer(),
-  );
-  const inFlight = new Set<Promise<void>>();
-  const httpServer = createServer((req, res) => {
-    const task = (async () => {
-      if (req.method === 'POST') {
-        const text = await readBodyText(req);
-        if (text.length > 0) {
-          try {
-            (req as GatewayRequest).body = JSON.parse(text);
-          } catch {
-            (req as GatewayRequest).body = text;
-          }
-        }
-      }
-      await mount.handle(req, res);
-    })().catch(() => {
-      if (!res.headersSent && !res.destroyed) {
-        res.statusCode = 500;
-        res.end();
-      }
-    });
-    inFlight.add(task);
-    void task.finally(() => inFlight.delete(task));
-  });
-
-  const port = await listen(httpServer);
-  const url = `http://127.0.0.1:${port}/mcp`;
-  let closed = false;
-
-  const close = async (): Promise<void> => {
-    if (closed) return;
-    closed = true;
-    try {
-      await mount.close();
-    } finally {
-      await Promise.allSettled([...inFlight]);
-      await closeServer(httpServer);
-    }
-  };
-  cleanups.push(close);
-
-  return {
-    url,
-    mount,
-    diagnostics,
-    post: (body, headers = {}) =>
-      fetch(url, {
-        method: 'POST',
-        signal: AbortSignal.timeout(10_000),
-        headers: {
-          'content-type': 'application/json',
-          accept: 'application/json, text/event-stream',
-          ...headers,
-        },
-        body: JSON.stringify(body),
-      }),
-    waitForIdle: async () => {
-      while (inFlight.size > 0) {
-        await Promise.allSettled([...inFlight]);
-      }
-    },
-    close,
-  };
-};
+const trackCleanup = registerAsyncCleanups();
 
 const STDIO_SERVER_SCRIPT = `
 let buffer = '';
@@ -196,38 +56,79 @@ process.stdin.on('data', (chunk) => {
     } else if (msg.method === 'ping') {
       write({ jsonrpc: '2.0', id: msg.id, result: {} });
     } else if (msg.method === 'tools/list') {
-      write({
-        jsonrpc: '2.0',
-        id: msg.id,
-        result: {
-          tools: [
-            {
-              name: 'echo',
-              inputSchema: {
-                type: 'object',
-                properties: {
-                  text: { type: 'string' },
-                  tenant: { type: 'string', 'x-mcp-header': 'Tenant' },
-                  count: { type: 'integer', 'x-mcp-header': 'Count' },
+      const cursor = msg.params?.cursor;
+      if (process.env.TOOLS_CURSOR_MODE === 'loop') {
+        write({
+          jsonrpc: '2.0',
+          id: msg.id,
+          result: { tools: [], nextCursor: 'loop' },
+        });
+      } else if (process.env.TOOLS_CURSOR_MODE === 'paged' && !cursor) {
+        write({
+          jsonrpc: '2.0',
+          id: msg.id,
+          result: {
+            tools: [{ name: 'page1_tool', inputSchema: { type: 'object', properties: {} } }],
+            nextCursor: 'page-2',
+          },
+        });
+      } else if (process.env.TOOLS_CURSOR_MODE === 'paged' && cursor === 'page-2') {
+        write({
+          jsonrpc: '2.0',
+          id: msg.id,
+          result: {
+            tools: [
+              {
+                name: 'page2_nested',
+                inputSchema: {
+                  type: 'object',
+                  properties: {
+                    filter: {
+                      type: 'object',
+                      properties: {
+                        region: { type: 'string', 'x-mcp-header': 'Region' },
+                      },
+                    },
+                  },
                 },
               },
-            },
-            {
-              name: 'stream_tool',
-              inputSchema: { type: 'object', properties: {} },
-            },
-            {
-              name: 'café/tool',
-              inputSchema: {
-                type: 'object',
-                properties: {
-                  label: { type: 'string', 'x-mcp-header': 'Label' },
+            ],
+          },
+        });
+      } else {
+        write({
+          jsonrpc: '2.0',
+          id: msg.id,
+          result: {
+            tools: [
+              {
+                name: 'echo',
+                inputSchema: {
+                  type: 'object',
+                  properties: {
+                    text: { type: 'string' },
+                    tenant: { type: 'string', 'x-mcp-header': 'Tenant' },
+                    count: { type: 'integer', 'x-mcp-header': 'Count' },
+                  },
                 },
               },
-            },
-          ],
-        },
-      });
+              {
+                name: 'stream_tool',
+                inputSchema: { type: 'object', properties: {} },
+              },
+              {
+                name: 'café/tool',
+                inputSchema: {
+                  type: 'object',
+                  properties: {
+                    label: { type: 'string', 'x-mcp-header': 'Label' },
+                  },
+                },
+              },
+            ],
+          },
+        });
+      }
     } else if (msg.method === 'tools/call') {
       const name = msg.params?.name;
       if (name === 'stream_tool') {
@@ -240,6 +141,39 @@ process.stdin.on('data', (chunk) => {
           jsonrpc: '2.0',
           id: msg.id,
           result: { content: [{ type: 'text', text: 'streamed-ok' }] },
+        });
+      } else if (name === 'wizard') {
+        const state = msg.params?.requestState;
+        if (!state) {
+          write({
+            jsonrpc: '2.0',
+            id: msg.id,
+            result: {
+              resultType: 'input_required',
+              requestState: 'step-1',
+              pid: process.pid,
+            },
+          });
+          if (msg.params?.arguments?.exitAfterRetain) {
+            setTimeout(() => process.exit(0), 30);
+          }
+        } else {
+          write({
+            jsonrpc: '2.0',
+            id: msg.id,
+            result: {
+              resultType: 'completed',
+              restoredState: state,
+              pid: process.pid,
+            },
+          });
+        }
+      } else if (name === 'server_request_tool') {
+        write({
+          jsonrpc: '2.0',
+          id: 99,
+          method: 'sampling/createMessage',
+          params: {},
         });
       } else {
         write({
@@ -261,6 +195,16 @@ process.stdin.on('data', (chunk) => {
         id: msg.id,
         result: { contents: [{ uri: msg.params?.uri, text: 'resource-body' }] },
       });
+    } else if (msg.method === 'notifications/custom_fail') {
+      process.exit(1);
+    } else if (msg.method === 'notifications/custom_ok') {
+      // Wait for stdin EOF from LeasedStdio.finish() and exit 0 cleanly.
+    } else if (msg.id !== undefined) {
+      write({
+        jsonrpc: '2.0',
+        id: msg.id,
+        error: { code: -32601, message: 'Method not found' },
+      });
     }
   }
 });
@@ -274,11 +218,7 @@ const stdioFixtureConfig = (overrides: Partial<StdioServerConfig> = {}): StdioSe
   ...overrides,
 });
 
-describe('MODERN_VERSION and backendSummary', () => {
-  test('exports MODERN_VERSION as 2026-07-28', () => {
-    expect(MODERN_VERSION).toBe('2026-07-28');
-  });
-
+describe('backendSummary', () => {
   test('classifies allowlisted POSIX/network error codes including nested cause', () => {
     for (const code of [
       'EADDRINUSE',
@@ -428,7 +368,7 @@ describe('closeMount', () => {
 
 describe('createMount stateless 2026-07-28 stdio bridging and header validation', () => {
   test('bridges server/discover returning supportedVersions, protocolVersion, serverInfo, and capabilities', async () => {
-    const harness = await createMountHarness({ server: stdioFixtureConfig() });
+    const harness = await createMountHarness({ server: stdioFixtureConfig(), trackCleanup });
 
     const response = await harness.post(
       {
@@ -460,7 +400,7 @@ describe('createMount stateless 2026-07-28 stdio bridging and header validation'
   });
 
   test('bridges ping, tools/call (JSON and SSE), and base64-encoded non-ASCII headers', async () => {
-    const harness = await createMountHarness({ server: stdioFixtureConfig() });
+    const harness = await createMountHarness({ server: stdioFixtureConfig(), trackCleanup });
 
     // 1. ping
     const pingRes = await harness.post(
@@ -606,7 +546,7 @@ describe('createMount stateless 2026-07-28 stdio bridging and header validation'
   });
 
   test('rejects mismatched mcp-method, mcp-name, mcp-protocol-version, and mcp-param-* headers with HTTP 400 and -32020', async () => {
-    const harness = await createMountHarness({ server: stdioFixtureConfig() });
+    const harness = await createMountHarness({ server: stdioFixtureConfig(), trackCleanup });
 
     // Mismatched mcp-method
     const badMethod = await harness.post(
@@ -724,6 +664,7 @@ describe('createMount stateless 2026-07-28 stdio bridging and header validation'
   test('rejects pre-2026-07-28 requests with HTTP 400 and UNSUPPORTED_PROTOCOL_ERROR when legacyProtocol is not enabled', async () => {
     const harness = await createMountHarness({
       server: stdioFixtureConfig({ legacyProtocol: false }),
+      trackCleanup,
     });
 
     const expectedError = {
@@ -851,7 +792,7 @@ describe('createMount upstream HTTP 2026-07-28 bridging', () => {
       })().catch(() => res.destroy());
     });
     const upstreamPort = await listen(upstream);
-    cleanups.push(() => closeServer(upstream));
+    trackCleanup(() => closeServer(upstream));
 
     const harness = await createMountHarness({
       server: {
@@ -861,6 +802,7 @@ describe('createMount upstream HTTP 2026-07-28 bridging', () => {
           'x-tenant': 'blue',
         },
       },
+      trackCleanup,
     });
 
     // JSON response from upstream
@@ -966,11 +908,12 @@ describe('createMount upstream HTTP 2026-07-28 bridging', () => {
       })().catch(() => res.destroy());
     });
     const upstreamPort = await listen(upstream);
-    cleanups.push(() => closeServer(upstream));
+    trackCleanup(() => closeServer(upstream));
 
     // 1. 302 on forwarded tools/list after modern discovery succeeds
     const callHarness = await createMountHarness({
       server: { url: `http://127.0.0.1:${upstreamPort}/mcp` },
+      trackCleanup,
     });
     const callRes = await callHarness.post(
       {
@@ -996,6 +939,7 @@ describe('createMount upstream HTTP 2026-07-28 bridging', () => {
     redirectOnDiscover = true;
     const discoverHarness = await createMountHarness({
       server: { url: `http://127.0.0.1:${upstreamPort}/mcp` },
+      trackCleanup,
     });
     const discoverRes = await discoverHarness.post(
       {
@@ -1021,6 +965,201 @@ describe('createMount upstream HTTP 2026-07-28 bridging', () => {
     await discoverHarness.waitForIdle();
     expect(redirectTargetHits).toBe(0);
   });
+});
+
+type DiscoveryFormat = 'json' | 'sse';
+type DiscoveryReply =
+  | 'supported'
+  | 'unsupported'
+  | 'malformed'
+  | 'invalid-utf8'
+  | 'at-limit'
+  | 'oversized'
+  | 'reset-before-headers'
+  | 'reset-mid-body'
+  | 'unavailable';
+
+const writeDiscoveryReply = (
+  res: ServerResponse,
+  id: string | number,
+  reply: DiscoveryReply,
+  format: DiscoveryFormat,
+): void => {
+  if (reply === 'reset-before-headers') {
+    res.destroy();
+    return;
+  }
+  const encode = (json: string) => Buffer.from(format === 'sse' ? `data: ${json}\n\n` : json);
+  const result = {
+    jsonrpc: '2.0',
+    id,
+    result: {
+      supportedVersions: reply === 'unsupported' ? ['2025-11-25'] : [MODERN_VERSION],
+      note: '',
+    },
+  };
+  let body = encode(JSON.stringify(result));
+  if (reply === 'malformed') body = encode('{');
+  if (reply === 'invalid-utf8') {
+    result.result.note = 'x';
+    body = encode(JSON.stringify(result));
+    body[body.indexOf('"note":"x"') + '"note":"'.length] = 0xff;
+  }
+  if (reply === 'at-limit' || reply === 'oversized') {
+    result.result.note = ' '.repeat(
+      DISCOVERY_BYTES - body.length + (reply === 'oversized' ? 1 : 0),
+    );
+    body = encode(JSON.stringify(result));
+  }
+  res.writeHead(reply === 'unavailable' ? 503 : 200, {
+    'content-type': format === 'sse' ? 'text/event-stream' : 'application/json',
+    'content-length': body.length,
+  });
+  if (reply === 'reset-mid-body') {
+    res.write(body.subarray(0, body.length - 2));
+    const timer = setTimeout(() => res.destroy(), 50);
+    res.once('close', () => clearTimeout(timer));
+  } else {
+    res.end(body);
+  }
+};
+
+describe('UpstreamDiscovery caching, retry, and 64 KiB boundary', () => {
+  const withDiscoveryFixture = async (
+    reply: DiscoveryReply,
+    format: DiscoveryFormat,
+    check: (fixture: {
+      request: () => Promise<{ status: number; body: unknown }>;
+      recover: () => void;
+      discoveries: () => number;
+      forwarded: () => number;
+    }) => Promise<void>,
+  ): Promise<void> => {
+    let discoveries = 0;
+    let forwarded = 0;
+    let recovered = false;
+
+    const upstream = createServer((req, res) => {
+      void (async () => {
+        const text = await readBodyText(req);
+        const message: unknown = JSON.parse(text);
+        if (
+          !isRecord(message) ||
+          (typeof message.id !== 'string' && typeof message.id !== 'number')
+        )
+          throw new Error('Expected JSON-RPC request with id');
+        if (message.method === 'server/discover') {
+          discoveries++;
+          writeDiscoveryReply(res, message.id, recovered ? 'supported' : reply, format);
+        } else {
+          forwarded++;
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: {} }));
+        }
+      })().catch(() => res.destroy());
+    });
+    const upstreamPort = await listen(upstream);
+    trackCleanup(() => closeServer(upstream));
+
+    const harness = await createMountHarness({
+      server: { url: `http://127.0.0.1:${upstreamPort}/mcp` },
+      trackCleanup,
+    });
+
+    await check({
+      request: async () => {
+        const response = await harness.post(
+          {
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'ping',
+            params: { _meta: modernMeta() },
+          },
+          {
+            'mcp-protocol-version': MODERN_VERSION,
+            'mcp-method': 'ping',
+          },
+        );
+        return { status: response.status, body: await response.json() };
+      },
+      recover: () => {
+        recovered = true;
+      },
+      discoveries: () => discoveries,
+      forwarded: () => forwarded,
+    });
+  };
+
+  for (const [label, reply, format] of [
+    ['reset-before-headers', 'reset-before-headers', 'json'],
+    ['json reset-mid-body', 'reset-mid-body', 'json'],
+    ['sse reset-mid-body', 'reset-mid-body', 'sse'],
+    ['HTTP 503 unavailable', 'unavailable', 'json'],
+  ] as const) {
+    test(`transient failure (${label}) is not negative-cached and retries immediately`, async () => {
+      await withDiscoveryFixture(reply, format, async (fixture) => {
+        const first = await fixture.request();
+        expect(first.status).toBe(400);
+        expect(first.body).toMatchObject({ jsonrpc: '2.0', id: 1, error: { code: -32600 } });
+        expect(fixture.discoveries()).toBe(1);
+        expect(fixture.forwarded()).toBe(0);
+
+        fixture.recover();
+        expect(await fixture.request()).toEqual({
+          status: 200,
+          body: { jsonrpc: '2.0', id: 1, result: {} },
+        });
+        expect(fixture.discoveries()).toBe(2);
+        expect(fixture.forwarded()).toBe(1);
+
+        expect(await fixture.request()).toEqual({
+          status: 200,
+          body: { jsonrpc: '2.0', id: 1, result: {} },
+        });
+        expect(fixture.discoveries()).toBe(2);
+        expect(fixture.forwarded()).toBe(2);
+      });
+    });
+  }
+
+  for (const [label, reply, format] of [
+    ['json unsupported version', 'unsupported', 'json'],
+    ['sse unsupported version', 'unsupported', 'sse'],
+    ['json malformed payload', 'malformed', 'json'],
+    ['sse malformed payload', 'malformed', 'sse'],
+    ['json invalid-utf8 0xff', 'invalid-utf8', 'json'],
+    ['sse invalid-utf8 0xff', 'invalid-utf8', 'sse'],
+    ['json oversized 64 KiB + 1', 'oversized', 'json'],
+    ['sse oversized 64 KiB + 1', 'oversized', 'sse'],
+  ] as const) {
+    test(`protocol/framing failure (${label}) stays refused and negative-cached`, async () => {
+      await withDiscoveryFixture(reply, format, async (fixture) => {
+        const first = await fixture.request();
+        expect(first.status).toBe(400);
+        expect(first.body).toMatchObject({ jsonrpc: '2.0', id: 1, error: { code: -32600 } });
+
+        fixture.recover();
+        const second = await fixture.request();
+        expect(second.status).toBe(400);
+        expect(second.body).toMatchObject({ jsonrpc: '2.0', id: 1, error: { code: -32600 } });
+        expect(fixture.discoveries()).toBe(1);
+        expect(fixture.forwarded()).toBe(0);
+      });
+    });
+  }
+
+  for (const format of ['json', 'sse'] as const) {
+    test(`${format}: valid server/discover reply at exact 64 KiB limit succeeds`, async () => {
+      await withDiscoveryFixture('at-limit', format, async (fixture) => {
+        expect(await fixture.request()).toEqual({
+          status: 200,
+          body: { jsonrpc: '2.0', id: 1, result: {} },
+        });
+        expect(fixture.discoveries()).toBe(1);
+        expect(fixture.forwarded()).toBe(1);
+      });
+    });
+  }
 });
 
 describe('createMount resource and call capacity enforcement', () => {
@@ -1074,11 +1213,12 @@ describe('createMount resource and call capacity enforcement', () => {
       })().catch(() => res.destroy());
     });
     const upstreamPort = await listen(upstream);
-    cleanups.push(() => closeServer(upstream));
+    trackCleanup(() => closeServer(upstream));
 
     const harness = await createMountHarness({
       server: { url: `http://127.0.0.1:${upstreamPort}/mcp` },
       calls: new BackendCalls(1),
+      trackCleanup,
     });
 
     // Hold call 1 in flight
@@ -1132,7 +1272,7 @@ describe('createMount resource and call capacity enforcement', () => {
 
   test('ResourceAdmission(0) refuses new stdio request cleanly with 429 without spawning child processes', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'bear-mcp-adapter-'));
-    cleanups.push(async () => {
+    trackCleanup(async () => {
       rmSync(tempDir, { recursive: true, force: true });
     });
     const markerPath = join(tempDir, 'spawned.marker');
@@ -1145,6 +1285,7 @@ describe('createMount resource and call capacity enforcement', () => {
       },
       admission: new ResourceAdmission(0),
       calls,
+      trackCleanup,
     });
 
     const response = await harness.post(
@@ -1168,6 +1309,7 @@ describe('createMount resource and call capacity enforcement', () => {
     const harness = await createMountHarness({
       server: stdioFixtureConfig(),
       admission,
+      trackCleanup,
     });
 
     const first = await harness.post(
@@ -1191,5 +1333,546 @@ describe('createMount resource and call capacity enforcement', () => {
     expect(lease).toBeDefined();
     lease?.release();
     expect(harness.diagnostics).toEqual([]);
+  });
+});
+
+describe('RetainedChildren continuation lifecycle, findToolSchema pagination, and modern protocol edge cases', () => {
+  test('EDGE-08: input_required mints sgw:<uuid> continuation handle, reuses retained child, and rejects expired or exited handles with -32602', async () => {
+    const harness = await createMountHarness({
+      server: stdioFixtureConfig(),
+      trackCleanup,
+    });
+
+    // 1. Initial call returns input_required -> gateway rewrites requestState to sgw:<uuid>
+    const step1Res = await harness.post(
+      {
+        jsonrpc: '2.0',
+        id: 'cont-1',
+        method: 'tools/call',
+        params: {
+          name: 'wizard',
+          arguments: {},
+          _meta: modernMeta(),
+        },
+      },
+      {
+        'mcp-protocol-version': MODERN_VERSION,
+        'mcp-method': 'tools/call',
+        'mcp-name': 'wizard',
+      },
+    );
+    expect(step1Res.status).toBe(200);
+    const step1Body = (await step1Res.json()) as {
+      jsonrpc: string;
+      id: string;
+      result: { resultType: string; requestState: string; pid: number };
+    };
+    expect(step1Body.result.resultType).toBe('input_required');
+    expect(step1Body.result.requestState).toMatch(/^sgw:[0-9a-f-]{36}$/);
+    const retainedHandle = step1Body.result.requestState;
+    const initialPid = step1Body.result.pid;
+
+    // 2. Follow-up request with params.requestState = "sgw:..." reuses the same child and restores 'step-1'
+    const step2Res = await harness.post(
+      {
+        jsonrpc: '2.0',
+        id: 'cont-2',
+        method: 'tools/call',
+        params: {
+          name: 'wizard',
+          arguments: {},
+          requestState: retainedHandle,
+          _meta: modernMeta(),
+        },
+      },
+      {
+        'mcp-protocol-version': MODERN_VERSION,
+        'mcp-method': 'tools/call',
+        'mcp-name': 'wizard',
+      },
+    );
+    expect(step2Res.status).toBe(200);
+    const step2Body = (await step2Res.json()) as {
+      jsonrpc: string;
+      id: string;
+      result: { resultType: string; restoredState: string; pid: number };
+    };
+    expect(step2Body.result).toEqual({
+      resultType: 'completed',
+      restoredState: 'step-1',
+      pid: initialPid,
+    });
+
+    // 3. Unknown sgw: handle returns HTTP 400 (-32602)
+    const unknownRes = await harness.post(
+      {
+        jsonrpc: '2.0',
+        id: 'cont-unknown',
+        method: 'tools/call',
+        params: {
+          name: 'wizard',
+          arguments: {},
+          requestState: 'sgw:00000000-0000-4000-8000-000000000000',
+          _meta: modernMeta(),
+        },
+      },
+      {
+        'mcp-protocol-version': MODERN_VERSION,
+        'mcp-method': 'tools/call',
+        'mcp-name': 'wizard',
+      },
+    );
+    expect(unknownRes.status).toBe(400);
+    expect(await unknownRes.json()).toEqual({
+      jsonrpc: '2.0',
+      id: 'cont-unknown',
+      error: {
+        code: -32602,
+        message: 'Continuation expired or backend unavailable',
+      },
+    });
+
+    // 4. Retained child exiting while idle discards its sgw: handle
+    const exitRetainRes = await harness.post(
+      {
+        jsonrpc: '2.0',
+        id: 'cont-exit-1',
+        method: 'tools/call',
+        params: {
+          name: 'wizard',
+          arguments: { exitAfterRetain: true },
+          _meta: modernMeta(),
+        },
+      },
+      {
+        'mcp-protocol-version': MODERN_VERSION,
+        'mcp-method': 'tools/call',
+        'mcp-name': 'wizard',
+      },
+    );
+    expect(exitRetainRes.status).toBe(200);
+    const exitRetainBody = (await exitRetainRes.json()) as {
+      result: { requestState: string };
+    };
+    const exitedHandle = exitRetainBody.result.requestState;
+    expect(exitedHandle).toMatch(/^sgw:/);
+
+    await Bun.sleep(100);
+
+    const afterExitRes = await harness.post(
+      {
+        jsonrpc: '2.0',
+        id: 'cont-exit-2',
+        method: 'tools/call',
+        params: {
+          name: 'wizard',
+          arguments: {},
+          requestState: exitedHandle,
+          _meta: modernMeta(),
+        },
+      },
+      {
+        'mcp-protocol-version': MODERN_VERSION,
+        'mcp-method': 'tools/call',
+        'mcp-name': 'wizard',
+      },
+    );
+    expect(afterExitRes.status).toBe(400);
+    expect(await afterExitRes.json()).toEqual({
+      jsonrpc: '2.0',
+      id: 'cont-exit-2',
+      error: {
+        code: -32602,
+        message: 'Continuation expired or backend unavailable',
+      },
+    });
+  });
+
+  test('EDGE-09: findToolSchema paginates nextCursor with nested x-mcp-header validation and aborts on repeated cursor loop', async () => {
+    const pagedHarness = await createMountHarness({
+      server: stdioFixtureConfig({ env: { TOOLS_CURSOR_MODE: 'paged' } }),
+      trackCleanup,
+    });
+
+    // Tool on page 2 with valid nested x-mcp-header
+    const validNested = await pagedHarness.post(
+      {
+        jsonrpc: '2.0',
+        id: 'page2-ok',
+        method: 'tools/call',
+        params: {
+          name: 'page2_nested',
+          arguments: { filter: { region: 'eu-west-1' } },
+          _meta: modernMeta(),
+        },
+      },
+      {
+        'mcp-protocol-version': MODERN_VERSION,
+        'mcp-method': 'tools/call',
+        'mcp-name': 'page2_nested',
+        'mcp-param-region': 'eu-west-1',
+      },
+    );
+    expect(validNested.status).toBe(200);
+    expect(await validNested.json()).toEqual({
+      jsonrpc: '2.0',
+      id: 'page2-ok',
+      result: {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              name: 'page2_nested',
+              arguments: { filter: { region: 'eu-west-1' } },
+            }),
+          },
+        ],
+      },
+    });
+
+    // Mismatched nested x-mcp-header on page 2 -> 400 HeaderMismatch (-32020)
+    const mismatchedNested = await pagedHarness.post(
+      {
+        jsonrpc: '2.0',
+        id: 'page2-bad',
+        method: 'tools/call',
+        params: {
+          name: 'page2_nested',
+          arguments: { filter: { region: 'eu-west-1' } },
+          _meta: modernMeta(),
+        },
+      },
+      {
+        'mcp-protocol-version': MODERN_VERSION,
+        'mcp-method': 'tools/call',
+        'mcp-name': 'page2_nested',
+        'mcp-param-region': 'us-east-1',
+      },
+    );
+    expect(mismatchedNested.status).toBe(400);
+    expect(await mismatchedNested.json()).toEqual({
+      jsonrpc: '2.0',
+      id: 'page2-bad',
+      error: {
+        code: -32020,
+        message: 'Request header mcp-param-region does not match the request body',
+      },
+    });
+
+    // Repeated nextCursor ('loop' -> 'loop') aborts with -32603 instead of infinite loop
+    const loopHarness = await createMountHarness({
+      server: stdioFixtureConfig({ env: { TOOLS_CURSOR_MODE: 'loop' } }),
+      trackCleanup,
+    });
+    const loopRes = await loopHarness.post(
+      {
+        jsonrpc: '2.0',
+        id: 'loop-1',
+        method: 'tools/call',
+        params: {
+          name: 'missing_tool',
+          arguments: {},
+          _meta: modernMeta(),
+        },
+      },
+      {
+        'mcp-protocol-version': MODERN_VERSION,
+        'mcp-method': 'tools/call',
+        'mcp-name': 'missing_tool',
+      },
+    );
+    expect(loopRes.status).toBe(200);
+    expect(await loopRes.json()).toEqual({
+      jsonrpc: '2.0',
+      id: 'loop-1',
+      error: {
+        code: -32603,
+        message: 'MCP server process failed',
+      },
+    });
+  });
+
+  test('EDGE-10a: modern notifications return 202 on clean exit and 500 (-32603) on non-zero exit', async () => {
+    const harness = await createMountHarness({
+      server: stdioFixtureConfig(),
+      trackCleanup,
+    });
+
+    const okNotif = await harness.post(
+      {
+        jsonrpc: '2.0',
+        method: 'notifications/custom_ok',
+        params: { _meta: modernMeta() },
+      },
+      {
+        'mcp-protocol-version': MODERN_VERSION,
+        'mcp-method': 'notifications/custom_ok',
+      },
+    );
+    expect(okNotif.status).toBe(202);
+    expect(await okNotif.text()).toBe('');
+
+    const failNotif = await harness.post(
+      {
+        jsonrpc: '2.0',
+        method: 'notifications/custom_fail',
+      },
+      {
+        'mcp-protocol-version': MODERN_VERSION,
+        'mcp-method': 'notifications/custom_fail',
+      },
+    );
+    expect(failNotif.status).toBe(500);
+    expect(await failNotif.json()).toEqual({
+      jsonrpc: '2.0',
+      id: null,
+      error: {
+        code: -32603,
+        message: 'MCP server process failed',
+      },
+    });
+  });
+
+  test('EDGE-10b: HTTP admission status codes (415, 406, 405, 400 _meta, 404 -32601, and server request rejection)', async () => {
+    const harness = await createMountHarness({
+      server: stdioFixtureConfig({ legacyProtocol: false }),
+      trackCleanup,
+    });
+
+    // POST with Content-Type: text/plain -> 415
+    const badContentType = await harness.request('POST', {
+      headers: {
+        'content-type': 'text/plain',
+        accept: 'application/json, text/event-stream',
+        'mcp-protocol-version': MODERN_VERSION,
+        'mcp-method': 'ping',
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 'ct-1',
+        method: 'ping',
+        params: { _meta: modernMeta() },
+      }),
+    });
+    expect(badContentType.status).toBe(415);
+
+    // POST with Accept missing text/event-stream -> 406
+    const badAccept = await harness.request('POST', {
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json',
+        'mcp-protocol-version': MODERN_VERSION,
+        'mcp-method': 'ping',
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 'acc-1',
+        method: 'ping',
+        params: { _meta: modernMeta() },
+      }),
+    });
+    expect(badAccept.status).toBe(406);
+
+    // GET, DELETE, and PUT when legacyProtocol is false -> 405
+    for (const method of ['GET', 'DELETE', 'PUT']) {
+      const res = await harness.request(method);
+      expect(res.status).toBe(405);
+    }
+
+    // POST with mcp-protocol-version: 2026-07-28 header but missing _meta -> 400 (-32602)
+    const missingMeta = await harness.post(
+      { jsonrpc: '2.0', id: 'meta-missing', method: 'ping', params: {} },
+      { 'mcp-protocol-version': MODERN_VERSION, 'mcp-method': 'ping' },
+    );
+    expect(missingMeta.status).toBe(400);
+    expect(await missingMeta.json()).toEqual({
+      jsonrpc: '2.0',
+      id: 'meta-missing',
+      error: {
+        code: -32602,
+        message: 'Modern request requires _meta envelope',
+      },
+    });
+
+    // POST with malformed _meta (clientInfo / clientCapabilities not objects) -> 400 (-32602)
+    const malformedMeta = await harness.post(
+      {
+        jsonrpc: '2.0',
+        id: 'meta-bad',
+        method: 'ping',
+        params: {
+          _meta: {
+            'io.modelcontextprotocol/protocolVersion': MODERN_VERSION,
+            'io.modelcontextprotocol/clientInfo': 'not-an-object',
+            'io.modelcontextprotocol/clientCapabilities': null,
+          },
+        },
+      },
+      { 'mcp-protocol-version': MODERN_VERSION, 'mcp-method': 'ping' },
+    );
+    expect(malformedMeta.status).toBe(400);
+    expect(await malformedMeta.json()).toEqual({
+      jsonrpc: '2.0',
+      id: 'meta-bad',
+      error: {
+        code: -32602,
+        message: 'Invalid _meta envelope for protocol revision 2026-07-28',
+      },
+    });
+
+    // Child returning JSON-RPC error -32601 -> mapped to HTTP 404
+    const notFoundRes = await harness.post(
+      {
+        jsonrpc: '2.0',
+        id: 'unknown-method',
+        method: 'custom/unknown',
+        params: { _meta: modernMeta() },
+      },
+      {
+        'mcp-protocol-version': MODERN_VERSION,
+        'mcp-method': 'custom/unknown',
+      },
+    );
+    expect(notFoundRes.status).toBe(404);
+    expect(await notFoundRes.json()).toEqual({
+      jsonrpc: '2.0',
+      id: 'unknown-method',
+      error: { code: -32601, message: 'Method not found' },
+    });
+
+    // Child sending a server-initiated JSON-RPC request on a modern stateless connection -> rejected with -32603
+    const serverReqRes = await harness.post(
+      {
+        jsonrpc: '2.0',
+        id: 'srv-req-1',
+        method: 'tools/call',
+        params: {
+          name: 'server_request_tool',
+          arguments: {},
+          _meta: modernMeta(),
+        },
+      },
+      {
+        'mcp-protocol-version': MODERN_VERSION,
+        'mcp-method': 'tools/call',
+        'mcp-name': 'server_request_tool',
+      },
+    );
+    expect(await serverReqRes.json()).toEqual({
+      jsonrpc: '2.0',
+      id: 'srv-req-1',
+      error: {
+        code: -32603,
+        message: 'MCP server process failed',
+      },
+    });
+  });
+
+  test('EDGE-10c: upstream SSE cross-chunk CRLF splitting parses cleanly and truncated SSE stream without terminal reply fails with -32603', async () => {
+    const upstream = createServer((req, res) => {
+      void (async () => {
+        const text = await readBodyText(req);
+        const body = JSON.parse(text) as {
+          id?: string | number;
+          method?: string;
+          params?: { cursor?: string };
+        };
+        if (body.method === 'server/discover') {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id: body.id,
+              result: { supportedVersions: [MODERN_VERSION] },
+            }),
+          );
+          return;
+        }
+        if (body.method === 'tools/list' && body.params?.cursor === 'split-crlf') {
+          res.writeHead(200, { 'content-type': 'text/event-stream' });
+          const payload = JSON.stringify({
+            jsonrpc: '2.0',
+            id: body.id,
+            result: { tools: [{ name: 'crlf_tool' }] },
+          });
+          res.write(`event: message\r`);
+          await Bun.sleep(15);
+          res.write(`\ndata: ${payload}\r`);
+          await Bun.sleep(15);
+          res.end(`\n\r\n`);
+          return;
+        }
+        if (body.method === 'tools/list' && body.params?.cursor === 'truncated') {
+          res.writeHead(200, { 'content-type': 'text/event-stream' });
+          res.end(
+            `event: message\ndata: ${JSON.stringify({
+              jsonrpc: '2.0',
+              method: 'notifications/progress',
+              params: { progressToken: 'p-trunc', progress: 1, total: 2 },
+            })}\n\n`,
+          );
+          return;
+        }
+        res.writeHead(404).end();
+      })().catch(() => res.destroy());
+    });
+    const upstreamPort = await listen(upstream);
+    trackCleanup(() => closeServer(upstream));
+
+    const harness = await createMountHarness({
+      server: { url: `http://127.0.0.1:${upstreamPort}/mcp` },
+      trackCleanup,
+    });
+
+    // 1. Cross-chunk \r + \n SSE response parses cleanly
+    const splitRes = await harness.post(
+      {
+        jsonrpc: '2.0',
+        id: 'crlf-1',
+        method: 'tools/list',
+        params: { cursor: 'split-crlf', _meta: modernMeta() },
+      },
+      {
+        'mcp-protocol-version': MODERN_VERSION,
+        'mcp-method': 'tools/list',
+      },
+    );
+    expect(splitRes.status).toBe(200);
+    expect(await splitRes.json()).toEqual({
+      jsonrpc: '2.0',
+      id: 'crlf-1',
+      result: { tools: [{ name: 'crlf_tool' }] },
+    });
+
+    // 2. Truncated SSE stream closing after progress notification without terminal reply fails
+    const truncRes = await harness.post(
+      {
+        jsonrpc: '2.0',
+        id: 'trunc-1',
+        method: 'tools/list',
+        params: { cursor: 'truncated', _meta: modernMeta() },
+      },
+      {
+        'mcp-protocol-version': MODERN_VERSION,
+        'mcp-method': 'tools/list',
+      },
+    );
+    expect(truncRes.status).toBe(200);
+    const frames = parseSseMessages(await truncRes.text());
+    expect(frames).toEqual([
+      {
+        jsonrpc: '2.0',
+        method: 'notifications/progress',
+        params: { progressToken: 'p-trunc', progress: 1, total: 2 },
+      },
+      {
+        jsonrpc: '2.0',
+        id: 'trunc-1',
+        error: {
+          code: -32603,
+          message: 'MCP server process failed',
+        },
+      },
+    ]);
   });
 });

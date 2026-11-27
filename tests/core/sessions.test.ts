@@ -1,27 +1,21 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import { existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { closeMount, createMount, type GatewayMount } from '@mcp-gateway/core/adapter';
+import { closeMount } from '@mcp-gateway/core/adapter';
+import { BACKEND_CAPACITY_ERROR } from '@mcp-gateway/core/limits';
+import { readWhile } from '@mcp-gateway/core/sessions';
 import {
-  BACKEND_CAPACITY_ERROR,
-  BackendCalls,
-  MAX_BACKEND_MESSAGE_BYTES,
-  ResourceAdmission,
-  readRequestBody,
-} from '@mcp-gateway/core/limits';
-import { LogBuffer } from '@mcp-gateway/core/logs';
-import { BackendProcesses } from '@mcp-gateway/core/process';
-import {
-  createSessions,
-  type GatewayRequest,
-  type GatewayResponse,
-  readWhile,
-} from '@mcp-gateway/core/sessions';
-import type { HttpServerConfig, LogLevel, StdioServerConfig } from '@mcp-gateway/shared/types';
+  closeServer,
+  createMountHarness,
+  listen,
+  parseSseMessages,
+  readBodyText,
+  registerAsyncCleanups,
+} from '../helpers/http-mount';
 
 const PROTOCOL_VERSION = '2025-11-25';
 
@@ -116,25 +110,6 @@ if (process.env.SPAWN_MARKER_FILE) {
 process.exit(0);
 `;
 
-const listen = (server: Server): Promise<number> =>
-  new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      server.off('error', reject);
-      const address = server.address();
-      if (!address || typeof address === 'string') reject(new Error('Expected a TCP listener.'));
-      else resolve(address.port);
-    });
-  });
-
-const closeServer = async (server: Server): Promise<void> => {
-  if (!server.listening) return;
-  await new Promise<void>((resolve, reject) => {
-    server.close((error) => (error ? reject(error) : resolve()));
-    server.closeAllConnections();
-  });
-};
-
 const isProcessGone = (pid: number): boolean => {
   try {
     process.kill(pid, 0);
@@ -155,16 +130,6 @@ const waitFor = async (
     await Bun.sleep(20);
   }
   throw new Error(`Timed out waiting for: ${description}`);
-};
-
-const parseSseMessages = (text: string): unknown[] => {
-  const messages: unknown[] = [];
-  for (const line of text.split(/\r?\n/)) {
-    if (!line.startsWith('data:')) continue;
-    const data = line.slice(5).trim();
-    if (data) messages.push(JSON.parse(data));
-  }
-  return messages;
 };
 
 const parseResponseMessages = async (response: Response): Promise<unknown[]> => {
@@ -229,112 +194,7 @@ const postJson = (
     body: JSON.stringify(body),
   });
 
-const wrapGatewayResponse = (res: ServerResponse): GatewayResponse => {
-  const wrapped = res as GatewayResponse;
-  wrapped.status ??= (code: number) => {
-    res.statusCode = code;
-    return wrapped;
-  };
-  wrapped.send ??= (body: string) => {
-    if (!res.headersSent && !res.destroyed) {
-      const payload = Buffer.from(body, 'utf8');
-      if (!res.getHeader('content-type'))
-        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      res.setHeader('Content-Length', String(payload.byteLength));
-      res.end(payload);
-    }
-    return wrapped;
-  };
-  wrapped.json ??= (body: unknown) => {
-    if (!res.headersSent && !res.destroyed) {
-      const payload = Buffer.from(JSON.stringify(body), 'utf8');
-      res.setHeader('Content-Type', 'application/json; charset=utf-8');
-      res.setHeader('Content-Length', String(payload.byteLength));
-      res.end(payload);
-    }
-    return wrapped;
-  };
-  return wrapped;
-};
-
-const cleanups: Array<() => Promise<void>> = [];
-
-const trackCleanup = (fn: () => Promise<void>): void => {
-  cleanups.push(fn);
-};
-
-afterEach(async () => {
-  while (cleanups.length > 0) {
-    const fn = cleanups.pop();
-    if (fn) await fn();
-  }
-});
-
-interface MountHarness {
-  url: string;
-  mount: GatewayMount;
-  admission: ResourceAdmission;
-  sessionAdmission: ResourceAdmission;
-  calls: BackendCalls;
-  logs: LogBuffer;
-  diagnostics: string[];
-}
-
-const createMountHarness = async (options: {
-  name?: string;
-  server: StdioServerConfig | HttpServerConfig;
-  admissionLimit?: number;
-  sessionLimit?: number;
-  callLimit?: number;
-}): Promise<MountHarness> => {
-  const admission = new ResourceAdmission(options.admissionLimit ?? 4);
-  const sessionAdmission = new ResourceAdmission(options.sessionLimit ?? 4);
-  const calls = new BackendCalls(options.callLimit ?? 16);
-  const logs = new LogBuffer();
-  const diagnostics: string[] = [];
-  const mount = createMount(
-    options.name ?? 'session-fixture',
-    options.server,
-    (summary) => diagnostics.push(summary),
-    admission,
-    calls,
-    sessionAdmission,
-    logs,
-  );
-  const httpServer = createServer((req: IncomingMessage, res: ServerResponse) => {
-    void (async () => {
-      const controller = new AbortController();
-      res.once('close', () => controller.abort());
-      try {
-        if (req.method === 'POST') {
-          await readRequestBody(req, MAX_BACKEND_MESSAGE_BYTES, controller.signal);
-        }
-        await mount.handle(req, res);
-      } catch {
-        if (!res.headersSent) {
-          res.statusCode = 400;
-          res.end();
-        } else {
-          res.destroy();
-        }
-      }
-    })();
-  });
-  const port = await listen(httpServer);
-  trackCleanup(async () => {
-    await closeServer(httpServer);
-    await closeMount(mount);
-  });
-  return {
-    url: `http://127.0.0.1:${port}/mcp`,
-    mount,
-    admission,
-    sessionAdmission,
-    calls,
-    logs,
-    diagnostics,
-  };
-};
+const trackCleanup = registerAsyncCleanups();
 
 describe('src/core/sessions.ts — Step 1: session-based MCP lifecycle', () => {
   test('stdio session: initialize, POST calls, GET event stream, and DELETE teardown', async () => {
@@ -523,8 +383,7 @@ describe('src/core/sessions.ts — Step 1: session-based MCP lifecycle', () => {
           res.end();
           return;
         }
-        let raw = '';
-        for await (const chunk of req) raw += chunk.toString('utf8');
+        const raw = await readBodyText(req);
         const msg = JSON.parse(raw) as { id?: string | number; method?: string };
         seenRequests.push({
           method: req.method ?? '',
@@ -1176,85 +1035,23 @@ describe('src/core/sessions.ts — Step 2: duplicate ID guard, cancelled-call ov
     expect(existsSync(markerFile)).toBe(false);
   });
 
-  test('direct createSessions rejects when reserve() throws on session lease exhaustion without spawning', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'bear-mcp-direct-cap-'));
-    trackCleanup(() => rm(dir, { recursive: true, force: true }));
-    const markerFile = join(dir, 'direct-spawned.marker');
-
-    const logs: Array<{ level: LogLevel; args: unknown[] }> = [];
-    const children = new BackendProcesses({
-      info: () => {},
-      debug: () => {},
-      warn: () => {},
-      error: () => {},
-    });
-    const sessionAdmission = new ResourceAdmission(0);
-    const calls = new BackendCalls(4);
-    const sessions = createSessions({
-      source: {
-        stdioCmd: {
-          command: process.execPath,
-          args: ['-e', MARKER_SPAWN_SCRIPT],
-          env: { SPAWN_MARKER_FILE: markerFile },
-        },
-      },
-      children,
-      calls,
-      reserve: () => {
-        const lease = sessionAdmission.acquire();
-        if (!lease) throw new Error('SESSION_LIMIT_REACHED');
-        return [lease];
-      },
-      log: (level, args) => logs.push({ level, args }),
-    });
-
-    let caught: unknown;
-    const httpServer = createServer((req, res) => {
-      void (async () => {
-        const controller = new AbortController();
-        res.once('close', () => controller.abort());
-        try {
-          await readRequestBody(req, MAX_BACKEND_MESSAGE_BYTES, controller.signal);
-          await sessions.post(req as GatewayRequest, wrapGatewayResponse(res));
-        } catch (error) {
-          caught = error;
-          if (!res.headersSent) {
-            res.statusCode = 503;
-            res.end();
-          }
-        }
-      })();
-    });
-    const port = await listen(httpServer);
-    trackCleanup(async () => {
-      await closeServer(httpServer);
-      await children.close();
-    });
-
-    const response = await postJson(`http://127.0.0.1:${port}/mcp`, initializeBody(1));
-    expect(response.status).toBe(503);
-    expect(caught).toBeInstanceOf(Error);
-    expect((caught as Error).message).toBe('SESSION_LIMIT_REACHED');
-    await Bun.sleep(50);
-    expect(existsSync(markerFile)).toBe(false);
-  });
-
-  test('logTraffic: false suppresses raw child stderr to at most one summary line', async () => {
-    const harness = await createMountHarness({
+  test('logTraffic: false suppresses raw child stderr while logTraffic: true forwards it', async () => {
+    const suppressedHarness = await createMountHarness({
       server: {
         command: process.execPath,
         args: ['-e', STDIO_FIXTURE_SCRIPT],
         legacyProtocol: true,
+        logTraffic: false,
       },
     });
 
-    const initResponse = await postJson(harness.url, initializeBody(1));
-    expect(initResponse.status).toBe(200);
-    const sessionId = initResponse.headers.get('mcp-session-id') as string;
-    await parseResponseMessages(initResponse);
+    const suppressedInit = await postJson(suppressedHarness.url, initializeBody(1));
+    expect(suppressedInit.status).toBe(200);
+    const suppressedSessionId = suppressedInit.headers.get('mcp-session-id') as string;
+    await parseResponseMessages(suppressedInit);
 
-    const stderrCall = await postJson(
-      harness.url,
+    const suppressedCall = await postJson(
+      suppressedHarness.url,
       {
         jsonrpc: '2.0',
         id: 2,
@@ -1262,82 +1059,41 @@ describe('src/core/sessions.ts — Step 2: duplicate ID guard, cancelled-call ov
         params: { name: 'emit_stderr', arguments: {} },
       },
       {
-        'mcp-session-id': sessionId,
+        'mcp-session-id': suppressedSessionId,
         'mcp-protocol-version': PROTOCOL_VERSION,
       },
     );
-    expect(stderrCall.status).toBe(200);
-    await parseResponseMessages(stderrCall);
+    expect(suppressedCall.status).toBe(200);
+    await parseResponseMessages(suppressedCall);
 
-    const entries = harness.logs.read({ after: 0 }).entries;
-    const stderrEntries = entries.filter((entry) => entry.source === 'stderr');
-    expect(stderrEntries).toHaveLength(1);
-    expect(stderrEntries[0]?.text).toContain(
+    const suppressedEntries = suppressedHarness.logs.read({ after: 0 }).entries;
+    const suppressedStderr = suppressedEntries.filter((entry) => entry.source === 'stderr');
+    expect(suppressedStderr).toHaveLength(1);
+    expect(suppressedStderr[0]?.text).toContain(
       'Child stderr output suppressed (enable traffic logging or inspect redacted diagnostics).',
     );
-    for (const entry of entries) {
+    for (const entry of suppressedEntries) {
       expect(entry.text).not.toContain('SECRET_STDERR_LINE_1');
       expect(entry.text).not.toContain('SECRET_STDERR_LINE_2');
     }
-    expect(harness.diagnostics).toEqual([]);
-  });
+    expect(suppressedHarness.diagnostics).toEqual([]);
 
-  test('logTraffic: true forwards raw child stderr chunks without suppression', async () => {
-    const captured: Array<{ level: LogLevel; text: string }> = [];
-    const children = new BackendProcesses({
-      info: () => {},
-      debug: () => {},
-      warn: () => {},
-      error: () => {},
-    });
-    const admission = new ResourceAdmission(2);
-    const calls = new BackendCalls(4);
-    const sessions = createSessions({
-      source: {
-        stdioCmd: {
-          command: process.execPath,
-          args: ['-e', STDIO_FIXTURE_SCRIPT],
-        },
+    const trafficHarness = await createMountHarness({
+      server: {
+        command: process.execPath,
+        args: ['-e', STDIO_FIXTURE_SCRIPT],
+        legacyProtocol: true,
+        logTraffic: true,
       },
-      children,
-      calls,
-      reserve: () => {
-        const lease = admission.acquire();
-        if (!lease) throw new Error('No lease');
-        return [lease];
-      },
-      log: (level, args) => {
-        captured.push({ level, text: args.map((item) => String(item)).join(' ') });
-      },
-      logTraffic: true,
     });
 
-    const httpServer = createServer((req, res) => {
-      void (async () => {
-        const controller = new AbortController();
-        res.once('close', () => controller.abort());
-        if (req.method === 'POST') {
-          await readRequestBody(req, MAX_BACKEND_MESSAGE_BYTES, controller.signal);
-          await sessions.post(req as GatewayRequest, wrapGatewayResponse(res));
-        } else {
-          await sessions.request(req as GatewayRequest, wrapGatewayResponse(res));
-        }
-      })();
-    });
-    const port = await listen(httpServer);
-    trackCleanup(async () => {
-      await closeServer(httpServer);
-      await children.close();
-    });
+    const trafficInit = await postJson(trafficHarness.url, initializeBody(1));
+    expect(trafficInit.status).toBe(200);
+    const trafficSessionId = trafficInit.headers.get('mcp-session-id') as string;
+    await parseResponseMessages(trafficInit);
 
-    const url = `http://127.0.0.1:${port}/mcp`;
-    const initResponse = await postJson(url, initializeBody(1));
-    expect(initResponse.status).toBe(200);
-    const sessionId = initResponse.headers.get('mcp-session-id') as string;
-    await parseResponseMessages(initResponse);
-
-    const stderrCall = await postJson(
-      url,
+    const trafficCall = await postJson(
+      trafficHarness.url,
       {
         jsonrpc: '2.0',
         id: 2,
@@ -1345,15 +1101,16 @@ describe('src/core/sessions.ts — Step 2: duplicate ID guard, cancelled-call ov
         params: { name: 'emit_stderr', arguments: {} },
       },
       {
-        'mcp-session-id': sessionId,
+        'mcp-session-id': trafficSessionId,
         'mcp-protocol-version': PROTOCOL_VERSION,
       },
     );
-    expect(stderrCall.status).toBe(200);
-    await parseResponseMessages(stderrCall);
+    expect(trafficCall.status).toBe(200);
+    await parseResponseMessages(trafficCall);
 
-    const combinedStderr = captured
-      .filter((entry) => entry.text.includes('Child stderr:'))
+    const combinedStderr = trafficHarness.logs
+      .read({ after: 0 })
+      .entries.filter((entry) => entry.source === 'stderr')
       .map((entry) => entry.text)
       .join('\n');
     expect(combinedStderr).toContain('SECRET_STDERR_LINE_1');
@@ -1406,5 +1163,223 @@ describe('src/core/sessions.ts — Step 2: duplicate ID guard, cancelled-call ov
 
     expect(await textPromise).toBe('chunk-1-chunk-2');
     expect(waitCalls).toBeGreaterThanOrEqual(2);
+  });
+
+  test('automatically synthesizes notifications/cancelled on client HTTP disconnect and closes overloaded session at MAX_CANCELLED_CALLS (4)', async () => {
+    const harness = await createMountHarness({
+      server: {
+        command: process.execPath,
+        args: ['-e', STDIO_FIXTURE_SCRIPT],
+        legacyProtocol: true,
+      },
+      admissionLimit: 1,
+      sessionLimit: 1,
+      callLimit: 4,
+    });
+
+    const initResponse = await postJson(harness.url, initializeBody(1));
+    expect(initResponse.status).toBe(200);
+    const sessionId = initResponse.headers.get('mcp-session-id') as string;
+    const initMessages = (await parseResponseMessages(initResponse)) as Array<{
+      result: { instructions: string };
+    }>;
+    const childPid = Number(initMessages[0]?.result.instructions);
+    expect(Number.isInteger(childPid) && childPid > 0).toBe(true);
+
+    const sessionHeaders = {
+      'mcp-session-id': sessionId,
+      'mcp-protocol-version': PROTOCOL_VERSION,
+    };
+
+    for (const id of [1, 2, 3, 4]) {
+      const controller = new AbortController();
+      const response = await postJson(
+        harness.url,
+        {
+          jsonrpc: '2.0',
+          id,
+          method: 'tools/call',
+          params: { name: 'hang', arguments: {} },
+        },
+        sessionHeaders,
+        controller.signal,
+      );
+      expect(response.status).toBe(200);
+      controller.abort();
+      await response.body?.cancel().catch(() => {});
+    }
+
+    await waitFor(
+      () => isProcessGone(childPid),
+      'overloaded session child process termination after 4 client HTTP disconnects',
+    );
+
+    await waitFor(() => {
+      const checkOwner = harness.calls.owner();
+      const admitted: number[] = [];
+      for (const id of [1, 2, 3, 4]) {
+        if (!harness.calls.admit(checkOwner, id)) break;
+        admitted.push(id);
+      }
+      harness.calls.settleOwner(checkOwner);
+      return admitted.length === 4;
+    }, 'release of all 4 BackendCalls slots after disconnect overload');
+
+    await waitFor(() => {
+      const resourceLease = harness.admission.acquire();
+      if (!resourceLease) return false;
+      const sessionLease = harness.sessionAdmission.acquire();
+      if (!sessionLease) {
+        resourceLease.release();
+        return false;
+      }
+      sessionLease.release();
+      resourceLease.release();
+      return true;
+    }, 'release of admission and sessionAdmission leases after disconnect overload');
+
+    const pingAfter = await postJson(
+      harness.url,
+      { jsonrpc: '2.0', id: 5, method: 'ping' },
+      sessionHeaders,
+    );
+    expect(pingAfter.status).toBe(404);
+
+    const warnEntries = harness.logs
+      .read({ after: 0 })
+      .entries.filter(
+        (entry) =>
+          entry.level === 'warn' &&
+          entry.text.includes('Session: closed after too many unanswered cancelled calls.'),
+      );
+    expect(warnEntries.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test('aborting an in-flight initialize HTTP request closes the half-opened session and releases admission leases', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'bear-mcp-abandoned-init-'));
+    trackCleanup(() => rm(dir, { recursive: true, force: true }));
+    const pidFile = join(dir, 'init-child.pid');
+
+    const delayedInitScript = `
+const fs = require('node:fs');
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => {
+  if (chunk.includes('"initialize"')) {
+    fs.writeFileSync(process.env.INIT_PID_FILE, String(process.pid));
+  }
+});
+process.stdin.resume();
+`;
+
+    const harness = await createMountHarness({
+      server: {
+        command: process.execPath,
+        args: ['-e', delayedInitScript],
+        env: { INIT_PID_FILE: pidFile },
+        legacyProtocol: true,
+      },
+      admissionLimit: 1,
+      sessionLimit: 1,
+    });
+
+    const abortController = new AbortController();
+    const initPromise = postJson(harness.url, initializeBody(1), {}, abortController.signal).catch(
+      () => undefined,
+    );
+
+    await waitFor(() => existsSync(pidFile), 'child to receive initialize request');
+    abortController.abort();
+    await initPromise;
+
+    await waitFor(() => {
+      const resourceLease = harness.admission.acquire();
+      if (!resourceLease) return false;
+      const sessionLease = harness.sessionAdmission.acquire();
+      if (!sessionLease) {
+        resourceLease.release();
+        return false;
+      }
+      sessionLease.release();
+      resourceLease.release();
+      return true;
+    }, 'release of admission and sessionAdmission leases after abandoned initialize');
+  });
+
+  test('fails initialize cleanly and releases leases when upstream HTTP initialize omits protocolVersion', async () => {
+    const upstream = createServer((req, res) => {
+      void (async () => {
+        if (req.method === 'DELETE') {
+          res.statusCode = 200;
+          res.end();
+          return;
+        }
+        if (req.method === 'GET') {
+          res.statusCode = 405;
+          res.end();
+          return;
+        }
+        const raw = await readBodyText(req);
+        const msg = JSON.parse(raw) as { id?: string | number; method?: string };
+        if (msg.method === 'initialize') {
+          res.writeHead(200, {
+            'content-type': 'application/json',
+            'mcp-session-id': 'missing-version-session',
+          });
+          res.end(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id: msg.id,
+              result: {
+                capabilities: {},
+              },
+            }),
+          );
+          return;
+        }
+        res.statusCode = 400;
+        res.end();
+      })();
+    });
+
+    const upstreamPort = await listen(upstream);
+    trackCleanup(() => closeServer(upstream));
+
+    const harness = await createMountHarness({
+      server: {
+        url: `http://127.0.0.1:${upstreamPort}/mcp`,
+        legacyProtocol: true,
+      },
+      admissionLimit: 1,
+      sessionLimit: 1,
+    });
+
+    const initResponse = await postJson(harness.url, initializeBody(1));
+    const messages = (await parseResponseMessages(initResponse)) as Array<{
+      error?: { code: number; message: string };
+    }>;
+    expect(messages[0]?.error?.code).toBe(-32603);
+
+    await waitFor(
+      () =>
+        harness.logs
+          .read({ after: 0 })
+          .entries.some((entry) =>
+            entry.text.includes('Upstream initialization has no protocol version.'),
+          ),
+      'log entry for missing upstream protocolVersion',
+    );
+
+    await waitFor(() => {
+      const resourceLease = harness.admission.acquire();
+      if (!resourceLease) return false;
+      const sessionLease = harness.sessionAdmission.acquire();
+      if (!sessionLease) {
+        resourceLease.release();
+        return false;
+      }
+      sessionLease.release();
+      resourceLease.release();
+      return true;
+    }, 'release of admission and sessionAdmission leases after upstream missing protocolVersion');
   });
 });

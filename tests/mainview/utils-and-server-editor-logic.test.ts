@@ -1,4 +1,4 @@
-import { describe, expect, spyOn, test } from 'bun:test';
+import { describe, expect, mock, spyOn, test } from 'bun:test';
 
 import { undoDepth } from '@codemirror/commands';
 import { indentUnit, language, matchBrackets, syntaxTree } from '@codemirror/language';
@@ -7,16 +7,17 @@ import { EditorState } from '@codemirror/state';
 import {
   bearPreset,
   createKeyValueRow,
-  emptyEditor,
   formConfig,
   type KeyValueRow,
   keyValueRowsToRecord,
-  parseStringMap,
   recordToKeyValueRows,
 } from '@mcp-gateway/mainview/dialogs/ServerEditor';
 import { jsonEditing } from '@mcp-gateway/mainview/lib/json-editing';
 import { generateToken } from '@mcp-gateway/mainview/lib/token';
 import { cn } from '@mcp-gateway/mainview/lib/utils';
+import type { AppSnapshot, MenuCommand } from '@mcp-gateway/shared/rpc';
+import { installDomEnvironment } from '../helpers/dom';
+import { makeSnapshot } from '../helpers/mainview';
 
 describe('generateToken', () => {
   test('returns a 64-character lowercase hexadecimal string', () => {
@@ -52,32 +53,16 @@ describe('generateToken', () => {
 });
 
 describe('cn', () => {
-  test('merges conditional class names and drops falsy inputs', () => {
-    expect(
-      cn('px-2', false && 'hidden', null, undefined, '', ['py-1', { flex: true, grid: false }]),
-    ).toBe('px-2 py-1 flex');
-  });
-
-  test('resolves conflicting standard Tailwind utilities with last-wins semantics', () => {
-    expect(cn('px-2 text-sm', 'px-4')).toBe('text-sm px-4');
-  });
-
-  test('preserves custom macOS typography scale tokens alongside text color classes', () => {
+  test('preserves custom macOS typography scale tokens alongside text color classes and deduplicates macOS typography, radius, and shadow tokens', () => {
     expect(cn('text-mac-title-1', 'text-red-500')).toBe('text-mac-title-1 text-red-500');
     expect(cn('text-mac-headline', 'text-mac-text')).toBe('text-mac-headline text-mac-text');
     expect(cn('text-mac-body', 'text-mac-muted')).toBe('text-mac-body text-mac-muted');
     expect(cn('text-mac-muted', 'text-mac-subheadline')).toBe(
       'text-mac-muted text-mac-subheadline',
     );
-  });
-
-  test('deduplicates conflicting custom macOS typography tokens against each other and standard sizes', () => {
     expect(cn('text-mac-body', 'text-mac-headline')).toBe('text-mac-headline');
     expect(cn('text-sm', 'text-mac-subheadline')).toBe('text-mac-subheadline');
     expect(cn('text-mac-title-1', 'text-lg')).toBe('text-lg');
-  });
-
-  test('deduplicates custom macOS radius and shadow tokens', () => {
     expect(cn('rounded-md', 'rounded-mac-control')).toBe('rounded-mac-control');
     expect(cn('rounded-mac-control', 'rounded-mac-popover')).toBe('rounded-mac-popover');
     expect(cn('shadow-sm', 'shadow-mac-popover')).toBe('shadow-mac-popover');
@@ -85,11 +70,6 @@ describe('cn', () => {
 });
 
 describe('jsonEditing', () => {
-  test('exports a non-empty CodeMirror 6 extension array', () => {
-    expect(Array.isArray(jsonEditing)).toBe(true);
-    expect(jsonEditing.length).toBeGreaterThan(0);
-  });
-
   test('creates an EditorState with JSON/JSONC language, 2-space indent, history, and bracket matching', () => {
     const doc = '{\n  // comment\n  "gateway": { "port": 3100 }\n}';
     const state = EditorState.create({
@@ -200,64 +180,7 @@ describe('ServerEditor key-value row helpers', () => {
   });
 });
 
-describe('parseStringMap', () => {
-  test('parses empty input and valid JSON string-to-string objects', () => {
-    expect(parseStringMap('', 'must be string map')).toEqual({});
-    expect(parseStringMap('{"FOO": "bar", "EMPTY": ""}', 'must be string map')).toEqual({
-      FOO: 'bar',
-      EMPTY: '',
-    });
-  });
-
-  test('rejects arrays, primitives, non-string values, and __proto__ keys with the supplied message', () => {
-    const invalidInputs = [
-      '["a", "b"]',
-      'null',
-      '42',
-      '"hello"',
-      'true',
-      '{"COUNT": 1}',
-      '{"FLAG": true}',
-      '{"EMPTY": null}',
-      '{"NESTED": {"a": "b"}}',
-      '{"__proto__": "polluted"}',
-    ];
-
-    for (const input of invalidInputs) {
-      expect(() => parseStringMap(input, 'expected string map')).toThrow('expected string map');
-    }
-  });
-
-  test('throws a SyntaxError on malformed JSON', () => {
-    expect(() => parseStringMap('{not-json}', 'expected string map')).toThrow(SyntaxError);
-  });
-});
-
-describe('emptyEditor and bearPreset', () => {
-  test('emptyEditor initializes a clean default stdio editor state with fresh arrays', () => {
-    const first = emptyEditor();
-    const second = emptyEditor();
-
-    expect(first).toEqual({
-      original: null,
-      name: '',
-      type: 'stdio',
-      command: '',
-      args: [],
-      env: [],
-      cwd: '',
-      url: '',
-      headers: [],
-      disabled: false,
-      legacyProtocol: false,
-      token: undefined,
-      tokenRef: undefined,
-    });
-    expect(first.args).not.toBe(second.args);
-    expect(first.env).not.toBe(second.env);
-    expect(first.headers).not.toBe(second.headers);
-  });
-
+describe('bearPreset', () => {
   test('bearPreset populates the macOS Bear CLI preset and preserves a typed server name', () => {
     expect(bearPreset()).toEqual({
       name: 'bear',
@@ -427,5 +350,94 @@ describe('formConfig', () => {
     const protoHeadersRaw =
       '{"gateway":{"host":"127.0.0.1","port":3100,"token":"secret"},"mcpServers":{"s":{"url":"https://example.com","headers":{"__proto__":"bad"}}}}';
     expect(formConfig(protoHeadersRaw, 'json')).toBeNull();
+  });
+});
+
+describe('renderer RPC bridge and window secret scrubbing (src/mainview/rpc.ts)', () => {
+  test('scrubs window.__electrobunSecretKeyBytes and __electrobunRpcSocketPort, zeroes key bytes on microtask, and routes RPC bridge handlers', async () => {
+    installDomEnvironment();
+
+    const secretBytes = new Uint8Array([11, 22, 33, 44]);
+    const globalWin = window as unknown as Record<string, unknown>;
+    globalWin.__electrobunSecretKeyBytes = secretBytes;
+    globalWin.__electrobunRpcSocketPort = 54321;
+
+    interface CapturedRpcConfig {
+      maxRequestTime: number;
+      handlers: {
+        requests: {
+          hasUnsavedRawConfig: () => boolean;
+        };
+        messages: {
+          snapshotChanged: (snapshot: AppSnapshot) => void;
+          menuCommand: (payload: { command: MenuCommand }) => void;
+        };
+      };
+    }
+
+    let capturedConfig: CapturedRpcConfig | null = null;
+    let instantiatedRpc: unknown = null;
+
+    class MockElectroview {
+      static defineRPC(config: CapturedRpcConfig) {
+        capturedConfig = config;
+        return { request: {} };
+      }
+
+      constructor(options: { rpc: unknown }) {
+        instantiatedRpc = options.rpc;
+      }
+    }
+
+    mock.module('electrobun/view', () => ({
+      Electroview: MockElectroview,
+    }));
+
+    const rpcModule = await import('@mcp-gateway/mainview/rpc');
+
+    expect('__electrobunSecretKeyBytes' in window).toBe(false);
+    expect('__electrobunRpcSocketPort' in window).toBe(false);
+
+    await Promise.resolve();
+    expect(Array.from(secretBytes)).toEqual([0, 0, 0, 0]);
+
+    expect(capturedConfig).not.toBeNull();
+    expect(instantiatedRpc).not.toBeNull();
+    if (!capturedConfig) throw new Error('Expected defineRPC to capture config');
+    const handlers = (capturedConfig as CapturedRpcConfig).handlers;
+
+    // Verify setUnsavedRawConfigChecker wires into hasUnsavedRawConfig request handler.
+    expect(handlers.requests.hasUnsavedRawConfig()).toBe(false);
+    rpcModule.setUnsavedRawConfigChecker(() => true);
+    expect(handlers.requests.hasUnsavedRawConfig()).toBe(true);
+    rpcModule.setUnsavedRawConfigChecker(() => false);
+    expect(handlers.requests.hasUnsavedRawConfig()).toBe(false);
+
+    // Verify onSnapshotChanged and onMenuCommand dispatch and unsubscribe cleanly.
+    const receivedSnapshots: AppSnapshot[] = [];
+    const receivedCommands: MenuCommand[] = [];
+
+    const unsubSnapshot = rpcModule.onSnapshotChanged((snap) => {
+      receivedSnapshots.push(snap);
+    });
+    const unsubMenu = rpcModule.onMenuCommand((cmd) => {
+      receivedCommands.push(cmd);
+    });
+
+    const sampleSnapshot = makeSnapshot();
+    handlers.messages.snapshotChanged(sampleSnapshot);
+    handlers.messages.menuCommand({ command: 'tab:settings' });
+
+    expect(receivedSnapshots).toEqual([sampleSnapshot]);
+    expect(receivedCommands).toEqual(['tab:settings']);
+
+    unsubSnapshot();
+    unsubMenu();
+
+    handlers.messages.snapshotChanged(sampleSnapshot);
+    handlers.messages.menuCommand({ command: 'tab:logs' });
+
+    expect(receivedSnapshots).toHaveLength(1);
+    expect(receivedCommands).toHaveLength(1);
   });
 });

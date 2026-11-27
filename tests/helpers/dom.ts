@@ -1,23 +1,10 @@
 import { cleanup } from '@testing-library/react';
 import { GlobalWindow } from 'happy-dom';
 
+let activeWindow: GlobalWindow | null = null;
+
 const ensureDialogMethods = (win: GlobalWindow): void => {
   const proto = win.HTMLDialogElement.prototype;
-  const probe = win.document.createElement('dialog');
-  const nativeWorks = (() => {
-    if (typeof proto.showModal !== 'function' || typeof proto.close !== 'function') return false;
-    try {
-      probe.showModal();
-      const opened = probe.open && probe.hasAttribute('open');
-      probe.close();
-      return opened && !probe.open && !probe.hasAttribute('open');
-    } catch {
-      return false;
-    }
-  })();
-
-  if (nativeWorks) return;
-
   proto.showModal = function showModal() {
     this.open = true;
     this.setAttribute('open', '');
@@ -41,7 +28,11 @@ export const cleanupDom = (): void => {
  * Returns a `cleanupDom` function for per-test teardown.
  */
 export const installDomEnvironment = (): (() => void) => {
+  if (activeWindow) {
+    void activeWindow.happyDOM?.cancelAsync?.();
+  }
   const win = new GlobalWindow({ url: 'http://localhost/' });
+  activeWindow = win;
   ensureDialogMethods(win);
 
   const globals: Record<string, unknown> = {

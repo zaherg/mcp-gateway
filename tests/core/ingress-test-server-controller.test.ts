@@ -2,23 +2,23 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import * as fs from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { createConnection } from 'node:net';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { MODERN_VERSION } from '@mcp-gateway/core/adapter';
 import { parseConfig, resolveKeys } from '@mcp-gateway/core/config';
 import { McpGatewayController } from '@mcp-gateway/core/controller';
-import { GatewayError } from '@mcp-gateway/core/errors';
 import { GatewayIngress, tokenMatches } from '@mcp-gateway/core/ingress';
 import { LogBuffer } from '@mcp-gateway/core/logs';
 import { checkEndpoint } from '@mcp-gateway/core/test-server';
 import { isRecord } from '@mcp-gateway/shared/config-document';
-import type {
-  GatewayConfig,
-  GatewayErrorCode,
-  KeyStore,
-  VisibleError,
-} from '@mcp-gateway/shared/types';
+import type { GatewayConfig, KeyStore, VisibleError } from '@mcp-gateway/shared/types';
+import {
+  deferred,
+  expectAsyncGatewayError,
+  expectGatewayError,
+  registerTempDirLifecycle,
+} from '../helpers/core';
+import { closeServer, listen } from '../helpers/http-mount';
 
 const GLOBAL_TOKEN = 'global-ingress-test-token-0123456789abcdef';
 const BETA_TOKEN = 'beta-override-test-token-fedcba9876543210';
@@ -26,44 +26,38 @@ const BETA_TOKEN = 'beta-override-test-token-fedcba9876543210';
 const activeControllers: McpGatewayController[] = [];
 const activeIngresses: GatewayIngress[] = [];
 const activeServers: Server[] = [];
-const tempDirs: string[] = [];
-
-const listenHttp = (server: Server): Promise<number> =>
-  new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      server.off('error', reject);
-      const address = server.address();
-      if (!address || typeof address === 'string') reject(new Error('Expected a TCP listener.'));
-      else resolve(address.port);
-    });
-  });
-
-const closeHttp = async (server: Server): Promise<void> => {
-  if (!server.listening) return;
-  await new Promise<void>((resolve, reject) => {
-    server.close((error) => (error ? reject(error) : resolve()));
-    server.closeAllConnections();
-  });
-};
+const { makeTempDir } = registerTempDirLifecycle('bear-mcp-t060-02-');
 
 const reservePort = async (): Promise<number> => {
   const reservation = createServer();
   try {
-    return await listenHttp(reservation);
+    return await listen(reservation);
   } finally {
-    await closeHttp(reservation);
+    await closeServer(reservation);
   }
 };
 
 const createTempConfigPath = async (): Promise<string> => {
-  const dir = await fs.mkdtemp(join(tmpdir(), 'bear-mcp-t056-03-'));
-  tempDirs.push(dir);
+  const dir = await makeTempDir();
   return join(dir, 'mcp.json');
+};
+
+const waitFor = async (
+  predicate: () => boolean,
+  description: string,
+  timeoutMs = 5_000,
+): Promise<void> => {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await Bun.sleep(20);
+  }
+  throw new Error(`Timed out waiting for: ${description}`);
 };
 
 const createMemoryKeyStore = (options?: {
   failSet?: boolean;
+  mismatchGet?: boolean;
 }): { store: KeyStore; entries: Map<string, string> } => {
   const entries = new Map<string, string>();
   const store: KeyStore = {
@@ -71,7 +65,9 @@ const createMemoryKeyStore = (options?: {
       const result = new Map<string, string>();
       for (const ref of refs) {
         const value = entries.get(ref);
-        if (value !== undefined) result.set(ref, value);
+        if (value !== undefined) {
+          result.set(ref, options?.mismatchGet ? `${value}-corrupted` : value);
+        }
       }
       return result;
     },
@@ -99,7 +95,7 @@ const startMockServer = async (
     });
   });
   activeServers.push(server);
-  return listenHttp(server);
+  return listen(server);
 };
 
 const startModernMcpUpstream = async (): Promise<number> =>
@@ -142,23 +138,6 @@ const startModernMcpUpstream = async (): Promise<number> =>
       }),
     );
   });
-
-const expectAsyncGatewayError = async (
-  fn: () => Promise<unknown>,
-  code: GatewayErrorCode,
-  message?: string,
-): Promise<GatewayError> => {
-  try {
-    await fn();
-  } catch (error) {
-    expect(error).toBeInstanceOf(GatewayError);
-    const gatewayError = error as GatewayError;
-    expect(gatewayError.code).toBe(code);
-    if (message !== undefined) expect(gatewayError.message).toBe(message);
-    return gatewayError;
-  }
-  throw new Error(`Expected GatewayError(${code}) to be thrown.`);
-};
 
 interface RawHttpResponse {
   statusCode: number;
@@ -252,9 +231,8 @@ afterEach(async () => {
   await Promise.all([
     ...activeControllers.splice(0).map((controller) => controller.close().catch(() => undefined)),
     ...activeIngresses.splice(0).map((ingress) => ingress.close().catch(() => undefined)),
-    ...activeServers.splice(0).map((server) => closeHttp(server).catch(() => undefined)),
+    ...activeServers.splice(0).map((server) => closeServer(server).catch(() => undefined)),
   ]);
-  await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
 });
 
 describe('tokenMatches', () => {
@@ -294,204 +272,423 @@ describe('GatewayIngress admission guards and lifecycle', () => {
       expect(get('access-control-allow-origin')).toBeNull();
     };
 
-    // 401 when Authorization is missing, non-Bearer, wrong, or uses global token on beta
-    const missingAuth = await fetch(`http://127.0.0.1:${port}/mcp/alpha`, { method: 'POST' });
-    expect(missingAuth.status).toBe(401);
-    expect(missingAuth.headers.get('www-authenticate')).toBe('Bearer');
-    assertSecurityHeaders(missingAuth.headers);
-
-    const basicAuth = await fetch(`http://127.0.0.1:${port}/mcp/alpha`, {
-      method: 'POST',
-      headers: { authorization: `Basic ${GLOBAL_TOKEN}` },
-    });
-    expect(basicAuth.status).toBe(401);
-    expect(basicAuth.headers.get('www-authenticate')).toBe('Bearer');
-
-    const globalOnBeta = await fetch(`http://127.0.0.1:${port}/mcp/beta`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${GLOBAL_TOKEN}` },
-    });
-    expect(globalOnBeta.status).toBe(401);
-    expect(globalOnBeta.headers.get('www-authenticate')).toBe('Bearer');
-
-    const betaOnAlpha = await fetch(`http://127.0.0.1:${port}/mcp/alpha`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${BETA_TOKEN}` },
-    });
-    expect(betaOnAlpha.status).toBe(401);
-    expect(betaOnAlpha.headers.get('www-authenticate')).toBe('Bearer');
-
-    // 403 on DNS-rebinding Host header and foreign Origin header
-    const badHost = await sendRawHttp(
-      port,
-      [
-        'POST /mcp/alpha HTTP/1.1',
-        'Host: evil.example.com',
-        `Authorization: Bearer ${GLOBAL_TOKEN}`,
-        'Connection: close',
-        '',
-        '',
-      ].join('\r\n'),
-    );
-    expect(badHost.statusCode).toBe(403);
-    assertSecurityHeaders(badHost.headers);
-
-    const badOrigin = await fetch(`http://127.0.0.1:${port}/mcp/alpha`, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${GLOBAL_TOKEN}`,
-        origin: 'http://evil.example.com',
+    const fetchCases: Array<{
+      label: string;
+      path: string;
+      method: string;
+      headers?: Record<string, string>;
+      body?: string;
+      status: number;
+      wwwAuthenticate?: string;
+      allow?: string;
+    }> = [
+      {
+        label: 'missing Authorization header',
+        path: '/mcp/alpha',
+        method: 'POST',
+        status: 401,
+        wwwAuthenticate: 'Bearer',
       },
-    });
-    expect(badOrigin.status).toBe(403);
-    assertSecurityHeaders(badOrigin.headers);
-
-    // HTTP upgrade rejections: 403 on bad Host/Origin, 405 on valid Host
-    const upgradeBadHost = await sendRawHttp(
-      port,
-      [
-        'GET /mcp/alpha HTTP/1.1',
-        'Host: evil.example.com',
-        'Connection: Upgrade',
-        'Upgrade: websocket',
-        '',
-        '',
-      ].join('\r\n'),
-    );
-    expect(upgradeBadHost.statusCode).toBe(403);
-
-    const upgradeBadOrigin = await sendRawHttp(
-      port,
-      [
-        'GET /mcp/alpha HTTP/1.1',
-        `Host: 127.0.0.1:${port}`,
-        'Origin: http://evil.example.com',
-        'Connection: Upgrade',
-        'Upgrade: websocket',
-        '',
-        '',
-      ].join('\r\n'),
-    );
-    expect(upgradeBadOrigin.statusCode).toBe(403);
-
-    const upgradeValidHost = await sendRawHttp(
-      port,
-      [
-        'GET /mcp/alpha HTTP/1.1',
-        `Host: 127.0.0.1:${port}`,
-        'Connection: Upgrade',
-        'Upgrade: websocket',
-        '',
-        '',
-      ].join('\r\n'),
-    );
-    expect(upgradeValidHost.statusCode).toBe(405);
-
-    // 404 for unknown routes, disabled servers, and unsafe route names
-    for (const path of ['/mcp/unknown', '/other', '/mcp/gamma', '/mcp/bad/name']) {
-      const res = await fetch(`http://127.0.0.1:${port}${path}`, {
+      {
+        label: 'non-Bearer Authorization header',
+        path: '/mcp/alpha',
+        method: 'POST',
+        headers: { authorization: `Basic ${GLOBAL_TOKEN}` },
+        status: 401,
+        wwwAuthenticate: 'Bearer',
+      },
+      {
+        label: 'global token rejected on server with token override',
+        path: '/mcp/beta',
         method: 'POST',
         headers: { authorization: `Bearer ${GLOBAL_TOKEN}` },
+        status: 401,
+        wwwAuthenticate: 'Bearer',
+      },
+      {
+        label: 'server override token rejected on global server',
+        path: '/mcp/alpha',
+        method: 'POST',
+        headers: { authorization: `Bearer ${BETA_TOKEN}` },
+        status: 401,
+        wwwAuthenticate: 'Bearer',
+      },
+      {
+        label: 'foreign Origin header rejected with 403',
+        path: '/mcp/alpha',
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${GLOBAL_TOKEN}`,
+          origin: 'http://evil.example.com',
+        },
+        status: 403,
+      },
+      {
+        label: 'unknown server route returns 404',
+        path: '/mcp/unknown',
+        method: 'POST',
+        headers: { authorization: `Bearer ${GLOBAL_TOKEN}` },
+        status: 404,
+      },
+      {
+        label: 'non-MCP route returns 404',
+        path: '/other',
+        method: 'POST',
+        headers: { authorization: `Bearer ${GLOBAL_TOKEN}` },
+        status: 404,
+      },
+      {
+        label: 'disabled server returns 404',
+        path: '/mcp/gamma',
+        method: 'POST',
+        headers: { authorization: `Bearer ${GLOBAL_TOKEN}` },
+        status: 404,
+      },
+      {
+        label: 'unsafe route name returns 404',
+        path: '/mcp/bad/name',
+        method: 'POST',
+        headers: { authorization: `Bearer ${GLOBAL_TOKEN}` },
+        status: 404,
+      },
+      {
+        label: 'GET on stateless endpoint returns 405 Allow: POST',
+        path: '/mcp/alpha',
+        method: 'GET',
+        headers: { authorization: `Bearer ${GLOBAL_TOKEN}` },
+        status: 405,
+        allow: 'POST',
+      },
+      {
+        label: 'PATCH on session endpoint returns 405 Allow: POST, GET, DELETE',
+        path: '/mcp/beta',
+        method: 'PATCH',
+        headers: { authorization: `bearer ${BETA_TOKEN}` },
+        status: 405,
+        allow: 'POST, GET, DELETE',
+      },
+      {
+        label: 'non-JSON Content-Type returns 415',
+        path: '/mcp/alpha',
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${GLOBAL_TOKEN}`,
+          'content-type': 'text/plain',
+        },
+        body: 'hello',
+        status: 415,
+      },
+    ];
+
+    for (const tc of fetchCases) {
+      const res = await fetch(`http://127.0.0.1:${port}${tc.path}`, {
+        method: tc.method,
+        headers: tc.headers,
+        body: tc.body,
       });
-      expect(res.status).toBe(404);
+      expect(res.status).toBe(tc.status);
+      if (tc.wwwAuthenticate) expect(res.headers.get('www-authenticate')).toBe(tc.wwwAuthenticate);
+      if (tc.allow) expect(res.headers.get('allow')).toBe(tc.allow);
       assertSecurityHeaders(res.headers);
     }
 
-    // 405 with Allow: POST on stateless alpha vs Allow: POST, GET, DELETE on session-based beta
-    const getAlpha = await fetch(`http://127.0.0.1:${port}/mcp/alpha`, {
-      method: 'GET',
-      headers: { authorization: `Bearer ${GLOBAL_TOKEN}` },
-    });
-    expect(getAlpha.status).toBe(405);
-    expect(getAlpha.headers.get('allow')).toBe('POST');
-    assertSecurityHeaders(getAlpha.headers);
+    const oversizedLength = 4 * 1024 * 1024 + 1;
+    const rawCases: Array<{
+      label: string;
+      lines: string[];
+      status: number;
+      checkSecurityHeaders?: boolean;
+    }> = [
+      {
+        label: 'DNS-rebinding Host header rejected with 403',
+        lines: [
+          'POST /mcp/alpha HTTP/1.1',
+          'Host: evil.example.com',
+          `Authorization: Bearer ${GLOBAL_TOKEN}`,
+          'Connection: close',
+          '',
+          '',
+        ],
+        status: 403,
+        checkSecurityHeaders: true,
+      },
+      {
+        label: 'HTTP upgrade with mismatched Host rejected with 403',
+        lines: [
+          'GET /mcp/alpha HTTP/1.1',
+          'Host: evil.example.com',
+          'Connection: Upgrade',
+          'Upgrade: websocket',
+          '',
+          '',
+        ],
+        status: 403,
+      },
+      {
+        label: 'HTTP upgrade with foreign Origin rejected with 403',
+        lines: [
+          'GET /mcp/alpha HTTP/1.1',
+          `Host: 127.0.0.1:${port}`,
+          'Origin: http://evil.example.com',
+          'Connection: Upgrade',
+          'Upgrade: websocket',
+          '',
+          '',
+        ],
+        status: 403,
+      },
+      {
+        label: 'HTTP upgrade with valid Host rejected with 405',
+        lines: [
+          'GET /mcp/alpha HTTP/1.1',
+          `Host: 127.0.0.1:${port}`,
+          'Connection: Upgrade',
+          'Upgrade: websocket',
+          '',
+          '',
+        ],
+        status: 405,
+      },
+      {
+        label: 'Content-Encoding: gzip rejected with 415',
+        lines: [
+          'POST /mcp/alpha HTTP/1.1',
+          `Host: 127.0.0.1:${port}`,
+          `Authorization: Bearer ${GLOBAL_TOKEN}`,
+          'Content-Encoding: gzip',
+          'Content-Type: application/json',
+          'Content-Length: 2',
+          'Connection: close',
+          '',
+          '{}',
+        ],
+        status: 415,
+        checkSecurityHeaders: true,
+      },
+      {
+        label: 'GET with non-zero Content-Length rejected with 400',
+        lines: [
+          'GET /mcp/beta HTTP/1.1',
+          `Host: 127.0.0.1:${port}`,
+          `Authorization: Bearer ${BETA_TOKEN}`,
+          'Content-Length: 5',
+          'Connection: close',
+          '',
+          'hello',
+        ],
+        status: 400,
+        checkSecurityHeaders: true,
+      },
+      {
+        label: 'GET with Transfer-Encoding: chunked rejected with 400',
+        lines: [
+          'GET /mcp/beta HTTP/1.1',
+          `Host: 127.0.0.1:${port}`,
+          `Authorization: Bearer ${BETA_TOKEN}`,
+          'Transfer-Encoding: chunked',
+          'Connection: close',
+          '',
+          '0\r\n\r\n',
+        ],
+        status: 400,
+      },
+      {
+        label: 'Content-Length exceeding 4 MiB rejected with 413',
+        lines: [
+          'POST /mcp/alpha HTTP/1.1',
+          `Host: 127.0.0.1:${port}`,
+          `Authorization: Bearer ${GLOBAL_TOKEN}`,
+          'Content-Type: application/json',
+          `Content-Length: ${oversizedLength}`,
+          'Connection: close',
+          '',
+          '',
+        ],
+        status: 413,
+        checkSecurityHeaders: true,
+      },
+    ];
 
-    const patchBeta = await fetch(`http://127.0.0.1:${port}/mcp/beta`, {
-      method: 'PATCH',
-      headers: { authorization: `bearer ${BETA_TOKEN}` },
-    });
-    expect(patchBeta.status).toBe(405);
-    expect(patchBeta.headers.get('allow')).toBe('POST, GET, DELETE');
-    assertSecurityHeaders(patchBeta.headers);
+    for (const tc of rawCases) {
+      const rawRes = await sendRawHttp(port, tc.lines.join('\r\n'));
+      expect(rawRes.statusCode).toBe(tc.status);
+      if (tc.checkSecurityHeaders) assertSecurityHeaders(rawRes.headers);
+    }
 
-    // 415 on Content-Encoding: gzip and on Content-Type: text/plain
-    const gzipReq = await sendRawHttp(
-      port,
-      [
-        'POST /mcp/alpha HTTP/1.1',
-        `Host: 127.0.0.1:${port}`,
-        `Authorization: Bearer ${GLOBAL_TOKEN}`,
-        'Content-Encoding: gzip',
-        'Content-Type: application/json',
-        'Content-Length: 2',
-        'Connection: close',
-        '',
-        '{}',
-      ].join('\r\n'),
+    expect(errors).toEqual([]);
+  });
+
+  test('enforces 32-request concurrency limit (429 on 33rd request), clientError 400 on malformed raw HTTP, and testServer guards', async () => {
+    const holdGate = deferred<void>();
+    const upstreamPort = await startMockServer(async (req, res) => {
+      const message = await readBodyJson(req);
+      if (!isRecord(message)) {
+        res.writeHead(400).end();
+        return;
+      }
+      if (message.method === 'server/discover') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: message.id,
+            result: {
+              supportedVersions: [MODERN_VERSION],
+              serverInfo: { name: 'concurrency-fixture', version: '1.0.0' },
+              capabilities: {},
+            },
+          }),
+        );
+        return;
+      }
+      if (message.method === 'ping') {
+        await holdGate.promise;
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: {} }));
+        return;
+      }
+      res.writeHead(400).end();
+    });
+
+    const port = await reservePort();
+    const errors: VisibleError[] = [];
+    const ingress = await GatewayIngress.open(
+      buildConfig(port, {
+        mcpServers: {
+          alpha: {
+            url: `http://127.0.0.1:${upstreamPort}/mcp`,
+            legacyProtocol: true,
+          },
+          disabledServer: {
+            url: `http://127.0.0.1:${upstreamPort}/mcp`,
+            disabled: true,
+          },
+        },
+      }),
+      (error) => errors.push(error),
     );
-    expect(gzipReq.statusCode).toBe(415);
-    assertSecurityHeaders(gzipReq.headers);
+    activeIngresses.push(ingress);
 
-    const textPlainReq = await fetch(`http://127.0.0.1:${port}/mcp/alpha`, {
+    // Malformed raw HTTP triggers server.on('clientError') -> 400 Bad Request
+    const malformed = await sendRawHttp(port, 'BAD HTTP\r\n\r\n');
+    expect(malformed.statusCode).toBe(400);
+    expect(malformed.statusLine).toContain('400 Bad Request');
+
+    // Sending 32 raw HTTP POST headers with Content-Length: 2 without body bytes keeps all 32 requests in readRequestBody() right after admitRequest() increments this.active to 32
+    const heldSockets = await Promise.all(
+      Array.from(
+        { length: 32 },
+        () =>
+          new Promise<ReturnType<typeof createConnection>>((resolve, reject) => {
+            const socket = createConnection({ host: '127.0.0.1', port });
+            socket.once('error', reject);
+            socket.once('connect', () => {
+              socket.write(
+                [
+                  'POST /mcp/alpha HTTP/1.1',
+                  `Host: 127.0.0.1:${port}`,
+                  `Authorization: Bearer ${GLOBAL_TOKEN}`,
+                  'Content-Type: application/json',
+                  'Content-Length: 2',
+                  '',
+                  '',
+                ].join('\r\n'),
+              );
+              resolve(socket);
+            });
+          }),
+      ),
+    );
+
+    try {
+      await waitFor(
+        () => (ingress as unknown as { active: number }).active === 32,
+        '32 active requests in GatewayIngress',
+      );
+
+      // 33rd request immediately receives HTTP 429
+      const overflowRes = await fetch(`http://127.0.0.1:${port}/mcp/alpha`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${GLOBAL_TOKEN}`,
+          'content-type': 'application/json',
+        },
+        body: '{}',
+      });
+      expect(overflowRes.status).toBe(429);
+    } finally {
+      for (const socket of heldSockets) socket.destroy();
+      holdGate.resolve();
+    }
+
+    await waitFor(
+      () => (ingress as unknown as { active: number }).active === 0,
+      'held requests to settle back to 0 active',
+    );
+
+    // Subsequent requests after releasing the 32 held slots succeed (not 429)
+    const afterRelease = await fetch(`http://127.0.0.1:${port}/mcp/alpha`, {
       method: 'POST',
       headers: {
         authorization: `Bearer ${GLOBAL_TOKEN}`,
-        'content-type': 'text/plain',
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream',
       },
-      body: 'hello',
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }),
     });
-    expect(textPlainReq.status).toBe(415);
-    assertSecurityHeaders(textPlainReq.headers);
+    expect(afterRelease.status).not.toBe(429);
 
-    // 400 on GET /mcp/beta with non-zero Content-Length or Transfer-Encoding
-    const getWithLength = await sendRawHttp(
-      port,
-      [
-        'GET /mcp/beta HTTP/1.1',
-        `Host: 127.0.0.1:${port}`,
-        `Authorization: Bearer ${BETA_TOKEN}`,
-        'Content-Length: 5',
-        'Connection: close',
-        '',
-        'hello',
-      ].join('\r\n'),
+    // ingress.testServer guards: missing or disabled server
+    await expectAsyncGatewayError(
+      () => ingress.testServer('missing-server'),
+      'BackendFailure',
+      'Start the gateway and this server, then test again.',
     );
-    expect(getWithLength.statusCode).toBe(400);
-    assertSecurityHeaders(getWithLength.headers);
-
-    const getWithChunked = await sendRawHttp(
-      port,
-      [
-        'GET /mcp/beta HTTP/1.1',
-        `Host: 127.0.0.1:${port}`,
-        `Authorization: Bearer ${BETA_TOKEN}`,
-        'Transfer-Encoding: chunked',
-        'Connection: close',
-        '',
-        '0\r\n\r\n',
-      ].join('\r\n'),
+    await expectAsyncGatewayError(
+      () => ingress.testServer('disabledServer'),
+      'BackendFailure',
+      'Start the gateway and this server, then test again.',
     );
-    expect(getWithChunked.statusCode).toBe(400);
 
-    // 413 on Content-Length exceeding 4 MiB
-    const oversizedLength = 4 * 1024 * 1024 + 1;
-    const tooLarge = await sendRawHttp(
-      port,
-      [
-        'POST /mcp/alpha HTTP/1.1',
-        `Host: 127.0.0.1:${port}`,
-        `Authorization: Bearer ${GLOBAL_TOKEN}`,
-        'Content-Type: application/json',
-        `Content-Length: ${oversizedLength}`,
-        'Connection: close',
-        '',
-        '',
-      ].join('\r\n'),
+    // Concurrent testServer lock and mid-test abort on ingress.close()
+    const checkStarted = deferred<void>();
+    const checkGate = deferred<void>();
+    const slowUpstreamPort = await startMockServer(async (_req, res) => {
+      checkStarted.resolve();
+      await checkGate.promise;
+      if (!res.destroyed) res.writeHead(500).end();
+    });
+
+    await ingress.reconcile(
+      buildConfig(port, {
+        mcpServers: {
+          alpha: {
+            url: `http://127.0.0.1:${slowUpstreamPort}/mcp`,
+            legacyProtocol: false,
+          },
+        },
+      }),
     );
-    expect(tooLarge.statusCode).toBe(413);
-    assertSecurityHeaders(tooLarge.headers);
 
-    expect(errors).toEqual([]);
+    const firstTest = ingress.testServer('alpha');
+    await checkStarted.promise;
+
+    // While one testServer is in flight, a second concurrent testServer rejects
+    await expectAsyncGatewayError(
+      () => ingress.testServer('alpha'),
+      'BackendFailure',
+      'Another server test is running.',
+    );
+
+    // Closing ingress while testServer is in flight aborts the test signal with Cancelled
+    const closePromise = ingress.close();
+    await expectAsyncGatewayError(
+      () => firstTest,
+      'Cancelled',
+      'The test stopped because the gateway or this server changed.',
+    );
+    checkGate.resolve();
+    await closePromise;
   });
 
   test('reconcile updates endpoints, toggles keepAwake sleep assertion, and restart validates enabled servers', async () => {
@@ -739,7 +936,7 @@ describe('checkEndpoint', () => {
     expect(terminatedSession).toBe(true);
   });
 
-  test('explains -32601, -32603 (missing binary vs existing binary vs http), gateway HTTP refusals, and pre-aborted signals', async () => {
+  test('explains -32601, -32603 (missing binary vs existing binary vs http), gateway HTTP refusals, 504 timeout, fallback handshake failures, and pre-aborted signals', async () => {
     // -32601 METHOD_NOT_FOUND when legacyProtocol: false
     const methodNotFoundPort = await startMockServer(async (req, res) => {
       const message = await readBodyJson(req);
@@ -857,6 +1054,62 @@ describe('checkEndpoint', () => {
       'The gateway refused this Mac (HTTP 403). Check Allowed client ranges.',
     );
 
+    // HTTP 504 timeout explanation
+    const timeout504Port = await startMockServer((_req, res) => {
+      res.writeHead(504).end();
+    });
+    await expectAsyncGatewayError(
+      () =>
+        checkEndpoint({
+          url: new URL(`http://127.0.0.1:${timeout504Port}/mcp/timeout`),
+          token: GLOBAL_TOKEN,
+          server: { command: process.execPath },
+          stopped: new AbortController().signal,
+        }),
+      'BackendFailure',
+      'The server did not answer within 30 seconds. See Logs.',
+    );
+
+    // Fallback handshake diagnostic: HTTP 200 with unexpected JSON-RPC error -32600 (legacyProtocol: true) or non-JSON body
+    const invalidRequestPort = await startMockServer(async (req, res) => {
+      const message = await readBodyJson(req);
+      const id = isRecord(message) ? (message.id ?? null) : null;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id,
+          error: { code: -32600, message: 'Invalid Request' },
+        }),
+      );
+    });
+    await expectAsyncGatewayError(
+      () =>
+        checkEndpoint({
+          url: new URL(`http://127.0.0.1:${invalidRequestPort}/mcp/bad-rpc`),
+          token: GLOBAL_TOKEN,
+          server: { command: process.execPath, legacyProtocol: true },
+          stopped: new AbortController().signal,
+        }),
+      'BackendFailure',
+      'The server did not complete the MCP handshake. See Logs.',
+    );
+
+    const nonJsonPort = await startMockServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/plain' }).end('not-json');
+    });
+    await expectAsyncGatewayError(
+      () =>
+        checkEndpoint({
+          url: new URL(`http://127.0.0.1:${nonJsonPort}/mcp/non-json`),
+          token: GLOBAL_TOKEN,
+          server: { command: process.execPath, legacyProtocol: false },
+          stopped: new AbortController().signal,
+        }),
+      'BackendFailure',
+      'The server did not complete the MCP handshake. See Logs.',
+    );
+
     // Pre-aborted stopped signal reports Cancelled
     const aborted = new AbortController();
     aborted.abort();
@@ -875,7 +1128,7 @@ describe('checkEndpoint', () => {
 });
 
 describe('McpGatewayController lifecycle and invariants', () => {
-  test('open initializes mcp.json with plaintext token, with KeyStore tokenRef, or records KeySetupFailed', async () => {
+  test('open initializes mcp.json with plaintext token, with KeyStore tokenRef, or records KeySetupFailed on set() error or read-back mismatch', async () => {
     // Plaintext initialization when no KeyStore is provided
     const plainPath = await createTempConfigPath();
     const plainPort = await reservePort();
@@ -937,6 +1190,27 @@ describe('McpGatewayController lifecycle and invariants', () => {
       () => failController.saveConfig('{}', failSnap.revision),
       'KeySetupFailed',
     );
+
+    // Read-back verification mismatch in createKeyRef records KeySetupFailed
+    const mismatchPath = await createTempConfigPath();
+    const mismatchPort = await reservePort();
+    const mismatchStore = createMemoryKeyStore({ mismatchGet: true }).store;
+    const mismatchController = await McpGatewayController.open(
+      mismatchPath,
+      undefined,
+      mismatchStore,
+      mismatchPort,
+    );
+    activeControllers.push(mismatchController);
+
+    const mismatchSnap = mismatchController.snapshot();
+    expect(mismatchSnap.configError?.code).toBe('KeySetupFailed');
+    expect(mismatchSnap.running).toBe(false);
+    expect(
+      mismatchController
+        .readLogs({ after: 0 })
+        .entries.some((entry) => entry.text.includes('A key could not be stored in Keychain.')),
+    ).toBe(true);
   });
 
   test('supports autoStart, start, testServer, restartServer, readLogs/clearLogs, and stop', async () => {
@@ -1091,7 +1365,7 @@ describe('McpGatewayController lifecycle and invariants', () => {
     expect(await fs.readFile(configPath, 'utf8')).toBe(nextText);
   });
 
-  test('migrateKeys moves literal gateway and server tokens into KeyStore while keeping listener running (Plan 029)', async () => {
+  test('migrateKeys moves literal gateway and server tokens into KeyStore while keeping listener running, and enforces error branches (Plan 029)', async () => {
     const port = await reservePort();
     const configPath = await createTempConfigPath();
     await fs.writeFile(
@@ -1117,6 +1391,26 @@ describe('McpGatewayController lifecycle and invariants', () => {
       { mode: 0o600 },
     );
 
+    // Unsigned controller without KeyStore rejects migrateKeys
+    const unsignedPort = await reservePort();
+    const unsignedPath = await createTempConfigPath();
+    const unsignedController = await McpGatewayController.open(
+      unsignedPath,
+      undefined,
+      undefined,
+      unsignedPort,
+    );
+    activeControllers.push(unsignedController);
+    await expectAsyncGatewayError(
+      () =>
+        unsignedController.migrateKeys(
+          { gateway: true, servers: [] },
+          unsignedController.snapshot().revision,
+        ),
+      'InvalidConfig',
+      'Keys can move to Keychain only in the signed app.',
+    );
+
     const { store, entries } = createMemoryKeyStore();
     const controller = await McpGatewayController.open(configPath, undefined, store, port);
     activeControllers.push(controller);
@@ -1124,6 +1418,18 @@ describe('McpGatewayController lifecycle and invariants', () => {
     const started = await controller.start();
     expect(started.running).toBe(true);
     expect(started.keyMigration).toEqual({ gateway: true, servers: ['alpha'] });
+
+    // Stale expectedRevision rejected with StaleRevision
+    await expectAsyncGatewayError(
+      () => controller.migrateKeys({ gateway: true, servers: [] }, 'stale-revision'),
+      'StaleRevision',
+    );
+
+    // Empty slots rejected with InvalidConfig
+    await expectAsyncGatewayError(
+      () => controller.migrateKeys({ gateway: false, servers: [] }, started.revision),
+      'InvalidConfig',
+    );
 
     const migrated = await controller.migrateKeys(
       { gateway: true, servers: ['alpha'] },
@@ -1153,6 +1459,131 @@ describe('McpGatewayController lifecycle and invariants', () => {
     await expectAsyncGatewayError(
       () => controller.migrateKeys({ gateway: true, servers: [] }, migrated.revision),
       'InvalidConfig',
+    );
+  });
+
+  test('live ConfigDirectoryWatch hot-reloads valid external config edits and stops listener on invalid external config', async () => {
+    const port = await reservePort();
+    const configPath = await createTempConfigPath();
+    await fs.writeFile(
+      configPath,
+      JSON.stringify({
+        gateway: {
+          host: '127.0.0.1',
+          port,
+          token: GLOBAL_TOKEN,
+          autoStart: true,
+        },
+        mcpServers: {},
+      }),
+      { mode: 0o600 },
+    );
+
+    const controller = await McpGatewayController.open(configPath, undefined, undefined, port);
+    activeControllers.push(controller);
+    expect(controller.snapshot().running).toBe(true);
+    expect(controller.snapshot().servers).toEqual([]);
+
+    // Externally overwrite mcp.json with a valid config adding server "added"
+    await fs.writeFile(
+      configPath,
+      JSON.stringify({
+        gateway: {
+          host: '127.0.0.1',
+          port,
+          token: GLOBAL_TOKEN,
+          autoStart: true,
+        },
+        mcpServers: {
+          added: {
+            command: process.execPath,
+            args: ['-e', 'process.exit(0)'],
+          },
+        },
+      }),
+      { mode: 0o600 },
+    );
+
+    await waitFor(
+      () => controller.snapshot().servers.some((s) => s.name === 'added' && s.status === 'mounted'),
+      'ConfigDirectoryWatch hot-reload of externally added server',
+    );
+
+    // Externally overwrite mcp.json with malformed JSON ('{') while running
+    await fs.writeFile(configPath, '{', { mode: 0o600 });
+
+    await waitFor(
+      () => !controller.snapshot().running && controller.snapshot().configError !== null,
+      'ConfigDirectoryWatch stopping listener on invalid external config',
+    );
+
+    const invalidSnap = controller.snapshot();
+    expect(invalidSnap.running).toBe(false);
+    expect(invalidSnap.configError?.code).toBe('InvalidConfig');
+    expect(
+      controller
+        .readLogs({ after: 0 })
+        .entries.some((entry) =>
+          entry.text.includes('Invalid external configuration; listener stopped.'),
+        ),
+    ).toBe(true);
+  });
+
+  test('records KeyUnavailable when config contains tokenRef without KeyStore and rejects methods with Closed after close()', async () => {
+    const port = await reservePort();
+    const configPath = await createTempConfigPath();
+    await fs.writeFile(
+      configPath,
+      JSON.stringify({
+        gateway: {
+          host: '127.0.0.1',
+          port,
+          tokenRef: '00000000-0000-4000-8000-000000000001',
+        },
+        mcpServers: {},
+      }),
+      { mode: 0o600 },
+    );
+
+    const controller = await McpGatewayController.open(configPath, undefined, undefined, port);
+    activeControllers.push(controller);
+
+    const snap = controller.snapshot();
+    expect(snap.configError?.code).toBe('KeyUnavailable');
+    await expectAsyncGatewayError(
+      () => controller.start(),
+      'KeyUnavailable',
+      'Keys stored in Keychain need the signed MCP Gateway app.',
+    );
+
+    await controller.close();
+    expectGatewayError(
+      () => (controller as unknown as { ensureOpen: () => void }).ensureOpen(),
+      'Closed',
+      'The controller is closed.',
+    );
+
+    await expectAsyncGatewayError(() => controller.start(), 'Closed', 'The controller is closed.');
+    await expectAsyncGatewayError(() => controller.stop(), 'Closed', 'The controller is closed.');
+    await expectAsyncGatewayError(
+      () => controller.saveConfig('{}', snap.revision),
+      'Closed',
+      'The controller is closed.',
+    );
+    await expectAsyncGatewayError(
+      () => controller.restartServer('alpha'),
+      'Closed',
+      'The controller is closed.',
+    );
+    await expectAsyncGatewayError(
+      () => controller.testServer('alpha', snap.revision),
+      'Closed',
+      'The controller is closed.',
+    );
+    await expectAsyncGatewayError(
+      () => controller.migrateKeys({ gateway: true, servers: [] }, snap.revision),
+      'Closed',
+      'The controller is closed.',
     );
   });
 });

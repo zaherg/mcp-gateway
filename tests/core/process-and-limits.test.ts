@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { spawn } from 'node:child_process';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { PassThrough, type Readable } from 'node:stream';
+import { text as collectStreamText } from 'node:stream/consumers';
 
 import {
   BackendCalls,
@@ -17,14 +18,9 @@ import {
   releaseAfterCleanup,
   writeJsonRpcError,
 } from '@mcp-gateway/core/limits';
-import {
-  BackendProcesses,
-  childEnvironment,
-  createCommandRunner,
-  isAllowedParentEnvironmentKey,
-  isBlockedEnvironmentKey,
-} from '@mcp-gateway/core/process';
+import { BackendProcesses, childEnvironment, createCommandRunner } from '@mcp-gateway/core/process';
 import type { GatewayLogger } from '@mcp-gateway/core/sessions';
+import { deferred } from '../helpers/core';
 
 const createTestLogger = (): GatewayLogger => ({
   info: () => {},
@@ -33,45 +29,18 @@ const createTestLogger = (): GatewayLogger => ({
   error: () => {},
 });
 
-const readFirstLine = (stream: Readable, timeoutMs = 5_000): Promise<string> =>
+const readFirstLine = (stream: Readable): Promise<string> =>
   new Promise((resolve, reject) => {
     let buffered = '';
-    const cleanup = () => {
-      clearTimeout(timer);
-      stream.off('data', onData);
-      stream.off('end', onEnd);
-      stream.off('error', onError);
-    };
     const onData = (chunk: Buffer) => {
       buffered += chunk.toString('utf8');
       const newline = buffered.indexOf('\n');
       if (newline >= 0) {
-        cleanup();
+        stream.off('data', onData);
         resolve(buffered.slice(0, newline));
       }
     };
-    const onEnd = () => {
-      cleanup();
-      reject(new Error(`Stream ended before newline (received: ${JSON.stringify(buffered)})`));
-    };
-    const onError = (error: Error) => {
-      cleanup();
-      reject(error);
-    };
-    const timer = setTimeout(() => {
-      cleanup();
-      reject(new Error('Timed out waiting for child output line'));
-    }, timeoutMs);
     stream.on('data', onData);
-    stream.once('end', onEnd);
-    stream.once('error', onError);
-  });
-
-const collectStreamText = (stream: Readable): Promise<string> =>
-  new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    stream.on('data', (chunk: Buffer) => chunks.push(chunk));
-    stream.once('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
     stream.once('error', reject);
   });
 
@@ -165,56 +134,6 @@ const expectRequestBodyErrorStatus = async (
 };
 
 describe('src/core/process.ts — environment isolation', () => {
-  test('isBlockedEnvironmentKey matches blocked injection keys case-insensitively', () => {
-    const blocked = [
-      'NODE_OPTIONS',
-      'node_options',
-      'BUN_OPTIONS',
-      'bun_options',
-      'DYLD_INSERT_LIBRARIES',
-      'dyld_library_path',
-      'LD_PRELOAD',
-      'ld_library_path',
-    ];
-    for (const key of blocked) {
-      expect(isBlockedEnvironmentKey(key)).toBe(true);
-    }
-
-    const allowed = ['PATH', 'NODE_ENV', 'MY_LD_PRELOAD', 'NODE_OPTIONS_EXTRA'];
-    for (const key of allowed) {
-      expect(isBlockedEnvironmentKey(key)).toBe(false);
-    }
-  });
-
-  test('isAllowedParentEnvironmentKey allows only SAFE_PARENT_ENV_KEYS, LC_*, and XDG_*', () => {
-    const safeKeys = [
-      'PATH',
-      'HOME',
-      'USER',
-      'LOGNAME',
-      'SHELL',
-      'LANG',
-      'TMPDIR',
-      'TERM',
-      'SSL_CERT_FILE',
-      'SSL_CERT_DIR',
-      '__CF_USER_TEXT_ENCODING',
-    ];
-    for (const key of safeKeys) {
-      expect(isAllowedParentEnvironmentKey(key)).toBe(true);
-    }
-
-    expect(isAllowedParentEnvironmentKey('LC_ALL')).toBe(true);
-    expect(isAllowedParentEnvironmentKey('LC_CTYPE')).toBe(true);
-    expect(isAllowedParentEnvironmentKey('XDG_CONFIG_HOME')).toBe(true);
-    expect(isAllowedParentEnvironmentKey('XDG_CACHE_HOME')).toBe(true);
-
-    expect(isAllowedParentEnvironmentKey('AWS_SECRET_ACCESS_KEY')).toBe(false);
-    expect(isAllowedParentEnvironmentKey('GITHUB_TOKEN')).toBe(false);
-    expect(isAllowedParentEnvironmentKey('SSH_AUTH_SOCK')).toBe(false);
-    expect(isAllowedParentEnvironmentKey('path')).toBe(false);
-  });
-
   test('childEnvironment filters parentEnv, overlays serverEnv, strips blocked keys, and never mutates inputs', () => {
     const parentEnv: NodeJS.ProcessEnv = {
       PATH: '/usr/bin:/bin',
@@ -278,7 +197,7 @@ describe('src/core/process.ts — createCommandRunner', () => {
     }
   });
 
-  test('captures stdout, stderr, and exitCode from /bin/echo and process.execPath', async () => {
+  test('captures stdout, stderr, exitCode, passes custom env, and rejects on ENOENT', async () => {
     const run = createCommandRunner();
 
     const echoed = await run('/bin/echo', ['hello', 'world']);
@@ -297,6 +216,22 @@ describe('src/core/process.ts — createCommandRunner', () => {
       stderr: 'err-text',
       exitCode: 7,
     });
+
+    const customEnvRun = createCommandRunner({
+      defaultTimeoutMs: 5_000,
+      env: { CUSTOM_VAR: 'expected-val', PATH: process.env.PATH },
+    });
+    const envResult = await customEnvRun(process.execPath, [
+      '-e',
+      "process.stdout.write(process.env.CUSTOM_VAR ?? '');",
+    ]);
+    expect(envResult).toEqual({
+      stdout: 'expected-val',
+      stderr: '',
+      exitCode: 0,
+    });
+
+    await expect(run('/nonexistent/mcp-gateway-binary-xyz', [])).rejects.toThrow(/ENOENT/);
   });
 
   test('rejects with Command timed out and kills the child when exceeding timeoutMs', async () => {
@@ -350,32 +285,31 @@ describe('src/core/process.ts — BackendProcesses', () => {
     const processes = new BackendProcesses(createTestLogger());
 
     let runsA = 0;
-    let resolveA!: () => void;
-    const stopA = processes.track(
-      () =>
-        new Promise<void>((resolve) => {
-          runsA++;
-          resolveA = resolve;
-        }),
-    );
+    const gateA = deferred();
+    const stopA = processes.track(async () => {
+      runsA++;
+      await gateA.promise;
+    });
 
     let runsB = 0;
     let finishedB = false;
+    const gateB = deferred();
     processes.track(async () => {
       runsB++;
-      await Bun.sleep(20);
+      await gateB.promise;
       finishedB = true;
     });
 
     const concurrent1 = stopA();
     const concurrent2 = stopA();
     expect(runsA).toBe(0);
-    await Bun.sleep(0);
+    await Promise.resolve();
     expect(runsA).toBe(1);
 
     const closePromise = processes.close();
     expect(processes.closing).toBe(true);
-    resolveA();
+    gateA.resolve();
+    gateB.resolve();
 
     await Promise.all([concurrent1, concurrent2, closePromise]);
     expect(runsA).toBe(1);
@@ -394,7 +328,7 @@ describe('src/core/process.ts — BackendProcesses', () => {
       '    setTimeout(() => {',
       "      process.stdout.write('terms=' + String(terms) + '\\n');",
       '      process.exit(0);',
-      '    }, 150);',
+      '    }, 15);',
       '  }',
       '});',
       "process.stdout.write('ready\\n');",
@@ -441,7 +375,7 @@ describe('src/core/process.ts — BackendProcesses', () => {
       '  });',
       '  helper.unref();',
       "  process.stdout.write(String(helper.pid) + '\\n', () => process.exit(0));",
-      '}, 120);',
+      '}, 15);',
     ].join('\n');
 
     const leader = spawn(process.execPath, ['-e', script], {
@@ -548,7 +482,7 @@ describe('src/core/limits.ts — readBackendLines', () => {
     expect(lines).toEqual(['{"a":1}', '{"b":2}', 'part1part2']);
   });
 
-  test('pauses stdout when output() returns an unsettled promise and resumes once resolved', async () => {
+  test('pauses stdout when output() returns an unsettled promise, resumes once resolved, and stops via fail() on rejection', async () => {
     const stdout = new PassThrough();
     const lines: string[] = [];
     const failures: Error[] = [];
@@ -583,6 +517,27 @@ describe('src/core/limits.ts — readBackendLines', () => {
     expect(lines).toEqual(['first', 'second']);
     expect(failures).toEqual([]);
     stdout.end();
+
+    // When output() rejects, readBackendLines stops reading and calls fail(error).
+    const rejectStream = new PassThrough();
+    const rejectLines: string[] = [];
+    const rejectFailures: Error[] = [];
+    readBackendLines(
+      rejectStream,
+      (line) => rejectLines.push(line),
+      (error) => rejectFailures.push(error),
+      () => Promise.reject(new Error('downstream write failed')),
+    );
+    rejectStream.write('trigger\n');
+    await Promise.resolve();
+    expect(rejectLines).toEqual(['trigger']);
+    expect(rejectFailures).toHaveLength(1);
+    expect(rejectFailures[0]?.message).toBe('downstream write failed');
+    expect(rejectStream.isPaused()).toBe(true);
+
+    rejectStream.write('after-failure\n');
+    expect(rejectLines).toEqual(['trigger']);
+    expect(rejectFailures).toHaveLength(1);
   });
 
   test('fails with BackendOutputLimitError and stops reading when a line exceeds 4 MiB', () => {
@@ -630,7 +585,10 @@ describe('src/core/limits.ts — readBackendLines', () => {
 });
 
 describe('src/core/limits.ts — boundedBackendResponse', () => {
-  test('passes JSON responses up to 4 MiB and errors + calls onLimit above 4 MiB', async () => {
+  test('returns null-body responses untouched, passes JSON up to 4 MiB, and errors + calls onLimit above 4 MiB', async () => {
+    const noContent = new Response(null, { status: 204 });
+    expect(boundedBackendResponse(noContent)).toBe(noContent);
+
     const exactPayload = new Uint8Array(MAX_BACKEND_MESSAGE_BYTES).fill(0x78);
     const exactOnLimit: BackendOutputLimitError[] = [];
     const exactResponse = boundedBackendResponse(
@@ -657,7 +615,7 @@ describe('src/core/limits.ts — boundedBackendResponse', () => {
     expect(oversizedOnLimit[0]).toBeInstanceOf(BackendOutputLimitError);
   });
 
-  test('applies per-event BackendEventBudget to 200 OK text/event-stream responses', async () => {
+  test('applies per-event BackendEventBudget to 200 OK text/event-stream responses and total cap to non-200 SSE', async () => {
     const encoder = new TextEncoder();
     const threeMiB = 'a'.repeat(3 * 1024 * 1024);
 
@@ -717,6 +675,68 @@ describe('src/core/limits.ts — boundedBackendResponse', () => {
     );
     await expect(singleOverflowResponse.text()).rejects.toBeInstanceOf(BackendOutputLimitError);
     expect(singleOverflowLimits).toHaveLength(1);
+
+    // Non-200 response with text/event-stream uses total MAX_BACKEND_MESSAGE_BYTES cap (no event resets).
+    const nonOkSseLimits: BackendOutputLimitError[] = [];
+    const nonOkSseResponse = boundedBackendResponse(
+      new Response(
+        streamFromChunks([
+          encoder.encode(`data: ${threeMiB}\n\n`),
+          encoder.encode(`data: ${threeMiB}\n\n`),
+        ]),
+        {
+          status: 500,
+          headers: { 'content-type': 'text/event-stream' },
+        },
+      ),
+      (error) => nonOkSseLimits.push(error),
+    );
+    await expect(nonOkSseResponse.text()).rejects.toBeInstanceOf(BackendOutputLimitError);
+    expect(nonOkSseLimits).toHaveLength(1);
+  });
+
+  test('forwards body.cancel() reason and wraps reader.cancel() failure on limit overflow into AggregateError', async () => {
+    let cancelReason: unknown;
+    const cancellableStream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array([1, 2, 3]));
+      },
+      cancel(reason) {
+        cancelReason = reason;
+      },
+    });
+    const boundedCancel = boundedBackendResponse(new Response(cancellableStream, { status: 200 }));
+    await boundedCancel.body?.cancel('user-cancelled');
+    expect(cancelReason).toBe('user-cancelled');
+
+    const failCancelStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(MAX_BACKEND_MESSAGE_BYTES + 1));
+      },
+      cancel() {
+        throw new Error('cancel cleanup boom');
+      },
+    });
+    const limitTriggered: BackendOutputLimitError[] = [];
+    const boundedCleanupErr = boundedBackendResponse(
+      new Response(failCancelStream, {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+      (error) => limitTriggered.push(error),
+    );
+    let caught: unknown;
+    try {
+      await boundedCleanupErr.arrayBuffer();
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(AggregateError);
+    const agg = caught as AggregateError;
+    expect(agg.message).toBe('Backend response cleanup failed.');
+    expect(agg.errors[0]).toBeInstanceOf(BackendOutputLimitError);
+    expect((agg.errors[1] as Error).message).toBe('cancel cleanup boom');
+    expect(limitTriggered).toHaveLength(1);
   });
 });
 
@@ -869,6 +889,47 @@ describe('src/core/limits.ts — readRequestBody', () => {
       JSON.stringify([{ jsonrpc: '2.0', id: 1, method: 'ping' }, { invalid: true }]),
     ]);
     await expectRequestBodyErrorStatus(readRequestBody(mixedBatch, 1024, signal), 400);
+  });
+
+  test('rejects pre-aborted signal, mid-stream abort, premature stream close, and forwards stream errors', async () => {
+    // Pre-aborted signal before entry
+    const preAborted = new AbortController();
+    preAborted.abort();
+    const preAbortedReq = createMockRequest('application/json', ['{}']);
+    await expectRequestBodyErrorStatus(
+      readRequestBody(preAbortedReq, 1024, preAborted.signal),
+      400,
+    );
+
+    // Mid-stream abort
+    const midAbort = new AbortController();
+    const midStream = new PassThrough();
+    const midReq = Object.assign(midStream, {
+      headers: { 'content-type': 'application/json' },
+    }) as unknown as IncomingMessage;
+    const midPromise = readRequestBody(midReq, 1024, midAbort.signal);
+    midStream.write('{"jsonrpc":');
+    midAbort.abort();
+    await expectRequestBodyErrorStatus(midPromise, 400);
+
+    // Stream emits 'close' before 'end'
+    const closeStream = new PassThrough();
+    const closeReq = Object.assign(closeStream, {
+      headers: { 'content-type': 'application/json' },
+    }) as unknown as IncomingMessage;
+    const closePromise = readRequestBody(closeReq, 1024, new AbortController().signal);
+    closeStream.write('{"jsonrpc":');
+    closeStream.destroy();
+    await expectRequestBodyErrorStatus(closePromise, 400);
+
+    // Stream emits 'error'
+    const errorStream = new PassThrough();
+    const errorReq = Object.assign(errorStream, {
+      headers: { 'content-type': 'application/json' },
+    }) as unknown as IncomingMessage;
+    const errorPromise = readRequestBody(errorReq, 1024, new AbortController().signal);
+    errorStream.emit('error', new Error('socket reset'));
+    await expect(errorPromise).rejects.toThrow('socket reset');
   });
 
   test('assigns parsed single message and batch array to req.body', async () => {

@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 
-import { act, render, waitFor } from '@testing-library/react';
+import { act, render, renderHook, waitFor } from '@testing-library/react';
 import { type FormEvent, type ReactNode, useRef, useState } from 'react';
 
-import type { Document } from '@mcp-gateway/mainview/dialogs/ServerEditor';
+import type { Document, Editor } from '@mcp-gateway/mainview/dialogs/ServerEditor';
 import { createKeyValueRow } from '@mcp-gateway/mainview/dialogs/ServerEditor';
 import { useOperations } from '@mcp-gateway/mainview/hooks/useOperations';
 import { I18nProvider, useI18n } from '@mcp-gateway/mainview/i18n';
@@ -17,6 +17,16 @@ import type {
 } from '@mcp-gateway/shared/rpc';
 import type { ConfigFile } from '@mcp-gateway/shared/types';
 import { cleanupDom, installDomEnvironment } from '../helpers/dom';
+import {
+  createMockAppClient,
+  DEFAULT_REVISION,
+  makeConfigText,
+  makeSnapshot,
+  makeUpdateStatus,
+  SECOND_REVISION,
+  setNavigatorLanguages,
+  THIRD_REVISION,
+} from '../helpers/mainview';
 
 installDomEnvironment();
 
@@ -49,16 +59,7 @@ const { GatewayViewProvider, useGatewayView } = await import(
   '@mcp-gateway/mainview/context/GatewayViewContext'
 );
 
-type GatewayViewValue = ReturnType<typeof useGatewayView>;
-
 const defaultLanguages = navigator.languages;
-
-const setNavigatorLanguages = (languages: readonly string[]): void => {
-  Object.defineProperty(navigator, 'languages', {
-    configurable: true,
-    value: languages,
-  });
-};
 
 const deferred = <T,>() => {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -74,334 +75,6 @@ const makeFormEvent = (): FormEvent =>
   ({
     preventDefault: () => {},
   }) as FormEvent;
-
-const makeUpdateStatus = (overrides: Partial<UpdateStatus> = {}): UpdateStatus => ({
-  supported: true,
-  automaticUpdates: true,
-  installedVersion: '0.9.0',
-  availableVersion: null,
-  phase: 'idle',
-  error: null,
-  checkedAt: null,
-  ...overrides,
-});
-
-const makeConfigText = (servers: Record<string, unknown> = {}): string =>
-  JSON.stringify(
-    {
-      gateway: {
-        host: '127.0.0.1',
-        port: 8787,
-        token: 'a'.repeat(64),
-      },
-      mcpServers: servers,
-    },
-    null,
-    2,
-  );
-
-const makeSnapshot = (
-  overrides: {
-    configPath?: string;
-    configFormat?: 'json' | 'jsonc';
-    configText?: string;
-    revision?: string;
-    running?: boolean;
-    locale?: Locale;
-    update?: Partial<UpdateStatus>;
-  } = {},
-): AppSnapshot => {
-  const locale = overrides.locale ?? 'en_US';
-  return {
-    gateway: {
-      configPath: overrides.configPath ?? '/tmp/mcp.json',
-      configFormat: overrides.configFormat ?? 'json',
-      configText: overrides.configText ?? makeConfigText(),
-      revision: overrides.revision ?? 'rev-1',
-      running: overrides.running ?? false,
-      interfaces: [{ name: 'lo0', address: '127.0.0.1', netmask: '255.0.0.0', kind: 'loopback' }],
-      network: 'loopback',
-      keyMigration: { gateway: false, servers: [] },
-      servers: [],
-      configError: null,
-      operationalError: null,
-    },
-    login: { enabled: false, supported: true, error: null },
-    update: makeUpdateStatus(overrides.update),
-    whatsNew: null,
-    keyReminder: false,
-    language: {
-      preference: locale,
-      locale,
-      system: 'en_US',
-      available: ['en_US', 'fr_FR', 'de_DE', 'tr_TR'],
-    },
-  };
-};
-
-interface MockClientBundle {
-  client: AppClient;
-  emitSnapshot: (snapshot: AppSnapshot) => void;
-  emitMenuCommand: (command: MenuCommand) => void;
-  snapshotListenerCount: () => number;
-  menuListenerCount: () => number;
-  calls: {
-    snapshot: number;
-    saveConfig: Array<{ text: string; expectedRevision: string }>;
-    confirmDeleteServer: Array<{ name: string }>;
-    confirmDiscard: number;
-  };
-}
-
-const createMockAppClient = (
-  initialSnapshot: AppSnapshot,
-  overrides: Partial<AppClient> = {},
-): MockClientBundle => {
-  const snapshotListeners = new Set<(snapshot: AppSnapshot) => void>();
-  const menuListeners = new Set<(command: MenuCommand) => void>();
-  let revisionCounter = 1;
-  let currentSnapshot = initialSnapshot;
-
-  const calls: MockClientBundle['calls'] = {
-    snapshot: 0,
-    saveConfig: [],
-    confirmDeleteServer: [],
-    confirmDiscard: 0,
-  };
-
-  const emitSnapshot = (next: AppSnapshot): void => {
-    currentSnapshot = next;
-    for (const listener of snapshotListeners) listener(next);
-  };
-
-  const unusedError = async <T,>(method: string): Promise<AppResult<T>> => ({
-    ok: false,
-    error: { code: 'Unimplemented', message: `Unexpected call to ${method}` },
-  });
-
-  const baseClient: AppClient = {
-    snapshot: async () => {
-      calls.snapshot += 1;
-      return { ok: true, value: currentSnapshot };
-    },
-    saveConfig: async (params) => {
-      calls.saveConfig.push(params);
-      revisionCounter += 1;
-      const updated: AppSnapshot = {
-        ...currentSnapshot,
-        gateway: {
-          ...currentSnapshot.gateway,
-          configText: params.text,
-          revision: `rev-${revisionCounter}`,
-        },
-      };
-      // Mirrors `wrapHandler` in `src/main/index.ts`, which pushes `snapshotChanged` before resolving.
-      emitSnapshot(updated);
-      return { ok: true, value: updated };
-    },
-    confirmDeleteServer: async (params) => {
-      calls.confirmDeleteServer.push(params);
-      return { ok: true, value: true };
-    },
-    confirmDiscard: async () => {
-      calls.confirmDiscard += 1;
-      return { ok: true, value: true };
-    },
-    readLogs: () => unusedError('readLogs'),
-    clearLogs: () => unusedError('clearLogs'),
-    quit: () => unusedError('quit'),
-    quitStatus: () => unusedError('quitStatus'),
-    start: () => unusedError('start'),
-    stop: () => unusedError('stop'),
-    restartServer: () => unusedError('restartServer'),
-    testServer: () => unusedError('testServer'),
-    migrateKeys: () => unusedError('migrateKeys'),
-    dismissKeyReminder: () => unusedError('dismissKeyReminder'),
-    validateConfig: () => unusedError('validateConfig'),
-    copyEndpoint: () => unusedError('copyEndpoint'),
-    copyClientConfig: () => unusedError('copyClientConfig'),
-    openSocialLink: () => unusedError('openSocialLink'),
-    revealConfig: () => unusedError('revealConfig'),
-    openConfigInEditor: () => unusedError('openConfigInEditor'),
-    importExternalServers: () => unusedError('importExternalServers'),
-    dismissWhatsNew: async () => ({ ok: true, value: null }),
-    updatesCheck: () => unusedError('updatesCheck'),
-    updatesDownload: () => unusedError('updatesDownload'),
-    updatesInstall: () => unusedError('updatesInstall'),
-    updatesSetAutomatic: () => unusedError('updatesSetAutomatic'),
-    setLanguage: () => unusedError('setLanguage'),
-    updatesRestart: () => unusedError('updatesRestart'),
-    onSnapshotChanged: (listener) => {
-      snapshotListeners.add(listener);
-      return () => {
-        snapshotListeners.delete(listener);
-      };
-    },
-    onMenuCommand: (listener) => {
-      menuListeners.add(listener);
-      return () => {
-        menuListeners.delete(listener);
-      };
-    },
-  };
-
-  const client: AppClient = { ...baseClient, ...overrides };
-
-  return {
-    client,
-    emitSnapshot,
-    emitMenuCommand: (command) => {
-      for (const listener of menuListeners) listener(command);
-    },
-    snapshotListenerCount: () => snapshotListeners.size,
-    menuListenerCount: () => menuListeners.size,
-    calls,
-  };
-};
-
-const BareI18nConsumer = () => {
-  useI18n();
-  return null;
-};
-
-const I18nBasicProbe = ({
-  onLocaleSetter,
-}: {
-  onLocaleSetter?: (setter: (locale: Locale) => void) => void;
-}) => {
-  const i18n = useI18n();
-  onLocaleSetter?.(i18n.setLocale);
-  return (
-    <div>
-      <span data-testid="locale">{i18n.locale}</span>
-      <span data-testid="cancel">{i18n.t('common.cancel')}</span>
-      <span data-testid="quit">{i18n.t('common.quitApp', { app: 'MCP Gateway' })}</span>
-      <span data-testid="lang-name">{i18n.t('language.name')}</span>
-      <span data-testid="add">{i18n.t('overview.addServer')}</span>
-    </div>
-  );
-};
-
-const I18nRichProbe = () => {
-  const { rich } = useI18n();
-  return (
-    <div>
-      <p data-testid="single">
-        {rich('editor.nameHelp', {
-          path: <code data-testid="path-code">/mcp/bear</code>,
-        })}
-      </p>
-      <p data-testid="multi">
-        {rich('logs.limits', {
-          entries: <strong data-testid="entries-strong">500</strong>,
-          megabytes: <code data-testid="mb-code">4</code>,
-        })}
-      </p>
-    </div>
-  );
-};
-
-interface OperationsState {
-  busy: boolean;
-  updateBusy: boolean;
-  error: string | null;
-  snapshot: AppSnapshot | null;
-  doc: Document | null;
-  generation: number;
-  quitGeneration: number;
-  editSequence: number;
-}
-
-interface OperationsBridge {
-  run: ReturnType<typeof useOperations>['run'];
-  runUpdate: ReturnType<typeof useOperations>['runUpdate'];
-  state: OperationsState;
-  setDocLocal: (next: Document) => void;
-  bumpEditSequence: () => void;
-  bumpQuitGeneration: () => void;
-  setUpdateBusyDirectly: (value: boolean) => void;
-}
-
-const OperationsHarnessComponent = ({
-  initialSnapshot,
-  initialDoc,
-  initialUpdateBusy,
-  onSync,
-  children,
-}: {
-  initialSnapshot: AppSnapshot | null;
-  initialDoc: Document | null;
-  initialUpdateBusy: boolean;
-  onSync: (bridge: OperationsBridge) => void;
-  children?: ReactNode;
-}) => {
-  const quitGeneration = useRef(0);
-  const generation = useRef(0);
-  const editSequence = useRef(0);
-  const [busy, setBusy] = useState(false);
-  const [updateBusy, setUpdateBusy] = useState(initialUpdateBusy);
-  const [error, setError] = useState<string | null>(null);
-  const [snapshot, setSnapshot] = useState<AppSnapshot | null>(initialSnapshot);
-  const [doc, setDocState] = useState<Document | null>(initialDoc);
-  const docRef = useRef<Document | null>(doc);
-  docRef.current = doc;
-
-  const ops = useOperations({
-    quitGeneration,
-    generation,
-    editSequence,
-    docRef,
-    setBusy,
-    updateBusy,
-    setUpdateBusy,
-    setError,
-    setSnapshot,
-    setDoc: (next) => {
-      docRef.current = next;
-      setDocState(next);
-    },
-  });
-
-  onSync({
-    run: ops.run,
-    runUpdate: ops.runUpdate,
-    state: {
-      busy,
-      updateBusy,
-      error,
-      snapshot,
-      doc,
-      generation: generation.current,
-      quitGeneration: quitGeneration.current,
-      editSequence: editSequence.current,
-    },
-    setDocLocal: (next) => {
-      editSequence.current += 1;
-      docRef.current = next;
-      setDocState(next);
-    },
-    bumpEditSequence: () => {
-      editSequence.current += 1;
-    },
-    bumpQuitGeneration: () => {
-      quitGeneration.current += 1;
-    },
-    setUpdateBusyDirectly: setUpdateBusy,
-  });
-
-  return <>{children}</>;
-};
-
-const BareGatewayConsumer = () => {
-  useGatewayView();
-  return null;
-};
-
-const GatewayContextProbe = ({ onSync }: { onSync: (value: GatewayViewValue) => void }) => {
-  const value = useGatewayView();
-  onSync(value);
-  return null;
-};
 
 beforeEach(() => {
   setNavigatorLanguages(['en-US']);
@@ -421,7 +94,7 @@ describe('I18nProvider and useI18n', () => {
     const originalError = console.error;
     console.error = () => {};
     try {
-      expect(() => render(<BareI18nConsumer />)).toThrow(
+      expect(() => renderHook(() => useI18n())).toThrow(
         'useI18n must be used inside I18nProvider.',
       );
     } finally {
@@ -430,42 +103,25 @@ describe('I18nProvider and useI18n', () => {
   });
 
   test('renders children with en_US by default and syncs documentElement.lang', () => {
-    const view = render(
-      <I18nProvider>
-        <I18nBasicProbe />
-      </I18nProvider>,
-    );
+    const { result } = renderHook(() => useI18n(), { wrapper: I18nProvider });
 
-    expect(view.getByTestId('locale').textContent).toBe('en_US');
+    expect(result.current.locale).toBe('en_US');
     expect(document.documentElement.lang).toBe('en-US');
-    expect(view.getByTestId('cancel').textContent).toBe('Cancel');
-    expect(view.getByTestId('quit').textContent).toBe('Quit MCP Gateway');
+    expect(result.current.t('common.cancel')).toBe('Cancel');
+    expect(result.current.t('common.quitApp', { app: 'MCP Gateway' })).toBe('Quit MCP Gateway');
   });
 
   test('initializes locale from navigator.languages', () => {
     setNavigatorLanguages(['fr-CA', 'en-US']);
-    const view = render(
-      <I18nProvider>
-        <I18nBasicProbe />
-      </I18nProvider>,
-    );
+    const { result } = renderHook(() => useI18n(), { wrapper: I18nProvider });
 
-    expect(view.getByTestId('locale').textContent).toBe('fr_FR');
+    expect(result.current.locale).toBe('fr_FR');
     expect(document.documentElement.lang).toBe('fr-FR');
-    expect(view.getByTestId('cancel').textContent).toBe('Annuler');
+    expect(result.current.t('common.cancel')).toBe('Annuler');
   });
 
   test('switches between fr_FR, de_DE, tr_TR, and en_US updating lang and localized strings', () => {
-    let setLocale!: (locale: Locale) => void;
-    const view = render(
-      <I18nProvider>
-        <I18nBasicProbe
-          onLocaleSetter={(setter) => {
-            setLocale = setter;
-          }}
-        />
-      </I18nProvider>,
-    );
+    const { result } = renderHook(() => useI18n(), { wrapper: I18nProvider });
 
     const cases: Array<{ locale: Locale; tag: string; name: string; add: string }> = [
       {
@@ -496,20 +152,31 @@ describe('I18nProvider and useI18n', () => {
 
     for (const entry of cases) {
       act(() => {
-        setLocale(entry.locale);
+        result.current.setLocale(entry.locale);
       });
-      expect(view.getByTestId('locale').textContent).toBe(entry.locale);
+      expect(result.current.locale).toBe(entry.locale);
       expect(document.documentElement.lang).toBe(entry.tag);
-      expect(view.getByTestId('lang-name').textContent).toBe(entry.name);
-      expect(view.getByTestId('add').textContent).toBe(entry.add);
+      expect(result.current.t('language.name')).toBe(entry.name);
+      expect(result.current.t('overview.addServer')).toBe(entry.add);
     }
   });
 
   test('rich() substitutes React nodes while preserving surrounding text and unmatched placeholders', () => {
+    const { result } = renderHook(() => useI18n(), { wrapper: I18nProvider });
     const view = render(
-      <I18nProvider>
-        <I18nRichProbe />
-      </I18nProvider>,
+      <div>
+        <p data-testid="single">
+          {result.current.rich('editor.nameHelp', {
+            path: <code data-testid="path-code">/mcp/bear</code>,
+          })}
+        </p>
+        <p data-testid="multi">
+          {result.current.rich('logs.limits', {
+            entries: <strong data-testid="entries-strong">500</strong>,
+            megabytes: <code data-testid="mb-code">4</code>,
+          })}
+        </p>
+      </div>,
     );
 
     const single = view.getByTestId('single');
@@ -531,39 +198,85 @@ describe('I18nProvider and useI18n', () => {
 const renderOperationsHarness = (
   initial: { snapshot?: AppSnapshot | null; doc?: Document | null; updateBusy?: boolean } = {},
 ) => {
-  let bridge!: OperationsBridge;
+  const { result } = renderHook(
+    () => {
+      const quitGeneration = useRef(0);
+      const generation = useRef(0);
+      const editSequence = useRef(0);
+      const [busy, setBusy] = useState(false);
+      const [updateBusy, setUpdateBusy] = useState(initial.updateBusy ?? false);
+      const [error, setError] = useState<string | null>(null);
+      const [snapshot, setSnapshot] = useState<AppSnapshot | null>(initial.snapshot ?? null);
+      const [doc, setDocState] = useState<Document | null>(initial.doc ?? null);
+      const docRef = useRef<Document | null>(doc);
+      docRef.current = doc;
 
-  render(
-    <I18nProvider>
-      <OperationsHarnessComponent
-        initialSnapshot={initial.snapshot ?? null}
-        initialDoc={initial.doc ?? null}
-        initialUpdateBusy={initial.updateBusy ?? false}
-        onSync={(next) => {
-          bridge = next;
-        }}
-      />
-    </I18nProvider>,
+      const ops = useOperations({
+        quitGeneration,
+        generation,
+        editSequence,
+        docRef,
+        setBusy,
+        updateBusy,
+        setUpdateBusy,
+        setError,
+        setSnapshot,
+        setDoc: (next) => {
+          docRef.current = next;
+          setDocState(next);
+        },
+      });
+
+      return {
+        run: ops.run,
+        runUpdate: ops.runUpdate,
+        state: {
+          busy,
+          updateBusy,
+          error,
+          snapshot,
+          doc,
+          generation: generation.current,
+          quitGeneration: quitGeneration.current,
+          editSequence: editSequence.current,
+        },
+        setDocLocal: (next: Document) => {
+          editSequence.current += 1;
+          docRef.current = next;
+          setDocState(next);
+        },
+        bumpEditSequence: () => {
+          editSequence.current += 1;
+        },
+        bumpQuitGeneration: () => {
+          quitGeneration.current += 1;
+        },
+        setUpdateBusyDirectly: setUpdateBusy,
+      };
+    },
+    { wrapper: I18nProvider },
   );
 
   return {
-    run: (...args: Parameters<OperationsBridge['run']>) => bridge.run(...args),
-    runUpdate: (...args: Parameters<OperationsBridge['runUpdate']>) => bridge.runUpdate(...args),
-    getState: () => bridge.state,
+    run: (...args: Parameters<ReturnType<typeof useOperations>['run']>) =>
+      result.current.run(...args),
+    runUpdate: (...args: Parameters<ReturnType<typeof useOperations>['runUpdate']>) =>
+      result.current.runUpdate(...args),
+    getState: () => result.current.state,
     setDocLocal: (next: Document) => {
       act(() => {
-        bridge.setDocLocal(next);
+        result.current.setDocLocal(next);
       });
     },
     bumpEditSequence: () => {
-      bridge.bumpEditSequence();
+      result.current.bumpEditSequence();
     },
     bumpQuitGeneration: () => {
-      bridge.bumpQuitGeneration();
+      result.current.bumpQuitGeneration();
     },
     setUpdateBusyDirectly: (value: boolean) => {
       act(() => {
-        bridge.setUpdateBusyDirectly(value);
+        result.current.setUpdateBusyDirectly(value);
       });
     },
   };
@@ -576,7 +289,7 @@ describe('useOperations', () => {
       bear: { command: '/usr/bin/env' },
     });
     const harness = renderOperationsHarness({
-      doc: { text: initialText, revision: 'rev-1', dirty: true },
+      doc: { text: initialText, revision: DEFAULT_REVISION, dirty: true },
     });
     const pending = deferred<AppResult<AppSnapshot | null>>();
 
@@ -589,7 +302,7 @@ describe('useOperations', () => {
     expect(harness.getState().error).toBeNull();
     expect(harness.getState().generation).toBe(1);
 
-    const nextSnapshot = makeSnapshot({ configText: savedText, revision: 'rev-2' });
+    const nextSnapshot = makeSnapshot({ configText: savedText, revision: SECOND_REVISION });
     await act(async () => {
       pending.resolve({ ok: true, value: nextSnapshot });
       expect(await runPromise).toBe(true);
@@ -600,15 +313,15 @@ describe('useOperations', () => {
     expect(harness.getState().snapshot).toEqual(nextSnapshot);
     expect(harness.getState().doc).toEqual({
       text: savedText,
-      revision: 'rev-2',
+      revision: SECOND_REVISION,
       dirty: false,
     });
   });
 
   test('run with saved=false updates snapshot without overwriting doc', async () => {
-    const localDoc: Document = { text: '{"draft":true}', revision: 'rev-1', dirty: true };
+    const localDoc: Document = { text: '{"draft":true}', revision: DEFAULT_REVISION, dirty: true };
     const harness = renderOperationsHarness({ doc: localDoc });
-    const nextSnapshot = makeSnapshot({ revision: 'rev-2', running: true });
+    const nextSnapshot = makeSnapshot({ revision: SECOND_REVISION, running: true });
 
     let ok = false;
     await act(async () => {
@@ -627,7 +340,7 @@ describe('useOperations', () => {
       second: { command: '/bin/cat' },
     });
     const harness = renderOperationsHarness({
-      doc: { text: submittedText, revision: 'rev-1', dirty: true },
+      doc: { text: submittedText, revision: DEFAULT_REVISION, dirty: true },
     });
     const pending = deferred<AppResult<AppSnapshot | null>>();
 
@@ -637,9 +350,9 @@ describe('useOperations', () => {
     });
 
     // User edits raw config while the earlier save is still in flight.
-    harness.setDocLocal({ text: newerLocalEdit, revision: 'rev-1', dirty: true });
+    harness.setDocLocal({ text: newerLocalEdit, revision: DEFAULT_REVISION, dirty: true });
 
-    const serverSnapshot = makeSnapshot({ configText: submittedText, revision: 'rev-2' });
+    const serverSnapshot = makeSnapshot({ configText: submittedText, revision: SECOND_REVISION });
     await act(async () => {
       pending.resolve({ ok: true, value: serverSnapshot });
       expect(await runPromise).toBe(true);
@@ -648,7 +361,7 @@ describe('useOperations', () => {
     expect(harness.getState().snapshot).toEqual(serverSnapshot);
     expect(harness.getState().doc).toEqual({
       text: newerLocalEdit,
-      revision: 'rev-2',
+      revision: SECOND_REVISION,
       dirty: true,
     });
   });
@@ -656,7 +369,7 @@ describe('useOperations', () => {
   test('stale-write protection marks dirty false if newer local text matches saved configText', async () => {
     const submittedText = makeConfigText();
     const harness = renderOperationsHarness({
-      doc: { text: submittedText, revision: 'rev-1', dirty: true },
+      doc: { text: submittedText, revision: DEFAULT_REVISION, dirty: true },
     });
     const pending = deferred<AppResult<AppSnapshot | null>>();
 
@@ -668,7 +381,7 @@ describe('useOperations', () => {
     // Advance editSequence without diverging from final server text.
     harness.bumpEditSequence();
 
-    const serverSnapshot = makeSnapshot({ configText: submittedText, revision: 'rev-2' });
+    const serverSnapshot = makeSnapshot({ configText: submittedText, revision: SECOND_REVISION });
     await act(async () => {
       pending.resolve({ ok: true, value: serverSnapshot });
       expect(await runPromise).toBe(true);
@@ -676,7 +389,7 @@ describe('useOperations', () => {
 
     expect(harness.getState().doc).toEqual({
       text: submittedText,
-      revision: 'rev-2',
+      revision: SECOND_REVISION,
       dirty: false,
     });
   });
@@ -721,10 +434,10 @@ describe('useOperations', () => {
   });
 
   test('quitGeneration guard prevents post-quit resolutions and rejections from mutating state', async () => {
-    const initialSnapshot = makeSnapshot({ revision: 'rev-1' });
+    const initialSnapshot = makeSnapshot({ revision: DEFAULT_REVISION });
     const initialDoc: Document = {
       text: initialSnapshot.gateway.configText,
-      revision: 'rev-1',
+      revision: DEFAULT_REVISION,
       dirty: false,
     };
     const harness = renderOperationsHarness({ snapshot: initialSnapshot, doc: initialDoc });
@@ -748,7 +461,7 @@ describe('useOperations', () => {
 
     expect(harness.getState().busy).toBe(false);
     expect(harness.getState().generation).toBe(genWhileRunning);
-    expect(harness.getState().snapshot?.gateway.revision).toBe('rev-1');
+    expect(harness.getState().snapshot?.gateway.revision).toBe(DEFAULT_REVISION);
     expect(harness.getState().doc).toEqual(initialDoc);
     expect(harness.getState().error).toBeNull();
 
@@ -771,7 +484,7 @@ describe('useOperations', () => {
 
   test('runUpdate handles concurrency lock, snapshot merge, error formatting, and quitGeneration guard', async () => {
     const t = translator('en_US');
-    const initialSnapshot = makeSnapshot({ revision: 'rev-1' });
+    const initialSnapshot = makeSnapshot({ revision: DEFAULT_REVISION });
     const harness = renderOperationsHarness({ snapshot: initialSnapshot });
 
     // Re-entry blocked while updateBusy is true.
@@ -845,23 +558,18 @@ describe('useOperations', () => {
 });
 
 const renderGatewayContext = (client: AppClient) => {
-  let latest!: GatewayViewValue;
-  const view = render(
-    <I18nProvider>
-      <GatewayViewProvider client={client}>
-        <GatewayContextProbe
-          onSync={(value) => {
-            latest = value;
-          }}
-        />
-      </GatewayViewProvider>
-    </I18nProvider>,
-  );
+  const { result, unmount } = renderHook(() => useGatewayView(), {
+    wrapper: ({ children }: { children: ReactNode }) => (
+      <I18nProvider>
+        <GatewayViewProvider client={client}>{children}</GatewayViewProvider>
+      </I18nProvider>
+    ),
+  });
   return {
     get ctx() {
-      return latest;
+      return result.current;
     },
-    unmount: view.unmount,
+    unmount,
   };
 };
 
@@ -870,7 +578,7 @@ describe('GatewayViewProvider and useGatewayView', () => {
     const originalError = console.error;
     console.error = () => {};
     try {
-      expect(() => render(<BareGatewayConsumer />)).toThrow(
+      expect(() => renderHook(() => useGatewayView())).toThrow(
         'useGatewayView must be used within a GatewayViewProvider',
       );
     } finally {
@@ -886,7 +594,7 @@ describe('GatewayViewProvider and useGatewayView', () => {
       configPath: '/Users/test/mcp.jsonc',
       configFormat: 'jsonc',
       configText: initialText,
-      revision: 'rev-1',
+      revision: DEFAULT_REVISION,
       locale: 'en_US',
       update: { phase: 'available', availableVersion: '0.10.0' },
     });
@@ -901,7 +609,7 @@ describe('GatewayViewProvider and useGatewayView', () => {
     expect(harness.ctx.snapshot).toEqual(initialSnapshot);
     expect(harness.ctx.doc).toEqual({
       text: initialText,
-      revision: 'rev-1',
+      revision: DEFAULT_REVISION,
       dirty: false,
     });
     expect(harness.ctx.format).toBe('jsonc');
@@ -919,7 +627,7 @@ describe('GatewayViewProvider and useGatewayView', () => {
           configPath: '/Users/test/mcp.jsonc',
           configFormat: 'jsonc',
           configText: initialText,
-          revision: 'rev-1',
+          revision: DEFAULT_REVISION,
           locale: 'de_DE',
         }),
       );
@@ -929,7 +637,7 @@ describe('GatewayViewProvider and useGatewayView', () => {
     });
 
     act(() => {
-      harness.ctx.setDoc({ text: `${initialText}\n`, revision: 'rev-1', dirty: true });
+      harness.ctx.setDoc({ text: `${initialText}\n`, revision: DEFAULT_REVISION, dirty: true });
     });
     expect(unsavedRawConfigChecker()).toBe(true);
 
@@ -967,12 +675,12 @@ describe('GatewayViewProvider and useGatewayView', () => {
   test('push onSnapshotChanged updates clean doc and updateState, but preserves dirty RawConfig edits (C-09)', async () => {
     const initialText = makeConfigText({ alpha: { command: '/bin/echo' } });
     const mockBundle = createMockAppClient(
-      makeSnapshot({ configText: initialText, revision: 'rev-1' }),
+      makeSnapshot({ configText: initialText, revision: DEFAULT_REVISION }),
     );
     const harness = renderGatewayContext(mockBundle.client);
 
     await waitFor(() => {
-      expect(harness.ctx.doc?.revision).toBe('rev-1');
+      expect(harness.ctx.doc?.revision).toBe(DEFAULT_REVISION);
     });
 
     // Clean push updates snapshot, updateState, and doc.
@@ -984,7 +692,7 @@ describe('GatewayViewProvider and useGatewayView', () => {
       mockBundle.emitSnapshot(
         makeSnapshot({
           configText: cleanPushText,
-          revision: 'rev-2',
+          revision: SECOND_REVISION,
           update: { phase: 'downloading', availableVersion: '0.11.0' },
         }),
       );
@@ -992,7 +700,7 @@ describe('GatewayViewProvider and useGatewayView', () => {
 
     expect(harness.ctx.doc).toEqual({
       text: cleanPushText,
-      revision: 'rev-2',
+      revision: SECOND_REVISION,
       dirty: false,
     });
     expect(harness.ctx.updateState?.phase).toBe('downloading');
@@ -1001,7 +709,7 @@ describe('GatewayViewProvider and useGatewayView', () => {
     // Local dirty RawConfig edit must survive subsequent snapshot pushes and mark stale=true.
     const dirtyEdit = `${cleanPushText}\n// local draft`;
     act(() => {
-      harness.ctx.setDoc({ text: dirtyEdit, revision: 'rev-2', dirty: true });
+      harness.ctx.setDoc({ text: dirtyEdit, revision: SECOND_REVISION, dirty: true });
     });
 
     const externalPushText = makeConfigText({ gamma: { command: '/bin/true' } });
@@ -1009,17 +717,17 @@ describe('GatewayViewProvider and useGatewayView', () => {
       mockBundle.emitSnapshot(
         makeSnapshot({
           configText: externalPushText,
-          revision: 'rev-3',
+          revision: THIRD_REVISION,
           update: { phase: 'ready', availableVersion: '0.11.0' },
         }),
       );
     });
 
-    expect(harness.ctx.snapshot?.gateway.revision).toBe('rev-3');
+    expect(harness.ctx.snapshot?.gateway.revision).toBe(THIRD_REVISION);
     expect(harness.ctx.updateState?.phase).toBe('ready');
     expect(harness.ctx.doc).toEqual({
       text: dirtyEdit,
-      revision: 'rev-2',
+      revision: SECOND_REVISION,
       dirty: true,
     });
     expect(harness.ctx.stale).toBe(true);
@@ -1028,7 +736,7 @@ describe('GatewayViewProvider and useGatewayView', () => {
   test('push onSnapshotChanged does not clobber doc while serverEditor modal is open', async () => {
     const initialText = makeConfigText({ alpha: { command: '/bin/echo' } });
     const mockBundle = createMockAppClient(
-      makeSnapshot({ configText: initialText, revision: 'rev-1' }),
+      makeSnapshot({ configText: initialText, revision: DEFAULT_REVISION }),
     );
     const harness = renderGatewayContext(mockBundle.client);
 
@@ -1043,19 +751,19 @@ describe('GatewayViewProvider and useGatewayView', () => {
 
     const pushedText = makeConfigText({ alpha: { command: '/bin/ls' } });
     act(() => {
-      mockBundle.emitSnapshot(makeSnapshot({ configText: pushedText, revision: 'rev-2' }));
+      mockBundle.emitSnapshot(makeSnapshot({ configText: pushedText, revision: SECOND_REVISION }));
     });
 
-    expect(harness.ctx.snapshot?.gateway.revision).toBe('rev-2');
+    expect(harness.ctx.snapshot?.gateway.revision).toBe(SECOND_REVISION);
     expect(harness.ctx.doc?.text).toBe(initialText);
-    expect(harness.ctx.doc?.revision).toBe('rev-1');
+    expect(harness.ctx.doc?.revision).toBe(DEFAULT_REVISION);
   });
 
   test('onMenuCommand routes tabs, raw config, new server editor, updates modal, and gateway reload', async () => {
     const initialText = makeConfigText({ alpha: { command: '/bin/echo' } });
     let confirmDiscardAnswer = false;
     const mockBundle = createMockAppClient(
-      makeSnapshot({ configText: initialText, revision: 'rev-1' }),
+      makeSnapshot({ configText: initialText, revision: DEFAULT_REVISION }),
       {
         confirmDiscard: async () => {
           mockBundle.calls.confirmDiscard += 1;
@@ -1107,7 +815,7 @@ describe('GatewayViewProvider and useGatewayView', () => {
 
     act(() => {
       harness.ctx.closeModal();
-      harness.ctx.setDoc({ text: '{"dirty":true}', revision: 'rev-1', dirty: true });
+      harness.ctx.setDoc({ text: '{"dirty":true}', revision: DEFAULT_REVISION, dirty: true });
     });
 
     // Reload while dirty: user cancels discard -> snapshot is not re-fetched, draft stays dirty.
@@ -1143,7 +851,7 @@ describe('GatewayViewProvider and useGatewayView', () => {
       alpha: { command: '/bin/echo', disabled: false },
     });
     const mockBundle = createMockAppClient(
-      makeSnapshot({ configText: initialText, revision: 'rev-1' }),
+      makeSnapshot({ configText: initialText, revision: DEFAULT_REVISION }),
     );
     const harness = renderGatewayContext(mockBundle.client);
 
@@ -1156,7 +864,7 @@ describe('GatewayViewProvider and useGatewayView', () => {
     });
 
     expect(mockBundle.calls.saveConfig).toHaveLength(1);
-    expect(mockBundle.calls.saveConfig[0]?.expectedRevision).toBe('rev-1');
+    expect(mockBundle.calls.saveConfig[0]?.expectedRevision).toBe(DEFAULT_REVISION);
     const savedDisabled = JSON.parse(mockBundle.calls.saveConfig[0]?.text ?? '{}') as ConfigFile;
     expect(savedDisabled.mcpServers.alpha?.disabled).toBe(true);
     expect(harness.ctx.config?.mcpServers.alpha?.disabled).toBe(true);
@@ -1167,14 +875,14 @@ describe('GatewayViewProvider and useGatewayView', () => {
     });
 
     expect(mockBundle.calls.saveConfig).toHaveLength(2);
-    expect(mockBundle.calls.saveConfig[1]?.expectedRevision).toBe('rev-2');
+    expect(mockBundle.calls.saveConfig[1]?.expectedRevision).toBe(SECOND_REVISION);
     const savedEnabled = JSON.parse(mockBundle.calls.saveConfig[1]?.text ?? '{}') as ConfigFile;
     expect(savedEnabled.mcpServers.alpha?.disabled).toBe(false);
     expect(harness.ctx.config?.mcpServers.alpha?.disabled).toBe(false);
 
     // Refuses to commit while raw config is dirty.
     act(() => {
-      harness.ctx.setDoc({ text: `${initialText}\n`, revision: 'rev-3', dirty: true });
+      harness.ctx.setDoc({ text: `${initialText}\n`, revision: THIRD_REVISION, dirty: true });
     });
     await act(async () => {
       await harness.ctx.toggleServer('alpha', true);
@@ -1189,7 +897,7 @@ describe('GatewayViewProvider and useGatewayView', () => {
     });
     let allowDelete = false;
     const mockBundle = createMockAppClient(
-      makeSnapshot({ configText: initialText, revision: 'rev-1' }),
+      makeSnapshot({ configText: initialText, revision: DEFAULT_REVISION }),
       {
         confirmDeleteServer: async (params) => {
           mockBundle.calls.confirmDeleteServer.push(params);
@@ -1224,52 +932,15 @@ describe('GatewayViewProvider and useGatewayView', () => {
     expect(harness.ctx.existingNames.has('beta')).toBe(true);
   });
 
-  test('applyServer validates SAFE_NAME (Plan 035) and rejects invalid names without calling saveConfig', async () => {
+  test('applyServer rejects invalid SAFE_NAME, duplicate names, empty custom token, and invalid key-value rows without calling saveConfig', async () => {
     const t = translator('en_US');
     const mockBundle = createMockAppClient(
-      makeSnapshot({ configText: makeConfigText({ alpha: { command: '/bin/echo' } }) }),
-    );
-    const harness = renderGatewayContext(mockBundle.client);
-
-    await waitFor(() => {
-      expect(harness.ctx.config).not.toBeNull();
-    });
-
-    const invalidNames = [
-      '',
-      '   ',
-      'bad name',
-      'foo/bar',
-      '-starts-with-dash',
-      '__proto__',
-      'constructor',
-    ];
-
-    for (const badName of invalidNames) {
-      act(() => {
-        harness.ctx.openServerEditor();
-      });
-      act(() => {
-        harness.ctx.changeEditor({ name: badName, command: '/bin/echo' });
-      });
-      await act(async () => {
-        await harness.ctx.applyServer(makeFormEvent());
-      });
-
-      expect(harness.ctx.editorError).toBe(t('app.serverFieldsInvalid'));
-      expect(harness.ctx.activeModal?.kind).toBe('serverEditor');
-      expect(mockBundle.calls.saveConfig).toHaveLength(0);
-    }
-  });
-
-  test('applyServer rejects duplicate server names on add and rename (C-17) without calling saveConfig', async () => {
-    const t = translator('en_US');
-    const initialText = makeConfigText({
-      alpha: { command: '/bin/echo' },
-      beta: { url: 'http://127.0.0.1:9000/mcp' },
-    });
-    const mockBundle = createMockAppClient(
-      makeSnapshot({ configText: initialText, revision: 'rev-1' }),
+      makeSnapshot({
+        configText: makeConfigText({
+          alpha: { command: '/bin/echo' },
+          beta: { url: 'http://127.0.0.1:9000/mcp' },
+        }),
+      }),
     );
     const harness = renderGatewayContext(mockBundle.client);
 
@@ -1277,73 +948,47 @@ describe('GatewayViewProvider and useGatewayView', () => {
       expect(harness.ctx.existingNames.size).toBe(2);
     });
 
-    // Adding a new server whose name collides with existing `alpha`.
-    act(() => {
-      harness.ctx.openServerEditor();
-    });
-    act(() => {
-      harness.ctx.changeEditor({ name: 'alpha', command: '/bin/true' });
-    });
-    await act(async () => {
-      await harness.ctx.applyServer(makeFormEvent());
-    });
+    const cases: Array<{
+      openName?: string;
+      patch: Partial<Editor>;
+      expectedError: string;
+    }> = [
+      ...['', '   ', 'bad name', 'foo/bar', '-starts-with-dash', '__proto__', 'constructor'].map(
+        (badName) => ({
+          patch: { name: badName, command: '/bin/echo' },
+          expectedError: t('app.serverFieldsInvalid'),
+        }),
+      ),
+      { patch: { name: 'alpha', command: '/bin/true' }, expectedError: t('app.serverExists') },
+      { openName: 'alpha', patch: { name: 'beta' }, expectedError: t('app.serverExists') },
+      {
+        patch: { name: 'gamma', command: '/bin/echo', token: '' },
+        expectedError: t('app.serverKeyEmpty'),
+      },
+      {
+        patch: {
+          name: 'gamma',
+          command: '/bin/echo',
+          env: [createKeyValueRow('FOO', '1'), createKeyValueRow('FOO', '2')],
+        },
+        expectedError: t('app.environmentInvalid'),
+      },
+    ];
 
-    expect(harness.ctx.editorError).toBe(t('app.serverExists'));
-    expect(harness.ctx.activeModal?.kind).toBe('serverEditor');
-    expect(mockBundle.calls.saveConfig).toHaveLength(0);
-
-    // Renaming existing `alpha` to collide with existing `beta`.
-    act(() => {
-      harness.ctx.openServerEditor('alpha');
-    });
-    act(() => {
-      harness.ctx.changeEditor({ name: 'beta' });
-    });
-    await act(async () => {
-      await harness.ctx.applyServer(makeFormEvent());
-    });
-
-    expect(harness.ctx.editorError).toBe(t('app.serverExists'));
-    expect(harness.ctx.activeModal?.kind).toBe('serverEditor');
-    expect(mockBundle.calls.saveConfig).toHaveLength(0);
-  });
-
-  test('applyServer rejects empty custom token and invalid key-value rows without calling saveConfig', async () => {
-    const t = translator('en_US');
-    const mockBundle = createMockAppClient(makeSnapshot());
-    const harness = renderGatewayContext(mockBundle.client);
-
-    await waitFor(() => {
-      expect(harness.ctx.config).not.toBeNull();
-    });
-
-    // Empty custom token (`''` instead of `undefined`) is rejected.
-    act(() => {
-      harness.ctx.openServerEditor();
-    });
-    act(() => {
-      harness.ctx.changeEditor({ name: 'gamma', command: '/bin/echo', token: '' });
-    });
-    await act(async () => {
-      await harness.ctx.applyServer(makeFormEvent());
-    });
-    expect(harness.ctx.editorError).toBe(t('app.serverKeyEmpty'));
-    expect(harness.ctx.activeModal?.kind).toBe('serverEditor');
-    expect(mockBundle.calls.saveConfig).toHaveLength(0);
-
-    // Duplicate env keys are rejected.
-    act(() => {
-      harness.ctx.changeEditor({
-        token: undefined,
-        env: [createKeyValueRow('FOO', '1'), createKeyValueRow('FOO', '2')],
+    for (const entry of cases) {
+      act(() => {
+        harness.ctx.openServerEditor(entry.openName);
       });
-    });
-    await act(async () => {
-      await harness.ctx.applyServer(makeFormEvent());
-    });
-    expect(harness.ctx.editorError).toBe(t('app.environmentInvalid'));
-    expect(harness.ctx.activeModal?.kind).toBe('serverEditor');
-    expect(mockBundle.calls.saveConfig).toHaveLength(0);
+      act(() => {
+        harness.ctx.changeEditor(entry.patch);
+      });
+      await act(async () => {
+        await harness.ctx.applyServer(makeFormEvent());
+      });
+      expect(harness.ctx.editorError).toBe(entry.expectedError);
+      expect(harness.ctx.activeModal?.kind).toBe('serverEditor');
+      expect(mockBundle.calls.saveConfig).toHaveLength(0);
+    }
   });
 
   test('applyServer adds a new server, updates/renames an existing server, and keeps modal open if save fails', async () => {
@@ -1352,7 +997,7 @@ describe('GatewayViewProvider and useGatewayView', () => {
     });
     let failNextSave = false;
     const mockBundle = createMockAppClient(
-      makeSnapshot({ configText: initialText, revision: 'rev-1' }),
+      makeSnapshot({ configText: initialText, revision: DEFAULT_REVISION }),
     );
     const originalSave = mockBundle.client.saveConfig;
     mockBundle.client.saveConfig = async (params) => {
@@ -1387,14 +1032,14 @@ describe('GatewayViewProvider and useGatewayView', () => {
 
     expect(harness.ctx.activeModal).toBeNull();
     expect(mockBundle.calls.saveConfig).toHaveLength(1);
-    expect(mockBundle.calls.saveConfig[0]?.expectedRevision).toBe('rev-1');
+    expect(mockBundle.calls.saveConfig[0]?.expectedRevision).toBe(DEFAULT_REVISION);
     const afterAdd = JSON.parse(mockBundle.calls.saveConfig[0]?.text ?? '{}') as ConfigFile;
     expect(afterAdd.mcpServers.remote_api).toMatchObject({
       url: 'http://127.0.0.1:9001/mcp',
       headers: { 'X-Client': 'test' },
       disabled: false,
     });
-    expect(harness.ctx.snapshot?.gateway.revision).toBe('rev-2');
+    expect(harness.ctx.snapshot?.gateway.revision).toBe(SECOND_REVISION);
 
     // Sync local doc to saved snapshot before subsequent editor action.
     act(() => {
@@ -1415,7 +1060,7 @@ describe('GatewayViewProvider and useGatewayView', () => {
 
     expect(harness.ctx.activeModal).toBeNull();
     expect(mockBundle.calls.saveConfig).toHaveLength(2);
-    expect(mockBundle.calls.saveConfig[1]?.expectedRevision).toBe('rev-2');
+    expect(mockBundle.calls.saveConfig[1]?.expectedRevision).toBe(SECOND_REVISION);
     const afterRename = JSON.parse(mockBundle.calls.saveConfig[1]?.text ?? '{}') as ConfigFile;
     expect(afterRename.mcpServers.alpha).toBeUndefined();
     expect(afterRename.mcpServers.alpha_v2).toMatchObject({
@@ -1446,7 +1091,7 @@ describe('GatewayViewProvider and useGatewayView', () => {
   test('configurationLocked during update restarting closes updates modal and blocks mutations', async () => {
     const initialText = makeConfigText({ alpha: { command: '/bin/echo' } });
     const mockBundle = createMockAppClient(
-      makeSnapshot({ configText: initialText, revision: 'rev-1' }),
+      makeSnapshot({ configText: initialText, revision: DEFAULT_REVISION }),
     );
     const harness = renderGatewayContext(mockBundle.client);
 
@@ -1465,7 +1110,7 @@ describe('GatewayViewProvider and useGatewayView', () => {
       mockBundle.emitSnapshot(
         makeSnapshot({
           configText: initialText,
-          revision: 'rev-1',
+          revision: DEFAULT_REVISION,
           update: { phase: 'restarting' },
         }),
       );
@@ -1487,5 +1132,221 @@ describe('GatewayViewProvider and useGatewayView', () => {
     });
     expect(mockBundle.calls.saveConfig).toHaveLength(0);
     expect(mockBundle.calls.confirmDeleteServer).toHaveLength(0);
+  });
+
+  test('requestUpdateRestart confirms discard when RawConfig is dirty and handles cancel, confirm, and failure', async () => {
+    const t = translator('en_US');
+    const initialText = makeConfigText({ alpha: { command: '/bin/echo' } });
+    let discardOutcome: 'cancel' | 'confirm' | 'error' | 'throw' = 'cancel';
+
+    const mockBundle = createMockAppClient(
+      makeSnapshot({
+        configText: initialText,
+        revision: DEFAULT_REVISION,
+        update: { phase: 'ready', availableVersion: '0.10.0' },
+      }),
+      {
+        confirmDiscard: async () => {
+          mockBundle.calls.confirmDiscard += 1;
+          if (discardOutcome === 'throw') throw new Error('dialog unavailable');
+          if (discardOutcome === 'error') {
+            return {
+              ok: false,
+              error: { code: 'OperationFailed', message: 'Dialog failed' },
+            };
+          }
+          return { ok: true, value: discardOutcome === 'confirm' };
+        },
+      },
+    );
+    const harness = renderGatewayContext(mockBundle.client);
+
+    await waitFor(() => {
+      expect(harness.ctx.config).not.toBeNull();
+    });
+
+    act(() => {
+      harness.ctx.openUpdatesModal();
+      harness.ctx.setDoc({ text: `${initialText}\n`, revision: DEFAULT_REVISION, dirty: true });
+    });
+    await waitFor(() => {
+      expect(harness.ctx.activeModal).toEqual({ kind: 'updates' });
+    });
+
+    // 1. User cancels confirmDiscard -> updatesRestart is not called, modal remains open.
+    discardOutcome = 'cancel';
+    await act(async () => {
+      await harness.ctx.requestUpdateRestart();
+    });
+    expect(mockBundle.calls.confirmDiscard).toBe(1);
+    expect(mockBundle.calls.updatesRestart).toBe(0);
+    expect(harness.ctx.activeModal).toEqual({ kind: 'updates' });
+
+    // 2. confirmDiscard returns ok: false -> error is populated, updatesRestart is not called.
+    discardOutcome = 'error';
+    await act(async () => {
+      await harness.ctx.requestUpdateRestart();
+    });
+    expect(mockBundle.calls.confirmDiscard).toBe(2);
+    expect(mockBundle.calls.updatesRestart).toBe(0);
+    expect(harness.ctx.error).toBe('OperationFailed: Dialog failed');
+
+    // 3. confirmDiscard throws -> localized error is populated, updatesRestart is not called.
+    discardOutcome = 'throw';
+    await act(async () => {
+      await harness.ctx.requestUpdateRestart();
+    });
+    expect(mockBundle.calls.confirmDiscard).toBe(3);
+    expect(mockBundle.calls.updatesRestart).toBe(0);
+    expect(harness.ctx.error).toBe(t('app.confirmUnavailable'));
+
+    // 4. User confirms discard -> updates modal closes and updatesRestart is called.
+    discardOutcome = 'confirm';
+    await act(async () => {
+      await harness.ctx.requestUpdateRestart();
+    });
+    expect(mockBundle.calls.confirmDiscard).toBe(4);
+    expect(mockBundle.calls.updatesRestart).toBe(1);
+    expect(harness.ctx.activeModal).toBeNull();
+  });
+
+  test('KeyUnavailable configError preserves parsed config when clean so Settings can repair token', async () => {
+    const initialText = makeConfigText(
+      { bear: { command: '/usr/bin/env' } },
+      { token: undefined, tokenRef: 'gateway' },
+    );
+    const mockBundle = createMockAppClient(
+      makeSnapshot({
+        configText: initialText,
+        gateway: {
+          configError: {
+            occurrenceId: 'key-err-1',
+            code: 'KeyUnavailable',
+            message: 'Keychain item could not be read',
+          },
+        },
+      }),
+    );
+    const harness = renderGatewayContext(mockBundle.client);
+
+    await waitFor(() => {
+      expect(harness.ctx.snapshot).not.toBeNull();
+    });
+
+    expect(harness.ctx.dirty).toBe(false);
+    expect(harness.ctx.config).not.toBeNull();
+    expect(harness.ctx.config?.gateway.tokenRef).toBe('gateway');
+    expect(harness.ctx.existingNames.has('bear')).toBe(true);
+  });
+
+  test('discardRawConfig, importExternalServers dirty/error guards, and migrateKeys update snapshot and doc', async () => {
+    const initialText = makeConfigText({ bear: { command: '/usr/bin/env' } });
+    let allowDiscard = false;
+    let importShouldFail = false;
+
+    const mockBundle = createMockAppClient(
+      makeSnapshot({
+        configText: initialText,
+        revision: DEFAULT_REVISION,
+        gateway: {
+          keyMigration: { gateway: true, servers: ['bear'] },
+        },
+      }),
+      {
+        confirmDiscard: async () => {
+          mockBundle.calls.confirmDiscard += 1;
+          return { ok: true, value: allowDiscard };
+        },
+        importExternalServers: async (params) => {
+          mockBundle.calls.importExternalServers.push(params);
+          if (importShouldFail) {
+            return {
+              ok: false,
+              error: { code: 'ImportFailed', message: 'Could not read external file' },
+            };
+          }
+          const importedSnapshot = makeSnapshot({
+            configText: makeConfigText({
+              bear: { command: '/usr/bin/env' },
+              cursor_srv: { command: 'npx' },
+            }),
+            revision: SECOND_REVISION,
+          });
+          mockBundle.emitSnapshot(importedSnapshot);
+          return { ok: true, value: { snapshot: importedSnapshot, importedCount: 1 } };
+        },
+      },
+    );
+    const harness = renderGatewayContext(mockBundle.client);
+
+    await waitFor(() => {
+      expect(harness.ctx.doc).not.toBeNull();
+    });
+
+    // Make doc dirty.
+    act(() => {
+      harness.ctx.setDoc({ text: '{"dirty":true}', revision: DEFAULT_REVISION, dirty: true });
+    });
+    expect(harness.ctx.dirty).toBe(true);
+
+    // importExternalServers returns null immediately without calling client when doc is dirty.
+    let importedCount: number | null = 99;
+    await act(async () => {
+      importedCount = await harness.ctx.importExternalServers();
+    });
+    expect(importedCount).toBeNull();
+    expect(mockBundle.calls.importExternalServers).toHaveLength(0);
+
+    // discardRawConfig does not reload when confirmDiscard returns false.
+    allowDiscard = false;
+    await act(async () => {
+      await harness.ctx.discardRawConfig();
+    });
+    expect(mockBundle.calls.confirmDiscard).toBe(1);
+    expect(harness.ctx.dirty).toBe(true);
+
+    // discardRawConfig reloads clean configText when confirmDiscard returns true.
+    allowDiscard = true;
+    await act(async () => {
+      await harness.ctx.discardRawConfig();
+    });
+    expect(mockBundle.calls.confirmDiscard).toBe(2);
+    expect(harness.ctx.dirty).toBe(false);
+    expect(harness.ctx.doc?.text).toBe(initialText);
+
+    // importExternalServers surfaces error and returns null when client returns ok: false.
+    importShouldFail = true;
+    await act(async () => {
+      importedCount = await harness.ctx.importExternalServers();
+    });
+    expect(importedCount).toBeNull();
+    expect(mockBundle.calls.importExternalServers).toEqual([
+      { expectedRevision: DEFAULT_REVISION },
+    ]);
+    expect(harness.ctx.error).toBe('ImportFailed: Could not read external file');
+
+    // importExternalServers succeeds when clean and ok: true.
+    importShouldFail = false;
+    await act(async () => {
+      importedCount = await harness.ctx.importExternalServers();
+    });
+    expect(importedCount).toBe(1);
+    expect(harness.ctx.doc?.revision).toBe(SECOND_REVISION);
+
+    // migrateKeys({ gateway: true, servers: ['bear'] }) invokes client.migrateKeys and updates snapshot & doc.
+    let migratedOk = false;
+    await act(async () => {
+      migratedOk = await harness.ctx.migrateKeys({ gateway: true, servers: ['bear'] });
+    });
+    expect(migratedOk).toBe(true);
+    expect(mockBundle.calls.migrateKeys).toEqual([
+      {
+        gateway: true,
+        servers: ['bear'],
+        expectedRevision: SECOND_REVISION,
+      },
+    ]);
+    expect(harness.ctx.snapshot?.gateway.keyMigration).toEqual({ gateway: false, servers: [] });
+    expect(harness.ctx.doc?.dirty).toBe(false);
   });
 });

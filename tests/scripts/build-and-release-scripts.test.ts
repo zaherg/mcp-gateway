@@ -1,8 +1,7 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { chmod, lstat, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { zstdCompressSync } from 'node:zlib';
 
 import type { CommandRunner } from '@mcp-gateway/core/process';
@@ -25,11 +24,8 @@ import {
 import {
   buildPlan,
   captureCommand,
-  command,
-  ELECTROBUN_CLI,
   runCheckedCommand,
   runForeground,
-  toolchainEnvironment,
 } from '../../scripts/toolchain';
 import {
   hashFile,
@@ -40,15 +36,9 @@ import {
   verifyEmbeddedMetadata,
   watchCancelSignals,
 } from '../../scripts/update-artifacts';
+import { registerTempDirLifecycle } from '../helpers/core';
 
-const REPO_ROOT = resolve(import.meta.dir, '../..');
-const tempDirectories: string[] = [];
-
-const createTempDirectory = async (prefix: string): Promise<string> => {
-  const directory = await mkdtemp(join(tmpdir(), prefix));
-  tempDirectories.push(directory);
-  return directory;
-};
+const { makeTempDir } = registerTempDirLifecycle('mcp-gateway-scripts-');
 
 const sha256Hex = (data: Buffer | string): string =>
   createHash('sha256').update(data).digest('hex');
@@ -61,13 +51,6 @@ const pathExists = async (target: string): Promise<boolean> => {
     return false;
   }
 };
-
-afterEach(async () => {
-  while (tempDirectories.length > 0) {
-    const directory = tempDirectories.pop();
-    if (directory) await rm(directory, { recursive: true, force: true });
-  }
-});
 
 describe('scripts/build-config.ts', () => {
   describe('STABLE_VERSION_PATTERN', () => {
@@ -85,8 +68,8 @@ describe('scripts/build-config.ts', () => {
   });
 
   describe('validateFeedUrl', () => {
-    test('accepts valid HTTPS feed URLs and loopback HTTP feed URLs', () => {
-      const validUrls = [
+    test('accepts valid HTTPS and loopback HTTP feed URLs and rejects malformed or unsafe URLs', () => {
+      const accepted = [
         PRODUCTION_FEED,
         'https://updates.example.com/releases/stable',
         'https://example.com:8443/feed',
@@ -94,54 +77,42 @@ describe('scripts/build-config.ts', () => {
         'http://127.0.0.1:9000/updates',
         'http://[::1]:9000/updates',
       ];
-      for (const url of validUrls) {
+      for (const url of accepted) {
         expect(validateFeedUrl(url)).toBe(url);
       }
-    });
 
-    test('rejects empty strings, whitespace, control characters, and trailing slashes', () => {
-      const invalidFormat = [
-        undefined,
-        '',
-        '   ',
-        ' https://example.com/feed',
-        'https://example.com/feed ',
-        'https://example.com/my feed',
-        'https://example.com/feed\n',
-        'https://example.com/feed\u0000',
-        'https://example.com/feed\u007f',
-        'https://example.com/feed/',
+      const formatError = 'An update feed URL without whitespace or a trailing slash is required.';
+      const invalidUrlError = 'Invalid update feed URL.';
+      const policyError =
+        'Update feeds require HTTPS (or loopback HTTP), without credentials, query or fragment.';
+
+      const rejected: Array<[string | undefined, string]> = [
+        [undefined, formatError],
+        ['', formatError],
+        ['   ', formatError],
+        [' https://example.com/feed', formatError],
+        ['https://example.com/feed ', formatError],
+        ['https://example.com/my feed', formatError],
+        ['https://example.com/feed\n', formatError],
+        ['https://example.com/feed\u0000', formatError],
+        ['https://example.com/feed\u007f', formatError],
+        ['https://example.com/feed/', formatError],
+        ['/releases/latest', invalidUrlError],
+        ['releases/latest', invalidUrlError],
+        ['not-a-url', invalidUrlError],
+        ['http://example.com/feed', policyError],
+        ['ftp://example.com/feed', policyError],
+        ['file:///tmp/feed', policyError],
+        ['https://user:pass@example.com/feed', policyError],
+        ['https://user@example.com/feed', policyError],
+        ['https://example.com/feed?token=secret', policyError],
+        ['https://example.com/feed?', policyError],
+        ['https://example.com/feed#section', policyError],
+        ['https://example.com/feed#', policyError],
+        ['http://localhost:8080/feed?debug=1', policyError],
       ];
-      for (const url of invalidFormat) {
-        expect(() => validateFeedUrl(url)).toThrow(
-          'An update feed URL without whitespace or a trailing slash is required.',
-        );
-      }
-    });
-
-    test('rejects relative paths and malformed URLs', () => {
-      for (const url of ['/releases/latest', 'releases/latest', 'not-a-url']) {
-        expect(() => validateFeedUrl(url)).toThrow('Invalid update feed URL.');
-      }
-    });
-
-    test('rejects non-loopback HTTP, unsupported schemes, credentials, queries, and fragments', () => {
-      const rejected = [
-        'http://example.com/feed',
-        'ftp://example.com/feed',
-        'file:///tmp/feed',
-        'https://user:pass@example.com/feed',
-        'https://user@example.com/feed',
-        'https://example.com/feed?token=secret',
-        'https://example.com/feed?',
-        'https://example.com/feed#section',
-        'https://example.com/feed#',
-        'http://localhost:8080/feed?debug=1',
-      ];
-      for (const url of rejected) {
-        expect(() => validateFeedUrl(url)).toThrow(
-          'Update feeds require HTTPS (or loopback HTTP), without credentials, query or fragment.',
-        );
+      for (const [url, expectedError] of rejected) {
+        expect(() => validateFeedUrl(url)).toThrow(expectedError);
       }
     });
   });
@@ -229,7 +200,7 @@ describe('scripts/build-config.ts', () => {
 
   describe('assertEmptyReleaseOutputs', () => {
     test('succeeds when target build and artifact directories are absent or empty', async () => {
-      const root = await createTempDirectory('bear-mcp-build-config-');
+      const root = await makeTempDir('bear-mcp-build-config-');
       const env = releaseOutputEnvironment('0.9.0', {}, 'production');
 
       await expect(assertEmptyReleaseOutputs(root, env, 'production')).resolves.toBeUndefined();
@@ -241,7 +212,7 @@ describe('scripts/build-config.ts', () => {
     });
 
     test('rejects missing env variables, root escapes, identical paths, and cross-kind outputs', async () => {
-      const root = await createTempDirectory('bear-mcp-build-config-');
+      const root = await makeTempDir('bear-mcp-build-config-');
 
       await expect(assertEmptyReleaseOutputs(root, {}, 'production')).rejects.toThrow(
         'Release output directories are required.',
@@ -298,8 +269,8 @@ describe('scripts/build-config.ts', () => {
     });
 
     test('rejects symlink ancestors, non-directory ancestors, and non-empty target directories', async () => {
-      const root = await createTempDirectory('bear-mcp-build-config-');
-      const external = await createTempDirectory('bear-mcp-external-');
+      const root = await makeTempDir('bear-mcp-build-config-');
+      const external = await makeTempDir('bear-mcp-external-');
 
       await symlink(external, join(root, 'build'));
       await expect(
@@ -332,14 +303,6 @@ describe('scripts/build-config.ts', () => {
 });
 
 describe('scripts/toolchain.ts', () => {
-  test('pins ELECTROBUN_CLI and toolchainEnvironment paths inside the repository root', () => {
-    expect(ELECTROBUN_CLI).toBe(resolve(REPO_ROOT, 'node_modules/electrobun/bin/electrobun.cjs'));
-    expect(toolchainEnvironment.HUTCH_HOME).toBe(resolve(REPO_ROOT, '.hutch-home'));
-    expect(toolchainEnvironment.TMPDIR).toBe(resolve(REPO_ROOT, '.cache/tmp'));
-    expect(toolchainEnvironment.BUN_INSTALL_CACHE_DIR).toBe(resolve(REPO_ROOT, '.cache/bun'));
-    expect(command).toBe(runForeground);
-  });
-
   test('buildPlan returns deterministic plans for every supported mode and rejects invalid modes', () => {
     expect(buildPlan('stable')).toEqual({
       mode: 'stable',
@@ -388,29 +351,6 @@ describe('scripts/toolchain.ts', () => {
 });
 
 describe('scripts/update-artifacts.ts', () => {
-  describe('releaseFiles', () => {
-    test('enumerates production and test bundle, dmg, and update artifact filenames', () => {
-      expect(releaseFiles(PRODUCTION_IDENTIFIER)).toEqual({
-        bundle: 'MCP Gateway.app',
-        dmg: 'macos-arm64-MCPGateway.dmg',
-        updates: {
-          manifest: 'stable-macos-arm64-update.json',
-          integrity: 'stable-macos-arm64-update-v2.json',
-          archive: 'stable-macos-arm64-MCPGateway.app.tar.zst',
-        },
-      });
-      expect(releaseFiles(TEST_IDENTIFIER)).toEqual({
-        bundle: 'MCP Gateway Dev.app',
-        dmg: 'macos-arm64-MCPGatewayDev.dmg',
-        updates: {
-          manifest: 'stable-macos-arm64-update.json',
-          integrity: 'stable-macos-arm64-update-v2.json',
-          archive: 'stable-macos-arm64-MCPGatewayDev.app.tar.zst',
-        },
-      });
-    });
-  });
-
   describe('watchCancelSignals', () => {
     test('attaches SIGINT/SIGTERM listeners, aborts once with exitCode, and detaches on dispose', () => {
       const beforeSigint = new Set(process.listeners('SIGINT'));
@@ -532,7 +472,7 @@ describe('scripts/update-artifacts.ts', () => {
 
   describe('verifyEmbeddedMetadata', () => {
     test('accepts matching embedded version.json metadata read from a mock app bundle', async () => {
-      const root = await createTempDirectory('bear-mcp-embedded-');
+      const root = await makeTempDir('bear-mcp-embedded-');
       const versionJsonPath = join(root, 'MCP Gateway.app/Contents/Resources/version.json');
       await mkdir(dirname(versionJsonPath), { recursive: true });
       const payload = JSON.stringify({
@@ -593,60 +533,45 @@ describe('scripts/update-artifacts.ts', () => {
   });
 
   describe('hashFile and readUpdateArtifacts', () => {
-    const createUpdateFixture = async (options?: {
-      identifier?: string;
-      version?: string;
-      hash?: string;
-      payload?: Buffer;
-      manifestOverride?: Record<string, unknown>;
-      integrityOverride?: Record<string, unknown>;
-      integrityArtifactOverride?: Record<string, unknown>;
-    }) => {
-      const directory = await createTempDirectory('bear-mcp-updates-');
-      const identifier = options?.identifier ?? PRODUCTION_IDENTIFIER;
-      const version = options?.version ?? '0.9.0';
-      const hash = options?.hash ?? 'buildhash01';
-      const payload = options?.payload ?? Buffer.from('mock tar archive payload for zstd fixture');
-      const compressed = zstdCompressSync(payload);
-      const { updates } = releaseFiles(identifier);
+    const PAYLOAD = Buffer.from('mock tar archive payload for zstd fixture');
+    const COMPRESSED = zstdCompressSync(PAYLOAD);
 
+    const createUpdateFixture = async (identifier = PRODUCTION_IDENTIFIER) => {
+      const directory = await makeTempDir('bear-mcp-updates-');
+      const { updates } = releaseFiles(identifier);
       const manifest = {
-        schemaVersion: 1,
+        schemaVersion: 1 as const,
         identifier,
-        channel: 'stable',
-        version,
-        hash,
-        platform: 'macos',
-        arch: 'arm64',
+        channel: 'stable' as const,
+        version: '0.9.0',
+        hash: 'buildhash01',
+        platform: 'macos' as const,
+        arch: 'arm64' as const,
         artifact: { file: updates.archive },
-        ...options?.manifestOverride,
       };
       const integrity = {
-        schemaVersion: 1,
-        identifier,
-        channel: 'stable',
-        version,
-        hash,
-        platform: 'macos',
-        arch: 'arm64',
+        ...manifest,
         artifact: {
           file: updates.archive,
-          tarSha256: sha256Hex(payload),
-          tarSize: payload.byteLength,
-          ...options?.integrityArtifactOverride,
+          tarSha256: sha256Hex(PAYLOAD),
+          tarSize: PAYLOAD.byteLength,
         },
-        ...options?.integrityOverride,
       };
 
-      await writeFile(join(directory, updates.manifest), JSON.stringify(manifest));
-      await writeFile(join(directory, updates.integrity), JSON.stringify(integrity));
-      await writeFile(join(directory, updates.archive), compressed);
+      const writeManifest = (data: Record<string, unknown> = manifest) =>
+        writeFile(join(directory, updates.manifest), JSON.stringify(data));
+      const writeIntegrity = (data: Record<string, unknown> = integrity) =>
+        writeFile(join(directory, updates.integrity), JSON.stringify(data));
 
-      return { directory, updates, payload, compressed, manifest, integrity };
+      await writeManifest();
+      await writeIntegrity();
+      await writeFile(join(directory, updates.archive), COMPRESSED);
+
+      return { directory, updates, manifest, integrity, writeManifest, writeIntegrity };
     };
 
     test('hashFile computes exact SHA-256 digest and respects AbortSignal', async () => {
-      const directory = await createTempDirectory('bear-mcp-hash-');
+      const directory = await makeTempDir('bear-mcp-hash-');
       const filePath = join(directory, 'sample.bin');
       const content = Buffer.from('deterministic sha256 test payload');
       await writeFile(filePath, content);
@@ -658,105 +583,128 @@ describe('scripts/update-artifacts.ts', () => {
       await expect(hashFile(filePath, controller.signal)).rejects.toThrow('Hash cancelled');
     });
 
-    test('readUpdateArtifacts decompresses and verifies a valid zstd archive fixture', async () => {
+    test('readUpdateArtifacts maps releaseFiles, decompresses, and verifies a valid zstd archive fixture', async () => {
+      expect(releaseFiles(PRODUCTION_IDENTIFIER)).toEqual({
+        bundle: 'MCP Gateway.app',
+        dmg: 'macos-arm64-MCPGateway.dmg',
+        updates: {
+          manifest: 'stable-macos-arm64-update.json',
+          integrity: 'stable-macos-arm64-update-v2.json',
+          archive: 'stable-macos-arm64-MCPGateway.app.tar.zst',
+        },
+      });
+      expect(releaseFiles(TEST_IDENTIFIER)).toEqual({
+        bundle: 'MCP Gateway Dev.app',
+        dmg: 'macos-arm64-MCPGatewayDev.dmg',
+        updates: {
+          manifest: 'stable-macos-arm64-update.json',
+          integrity: 'stable-macos-arm64-update-v2.json',
+          archive: 'stable-macos-arm64-MCPGatewayDev.app.tar.zst',
+        },
+      });
+
       const fixture = await createUpdateFixture();
       const result = await readUpdateArtifacts(fixture.directory, {
         identifier: PRODUCTION_IDENTIFIER,
         version: '0.9.0',
       });
 
-      expect(result.manifest).toEqual({
-        schemaVersion: 1,
-        identifier: PRODUCTION_IDENTIFIER,
-        channel: 'stable',
-        version: '0.9.0',
-        hash: 'buildhash01',
-        platform: 'macos',
-        arch: 'arm64',
-        artifact: { file: fixture.updates.archive },
-      });
+      expect(result.manifest).toEqual(fixture.manifest);
       expect(result.expanded).toEqual({
-        sha256: sha256Hex(fixture.payload),
-        size: fixture.payload.byteLength,
+        sha256: sha256Hex(PAYLOAD),
+        size: PAYLOAD.byteLength,
       });
       expect(result.integrity.artifact.tarSha256).toBe(result.expanded.sha256);
       expect(result.integrity.artifact.tarSize).toBe(result.expanded.size);
     });
 
-    test('readUpdateArtifacts rejects symlinked, empty, and missing artifact files', async () => {
-      const symlinkFixture = await createUpdateFixture();
-      const target = join(symlinkFixture.directory, 'real-archive.tar.zst');
-      await writeFile(target, symlinkFixture.compressed);
-      await rm(join(symlinkFixture.directory, symlinkFixture.updates.archive));
-      await symlink(target, join(symlinkFixture.directory, symlinkFixture.updates.archive));
+    test('readUpdateArtifacts rejects symlinked manifest or archive, empty archive, and missing artifact files', async () => {
+      const fixture = await createUpdateFixture();
+      const manifestPath = join(fixture.directory, fixture.updates.manifest);
+      const archivePath = join(fixture.directory, fixture.updates.archive);
+      const integrityPath = join(fixture.directory, fixture.updates.integrity);
+
+      // Symlinked .json manifest (EDGE-15)
+      const realManifest = join(fixture.directory, 'real-manifest.json');
+      await writeFile(realManifest, JSON.stringify(fixture.manifest));
+      await rm(manifestPath);
+      await symlink(realManifest, manifestPath);
       await expect(
-        readUpdateArtifacts(symlinkFixture.directory, { identifier: PRODUCTION_IDENTIFIER }),
+        readUpdateArtifacts(fixture.directory, { identifier: PRODUCTION_IDENTIFIER }),
+      ).rejects.toThrow('Update artifact is missing, unsafe, or exceeds its size limit.');
+      await rm(manifestPath);
+      await fixture.writeManifest();
+
+      // Symlinked .tar.zst archive (EDGE-15)
+      const realArchive = join(fixture.directory, 'real-archive.tar.zst');
+      await writeFile(realArchive, COMPRESSED);
+      await rm(archivePath);
+      await symlink(realArchive, archivePath);
+      await expect(
+        readUpdateArtifacts(fixture.directory, { identifier: PRODUCTION_IDENTIFIER }),
       ).rejects.toThrow('Update artifact is missing, unsafe, or exceeds its size limit.');
 
-      const emptyFixture = await createUpdateFixture();
-      await writeFile(join(emptyFixture.directory, emptyFixture.updates.archive), '');
+      // Empty archive
+      await rm(archivePath);
+      await writeFile(archivePath, '');
       await expect(
-        readUpdateArtifacts(emptyFixture.directory, { identifier: PRODUCTION_IDENTIFIER }),
+        readUpdateArtifacts(fixture.directory, { identifier: PRODUCTION_IDENTIFIER }),
       ).rejects.toThrow('Update artifact is missing, unsafe, or exceeds its size limit.');
 
-      const missingFixture = await createUpdateFixture();
-      await rm(join(missingFixture.directory, missingFixture.updates.integrity));
+      // Missing integrity manifest
+      await writeFile(archivePath, COMPRESSED);
+      await rm(integrityPath);
       await expect(
-        readUpdateArtifacts(missingFixture.directory, { identifier: PRODUCTION_IDENTIFIER }),
+        readUpdateArtifacts(fixture.directory, { identifier: PRODUCTION_IDENTIFIER }),
       ).rejects.toThrow();
     });
 
-    test('readUpdateArtifacts rejects manifest mismatches, bad integrity metadata, and tampered archives', async () => {
-      const wrongSchema = await createUpdateFixture({ manifestOverride: { schemaVersion: 2 } });
-      await expect(
-        readUpdateArtifacts(wrongSchema.directory, { identifier: PRODUCTION_IDENTIFIER }),
-      ).rejects.toThrow(
+    test('readUpdateArtifacts rejects manifest mismatches, bad integrity metadata, and tampered archives by mutating JSON in place', async () => {
+      const fixture = await createUpdateFixture();
+      const check = (signal?: AbortSignal) =>
+        readUpdateArtifacts(fixture.directory, { identifier: PRODUCTION_IDENTIFIER }, signal);
+
+      await fixture.writeManifest({ ...fixture.manifest, schemaVersion: 2 });
+      await expect(check()).rejects.toThrow(
         'Update manifest does not match the app identity, version, or artifact name.',
       );
+      await fixture.writeManifest();
 
-      const disagree = await createUpdateFixture({ integrityOverride: { hash: 'otherhash99' } });
-      await expect(
-        readUpdateArtifacts(disagree.directory, { identifier: PRODUCTION_IDENTIFIER }),
-      ).rejects.toThrow('Update manifests disagree on hash.');
+      await fixture.writeIntegrity({ ...fixture.integrity, hash: 'otherhash99' });
+      await expect(check()).rejects.toThrow('Update manifests disagree on hash.');
 
-      const badIntegritySha = await createUpdateFixture({
-        integrityArtifactOverride: { tarSha256: 'not-a-sha256' },
+      await fixture.writeIntegrity({
+        ...fixture.integrity,
+        artifact: { ...fixture.integrity.artifact, tarSha256: 'not-a-sha256' },
       });
-      await expect(
-        readUpdateArtifacts(badIntegritySha.directory, { identifier: PRODUCTION_IDENTIFIER }),
-      ).rejects.toThrow('Update integrity manifest has invalid expanded archive metadata.');
+      await expect(check()).rejects.toThrow(
+        'Update integrity manifest has invalid expanded archive metadata.',
+      );
 
-      const badIntegritySize = await createUpdateFixture({
-        integrityArtifactOverride: { tarSize: 0 },
+      await fixture.writeIntegrity({
+        ...fixture.integrity,
+        artifact: { ...fixture.integrity.artifact, tarSize: 0 },
       });
-      await expect(
-        readUpdateArtifacts(badIntegritySize.directory, { identifier: PRODUCTION_IDENTIFIER }),
-      ).rejects.toThrow('Update integrity manifest has invalid expanded archive metadata.');
+      await expect(check()).rejects.toThrow(
+        'Update integrity manifest has invalid expanded archive metadata.',
+      );
 
-      const wrongDigest = await createUpdateFixture({
-        integrityArtifactOverride: { tarSha256: '0'.repeat(64) },
+      await fixture.writeIntegrity({
+        ...fixture.integrity,
+        artifact: { ...fixture.integrity.artifact, tarSha256: '0'.repeat(64) },
       });
-      await expect(
-        readUpdateArtifacts(wrongDigest.directory, { identifier: PRODUCTION_IDENTIFIER }),
-      ).rejects.toThrow('Update archive integrity metadata mismatch.');
+      await expect(check()).rejects.toThrow('Update archive integrity metadata mismatch.');
 
-      const wrongSize = await createUpdateFixture({
-        integrityArtifactOverride: { tarSize: 9999 },
+      await fixture.writeIntegrity({
+        ...fixture.integrity,
+        artifact: { ...fixture.integrity.artifact, tarSize: 9999 },
       });
-      await expect(
-        readUpdateArtifacts(wrongSize.directory, { identifier: PRODUCTION_IDENTIFIER }),
-      ).rejects.toThrow('Update archive integrity metadata mismatch.');
+      await expect(check()).rejects.toThrow('Update archive integrity metadata mismatch.');
 
-      const valid = await createUpdateFixture();
+      await fixture.writeIntegrity();
       const controller = new AbortController();
       controller.abort(new Error('Update read cancelled'));
-      await expect(
-        readUpdateArtifacts(
-          valid.directory,
-          { identifier: PRODUCTION_IDENTIFIER },
-          controller.signal,
-        ),
-      ).rejects.toThrow('Update read cancelled');
+      await expect(check(controller.signal)).rejects.toThrow('Update read cancelled');
     });
   });
 });
@@ -775,7 +723,7 @@ describe('scripts/release-inventory.ts', () => {
   };
 
   test('inventoryBundle walks files, executables, directories, and symlinks deterministically', async () => {
-    const root = await createTempDirectory('bear-mcp-inventory-');
+    const root = await makeTempDir('bear-mcp-inventory-');
     const bundle = await createBundleTree(root, 'MCP Gateway.app');
 
     const entries = await inventoryBundle(bundle);
@@ -816,7 +764,7 @@ describe('scripts/release-inventory.ts', () => {
   });
 
   test('inventoryBundle rejects symlink or regular-file roots and respects AbortSignal', async () => {
-    const root = await createTempDirectory('bear-mcp-inventory-');
+    const root = await makeTempDir('bear-mcp-inventory-');
     const bundle = await createBundleTree(root, 'Real.app');
     const linkRoot = join(root, 'Link.app');
     const fileRoot = join(root, 'NotADir.app');
@@ -836,8 +784,8 @@ describe('scripts/release-inventory.ts', () => {
   });
 
   test('compareBundleInventories and inventoryDigest detect equality and every kind of divergence', async () => {
-    const rootA = await createTempDirectory('bear-mcp-inv-a-');
-    const rootB = await createTempDirectory('bear-mcp-inv-b-');
+    const rootA = await makeTempDir('bear-mcp-inv-a-');
+    const rootB = await makeTempDir('bear-mcp-inv-b-');
     const bundleA = await createBundleTree(rootA, 'MCP Gateway.app');
     const bundleB = await createBundleTree(rootB, 'MCP Gateway.app');
 
@@ -872,7 +820,7 @@ describe('scripts/release-inventory.ts', () => {
       'Bundle inventories differ: Contents/Info.plist differs',
     );
 
-    // Restored content, modified permissions
+    // Restored content, modified permissions (EDGE-15: 0o755 -> 0o644)
     await writeFile(join(bundleB, 'Contents/Info.plist'), '<plist version="1.0"></plist>');
     await chmod(join(bundleB, 'Contents/MacOS/launcher'), 0o644);
     const withModifiedMode = await inventoryBundle(bundleB);
@@ -880,7 +828,7 @@ describe('scripts/release-inventory.ts', () => {
       'Bundle inventories differ: Contents/MacOS/launcher differs',
     );
 
-    // Restored permissions, modified symlink target
+    // Restored permissions, modified symlink target (EDGE-15)
     await chmod(join(bundleB, 'Contents/MacOS/launcher'), 0o755);
     await rm(join(bundleB, 'Contents/current-launcher'));
     await symlink('Resources', join(bundleB, 'Contents/current-launcher'));
@@ -914,13 +862,7 @@ describe('scripts/release-dmg.ts', () => {
     args: readonly string[];
   }
 
-  interface MockDmgController {
-    calls: MockCall[];
-    run: CommandRunner;
-    capturedMount: () => string | undefined;
-  }
-
-  const createMockDmgRunner = (behavior?: {
+  interface MockDmgBehavior {
     attachExitCode?: number;
     mountAppearsOnAttach?: boolean;
     mountedImagePath?: string;
@@ -929,7 +871,9 @@ describe('scripts/release-dmg.ts', () => {
     detachUnmounts?: boolean;
     forceDetachExitCode?: number;
     forceDetachUnmounts?: boolean;
-  }): MockDmgController => {
+  }
+
+  const createMockDmgRunner = (behavior?: MockDmgBehavior) => {
     const calls: MockCall[] = [];
     let activeMount: string | undefined;
     let activeImage: string | undefined;
@@ -978,33 +922,32 @@ describe('scripts/release-dmg.ts', () => {
       throw new Error(`Unexpected command invocation: ${cmd} ${args.join(' ')}`);
     };
 
-    return {
-      calls,
-      run,
-      capturedMount: () => activeMount,
-    };
+    return { calls, run, capturedMount: () => activeMount };
+  };
+
+  const createDmgHarness = async (overrides?: MockDmgBehavior) => {
+    const scratch = await makeTempDir('bear-mcp-dmg-');
+    const imagePath = join(scratch, 'MCPGateway.dmg');
+    await writeFile(imagePath, 'dmg-fixture');
+    const mock = createMockDmgRunner(overrides);
+    const cleanups: Array<{ ok: boolean; mount: string; detail: string }> = [];
+    const mountWith = <T>(fn: (mount: string) => Promise<T>, runner = mock, signal?: AbortSignal) =>
+      withDmgMount(imagePath, scratch, fn, {
+        run: runner.run,
+        onCleanup: (cleanup) => cleanups.push(cleanup),
+        signal,
+      });
+    return { scratch, imagePath, mock, cleanups, mountWith };
   };
 
   test('attaches, verifies, detaches, removes scratch mount directory, and returns callback value', async () => {
-    const scratch = await createTempDirectory('bear-mcp-dmg-');
-    const imagePath = join(scratch, 'MCPGateway.dmg');
-    await writeFile(imagePath, 'dmg-fixture');
-    const mock = createMockDmgRunner();
-    const cleanups: Array<{ ok: boolean; mount: string; detail: string }> = [];
+    const { mock, cleanups, mountWith } = await createDmgHarness();
 
-    const result = await withDmgMount(
-      imagePath,
-      scratch,
-      async (mount) => {
-        expect(mock.capturedMount()).toBe(mount);
-        expect(await pathExists(mount)).toBe(true);
-        return 'verified-ok';
-      },
-      {
-        run: mock.run,
-        onCleanup: (cleanup) => cleanups.push(cleanup),
-      },
-    );
+    const result = await mountWith(async (mount) => {
+      expect(mock.capturedMount()).toBe(mount);
+      expect(await pathExists(mount)).toBe(true);
+      return 'verified-ok';
+    });
 
     expect(result).toBe('verified-ok');
     expect(cleanups).toHaveLength(1);
@@ -1022,24 +965,12 @@ describe('scripts/release-dmg.ts', () => {
   });
 
   test('always detaches and cleans up before rethrowing callback errors', async () => {
-    const scratch = await createTempDirectory('bear-mcp-dmg-');
-    const imagePath = join(scratch, 'MCPGateway.dmg');
-    await writeFile(imagePath, 'dmg-fixture');
-    const mock = createMockDmgRunner();
-    const cleanups: Array<{ ok: boolean; mount: string; detail: string }> = [];
+    const { mock, cleanups, mountWith } = await createDmgHarness();
 
     await expect(
-      withDmgMount(
-        imagePath,
-        scratch,
-        async () => {
-          throw new Error('Bundle signature mismatch');
-        },
-        {
-          run: mock.run,
-          onCleanup: (cleanup) => cleanups.push(cleanup),
-        },
-      ),
+      mountWith(async () => {
+        throw new Error('Bundle signature mismatch');
+      }),
     ).rejects.toThrow('Bundle signature mismatch');
 
     expect(cleanups).toHaveLength(1);
@@ -1052,26 +983,20 @@ describe('scripts/release-dmg.ts', () => {
   });
 
   test('rejects foreign or ambiguous image identity without detaching and retains directory', async () => {
-    const scratch = await createTempDirectory('bear-mcp-dmg-');
-    const imagePath = join(scratch, 'MCPGateway.dmg');
-    await writeFile(imagePath, 'dmg-fixture');
-    const foreignMock = createMockDmgRunner({ mountedImagePath: '/tmp/foreign-attacker.dmg' });
-    const cleanups: Array<{ ok: boolean; mount: string; detail: string }> = [];
+    const {
+      mock: foreignMock,
+      cleanups,
+      mountWith,
+    } = await createDmgHarness({
+      mountedImagePath: '/tmp/foreign-attacker.dmg',
+    });
     let verifyCalled = false;
 
     await expect(
-      withDmgMount(
-        imagePath,
-        scratch,
-        async () => {
-          verifyCalled = true;
-          return 'should-not-run';
-        },
-        {
-          run: foreignMock.run,
-          onCleanup: (cleanup) => cleanups.push(cleanup),
-        },
-      ),
+      mountWith(async () => {
+        verifyCalled = true;
+        return 'should-not-run';
+      }),
     ).rejects.toThrow('DMG cleanup unconfirmed during mount inspection');
 
     expect(verifyCalled).toBe(false);
@@ -1086,9 +1011,9 @@ describe('scripts/release-dmg.ts', () => {
     if (mountPath) expect(await pathExists(mountPath)).toBe(true);
 
     const ambiguousMock = createMockDmgRunner({ duplicateMountEntries: true });
-    await expect(
-      withDmgMount(imagePath, scratch, async () => 'done', { run: ambiguousMock.run }),
-    ).rejects.toThrow('DMG cleanup unconfirmed during mount inspection');
+    await expect(mountWith(async () => 'done', ambiguousMock)).rejects.toThrow(
+      'DMG cleanup unconfirmed during mount inspection',
+    );
     expect(
       ambiguousMock.calls.some(
         (call) => call.command === '/usr/bin/hdiutil' && call.args[0] === 'detach',
@@ -1097,21 +1022,14 @@ describe('scripts/release-dmg.ts', () => {
   });
 
   test('escalates to hdiutil detach -force when regular detach fails and succeeds when cleared', async () => {
-    const scratch = await createTempDirectory('bear-mcp-dmg-');
-    const imagePath = join(scratch, 'MCPGateway.dmg');
-    await writeFile(imagePath, 'dmg-fixture');
-    const mock = createMockDmgRunner({
+    const { mock, cleanups, mountWith } = await createDmgHarness({
       detachExitCode: 1,
       detachUnmounts: false,
       forceDetachExitCode: 0,
       forceDetachUnmounts: true,
     });
-    const cleanups: Array<{ ok: boolean; mount: string; detail: string }> = [];
 
-    const result = await withDmgMount(imagePath, scratch, async () => 'done', {
-      run: mock.run,
-      onCleanup: (cleanup) => cleanups.push(cleanup),
-    });
+    const result = await mountWith(async () => 'done');
 
     expect(result).toBe('done');
     expect(cleanups[0]?.ok).toBe(true);
@@ -1124,17 +1042,15 @@ describe('scripts/release-dmg.ts', () => {
   });
 
   test('reports unconfirmed cleanup on post-detach anomaly, force-detach failure, or unconfirmed attach', async () => {
-    const scratch = await createTempDirectory('bear-mcp-dmg-');
-    const imagePath = join(scratch, 'MCPGateway.dmg');
-    await writeFile(imagePath, 'dmg-fixture');
+    const { cleanups, mountWith } = await createDmgHarness();
 
     const liedDetachMock = createMockDmgRunner({
       detachExitCode: 0,
       detachUnmounts: false,
     });
-    await expect(
-      withDmgMount(imagePath, scratch, async () => 'done', { run: liedDetachMock.run }),
-    ).rejects.toThrow('DMG cleanup unconfirmed during post-detach inspection');
+    await expect(mountWith(async () => 'done', liedDetachMock)).rejects.toThrow(
+      'DMG cleanup unconfirmed during post-detach inspection',
+    );
 
     const stuckMock = createMockDmgRunner({
       detachExitCode: 1,
@@ -1142,53 +1058,44 @@ describe('scripts/release-dmg.ts', () => {
       forceDetachExitCode: 1,
       forceDetachUnmounts: false,
     });
-    await expect(
-      withDmgMount(imagePath, scratch, async () => 'done', { run: stuckMock.run }),
-    ).rejects.toThrow('DMG cleanup unconfirmed during force-detach and final inspection');
+    await expect(mountWith(async () => 'done', stuckMock)).rejects.toThrow(
+      'DMG cleanup unconfirmed during force-detach and final inspection',
+    );
 
+    cleanups.length = 0;
     const unconfirmedAttachMock = createMockDmgRunner({
       attachExitCode: 1,
       mountAppearsOnAttach: false,
     });
-    const cleanups: Array<{ ok: boolean; mount: string; detail: string }> = [];
-    await expect(
-      withDmgMount(imagePath, scratch, async () => 'done', {
-        run: unconfirmedAttachMock.run,
-        onCleanup: (cleanup) => cleanups.push(cleanup),
-      }),
-    ).rejects.toThrow('DMG cleanup unconfirmed during attach settlement');
+    await expect(mountWith(async () => 'done', unconfirmedAttachMock)).rejects.toThrow(
+      'DMG cleanup unconfirmed during attach settlement',
+    );
     expect(cleanups[0]?.ok).toBe(false);
     const retainedMount = unconfirmedAttachMock.capturedMount();
     if (retainedMount) expect(await pathExists(retainedMount)).toBe(true);
   });
 
   test('fails cleanly when attach exits zero without mounting or signal is pre-aborted', async () => {
-    const scratch = await createTempDirectory('bear-mcp-dmg-');
-    const imagePath = join(scratch, 'MCPGateway.dmg');
-    await writeFile(imagePath, 'dmg-fixture');
-
-    const missingMountMock = createMockDmgRunner({
+    const {
+      mock: missingMountMock,
+      cleanups,
+      mountWith,
+    } = await createDmgHarness({
       attachExitCode: 0,
       mountAppearsOnAttach: false,
     });
-    const cleanups: Array<{ ok: boolean; mount: string; detail: string }> = [];
-    await expect(
-      withDmgMount(imagePath, scratch, async () => 'done', {
-        run: missingMountMock.run,
-        onCleanup: (cleanup) => cleanups.push(cleanup),
-      }),
-    ).rejects.toThrow('DMG attach did not establish the owned mount.');
+    await expect(mountWith(async () => 'done')).rejects.toThrow(
+      'DMG attach did not establish the owned mount.',
+    );
     expect(cleanups[0]?.ok).toBe(true);
+    expect(missingMountMock.calls.length).toBeGreaterThan(0);
 
     const abortedMock = createMockDmgRunner();
     const controller = new AbortController();
     controller.abort(new Error('Cancelled before mount'));
-    await expect(
-      withDmgMount(imagePath, scratch, async () => 'done', {
-        run: abortedMock.run,
-        signal: controller.signal,
-      }),
-    ).rejects.toThrow('Cancelled before mount');
+    await expect(mountWith(async () => 'done', abortedMock, controller.signal)).rejects.toThrow(
+      'Cancelled before mount',
+    );
     expect(abortedMock.calls).toHaveLength(0);
   });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { failure, GatewayError } from '@mcp-gateway/core/errors';
+import { failure } from '@mcp-gateway/core/errors';
 import {
   inIpv4Range,
   ipv4Number,
@@ -21,6 +21,7 @@ import {
   validateOriginHeader,
 } from '@mcp-gateway/core/network';
 import type { GatewayConfig, InterfaceChoice } from '@mcp-gateway/shared/types';
+import { expectAsyncGatewayError, expectGatewayError } from '../helpers/core';
 
 const mustIp = (text: string): number => {
   const value = ipv4Number(text);
@@ -220,15 +221,9 @@ describe('src/core/network', () => {
     expect(loopback.address).toBe('127.0.0.1');
     expect(loopback.kind).toBe('loopback');
 
-    let thrown: unknown;
-    try {
-      selectInterface('203.0.113.1');
-    } catch (error) {
-      thrown = error;
-    }
-    expect(thrown).toBeInstanceOf(GatewayError);
-    expect((thrown as GatewayError).code).toBe('NetworkPolicy');
-    expect((thrown as GatewayError).message).toBe(
+    expectGatewayError(
+      () => selectInterface('203.0.113.1'),
+      'NetworkPolicy',
       'Select a currently assigned private, 100.64.0.0/10 or loopback IPv4 address.',
     );
   });
@@ -354,70 +349,78 @@ describe('src/core/network', () => {
     await expect(rejectSelfProxy(config)).resolves.toBeUndefined();
   });
 
-  test('rejectSelfProxy rejects enabled HTTP upstreams pointing back to the gateway listener', async () => {
+  test('rejectSelfProxy rejects enabled HTTP upstreams pointing back to the gateway listener (including IPv4-mapped IPv6)', async () => {
     for (const url of [
       'http://127.0.0.1:8787/mcp',
+      'http://[::ffff:127.0.0.1]:8787/mcp',
       'http://localhost:8787/mcp',
       'http://0.0.0.0:8787/mcp',
       'http://[::]:8787/mcp',
     ]) {
       const config = makeConfig({ host: '127.0.0.1', port: 8787 }, { loop: { url } });
-      let thrown: unknown;
-      try {
-        await rejectSelfProxy(config);
-      } catch (error) {
-        thrown = error;
-      }
-      expect(thrown).toBeInstanceOf(GatewayError);
-      expect((thrown as GatewayError).code).toBe('NetworkPolicy');
-      expect((thrown as GatewayError).message).toBe(
+      const err = await expectAsyncGatewayError(
+        () => rejectSelfProxy(config),
+        'NetworkPolicy',
         'An upstream must not point back to this gateway listener.',
       );
-      expect(isSelfProxyCancelled(thrown)).toBe(false);
+      expect(isSelfProxyCancelled(err)).toBe(false);
     }
   });
 
-  test('rejectSelfProxy handles pre-aborted signal, expired deadline, and unparseable URL', async () => {
+  test('rejectSelfProxy handles pre-aborted signal, mid-lookup signal abort, expired deadline, unparseable URL, and unresolvable DNS', async () => {
     const stdioOnly = makeConfig({}, { stdio: { command: '/bin/echo' } });
 
     const aborted = new AbortController();
     aborted.abort();
-    let cancelledErr: unknown;
-    try {
-      await rejectSelfProxy(stdioOnly, { signal: aborted.signal });
-    } catch (error) {
-      cancelledErr = error;
-    }
-    expect(cancelledErr).toBeInstanceOf(GatewayError);
-    expect((cancelledErr as GatewayError).code).toBe('Cancelled');
+    const cancelledErr = await expectAsyncGatewayError(
+      () => rejectSelfProxy(stdioOnly, { signal: aborted.signal }),
+      'Cancelled',
+    );
     expect(isSelfProxyCancelled(cancelledErr)).toBe(true);
     expect(isSelfProxyCancelled(failure('NetworkPolicy', 'other'))).toBe(false);
     expect(isSelfProxyCancelled(new Error('plain'))).toBe(false);
     expect(isSelfProxyCancelled(null)).toBe(false);
 
-    let expiredErr: unknown;
-    try {
-      await rejectSelfProxy(stdioOnly, { deadline: Date.now() - 1 });
-    } catch (error) {
-      expiredErr = error;
-    }
-    expect(expiredErr).toBeInstanceOf(GatewayError);
-    expect((expiredErr as GatewayError).code).toBe('NetworkPolicy');
-    expect((expiredErr as GatewayError).message).toBe(
+    await expectAsyncGatewayError(
+      () => rejectSelfProxy(stdioOnly, { deadline: Date.now() - 1 }),
+      'NetworkPolicy',
       'An upstream address could not be checked before the deadline.',
     );
 
     const badUrl = makeConfig({}, { broken: { url: 'not a valid url' } });
-    let badUrlErr: unknown;
-    try {
-      await rejectSelfProxy(badUrl);
-    } catch (error) {
-      badUrlErr = error;
-    }
-    expect(badUrlErr).toBeInstanceOf(GatewayError);
-    expect((badUrlErr as GatewayError).code).toBe('NetworkPolicy');
-    expect((badUrlErr as GatewayError).message).toBe(
+    await expectAsyncGatewayError(
+      () => rejectSelfProxy(badUrl),
+      'NetworkPolicy',
       'An upstream hostname could not be checked for self-proxy recursion.',
+    );
+
+    // Unresolvable RFC 2606 domain on the gateway's own port fails lookup and throws NetworkPolicy.
+    const unresolvable = makeConfig(
+      { host: '127.0.0.1', port: 8787 },
+      { badDns: { url: 'http://nonexistent.invalid:8787/mcp' } },
+    );
+    await expectAsyncGatewayError(
+      () => rejectSelfProxy(unresolvable),
+      'NetworkPolicy',
+      'An upstream hostname could not be checked for self-proxy recursion.',
+    );
+
+    // Mid-lookup signal abort while DNS lookup is in flight throws Cancelled.
+    const lookupConfig = makeConfig(
+      { host: '127.0.0.1', port: 8787 },
+      { local: { url: 'http://localhost:8787/mcp' } },
+    );
+    const midAbort = new AbortController();
+    const lookupPromise = rejectSelfProxy(lookupConfig, { signal: midAbort.signal });
+    midAbort.abort();
+    const midCancelled = await expectAsyncGatewayError(() => lookupPromise, 'Cancelled');
+    expect(isSelfProxyCancelled(midCancelled)).toBe(true);
+
+    // Lookup deadline reached on an HTTP server requiring DNS check throws NetworkPolicy timeout.
+    await expectAsyncGatewayError(
+      () => rejectSelfProxy(lookupConfig, { deadline: Date.now() }),
+      'NetworkPolicy',
+      'An upstream address could not be checked before the deadline.',
     );
   });
 });

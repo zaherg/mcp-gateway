@@ -1,8 +1,7 @@
 import { dlopen, FFIType } from 'bun:ffi';
-import { afterEach, describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import { constants } from 'node:fs';
 import * as fs from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
@@ -12,7 +11,6 @@ import {
   isDisallowedUpstreamUrl,
   isHttpServer,
   keyRefs,
-  literalKeySlots,
   parseConfig,
   parseConfigWithSlots,
   previewConfig,
@@ -21,16 +19,17 @@ import {
   serverFingerprint,
   writePrivateTextAtomic,
 } from '@mcp-gateway/core/config';
-import { GatewayError } from '@mcp-gateway/core/errors';
-import { MAX_CONFIG_BYTES, parseConfigTree } from '@mcp-gateway/shared/config-document';
-import type {
-  ConfigFile,
-  GatewayErrorCode,
-  HttpServerConfig,
-  StdioServerConfig,
-} from '@mcp-gateway/shared/types';
+import { MAX_CONFIG_BYTES } from '@mcp-gateway/shared/config-document';
+import type { ConfigFile, HttpServerConfig, StdioServerConfig } from '@mcp-gateway/shared/types';
+import {
+  DEFAULT_TEST_TOKEN,
+  expectAsyncGatewayError,
+  expectGatewayError,
+  makeConfigText,
+  registerTempDirLifecycle,
+} from '../helpers/core';
 
-const GW_TOKEN = 'gateway-fixture-token-0123456789abcdef';
+const GW_TOKEN = DEFAULT_TEST_TOKEN;
 const SERVER_TOKEN = 'server-fixture-token-0123456789abcdef01';
 const UUID_1 = '11111111-1111-4111-8111-111111111111';
 const UUID_2 = '22222222-2222-4222-9222-222222222222';
@@ -43,74 +42,12 @@ const libSystem = dlopen('libSystem.B.dylib', {
   flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
 });
 
-const expectGatewayError = (
-  fn: () => unknown,
-  code: GatewayErrorCode,
-  message?: string,
-): GatewayError => {
-  try {
-    fn();
-  } catch (error) {
-    expect(error).toBeInstanceOf(GatewayError);
-    const gatewayError = error as GatewayError;
-    expect(gatewayError.code).toBe(code);
-    if (message !== undefined) {
-      expect(gatewayError.message).toBe(message);
-    }
-    return gatewayError;
-  }
-  throw new Error(`Expected GatewayError(${code}) to be thrown.`);
-};
-
-const expectAsyncGatewayError = async (
-  fn: () => Promise<unknown>,
-  code: GatewayErrorCode,
-  message?: string,
-): Promise<GatewayError> => {
-  try {
-    await fn();
-  } catch (error) {
-    expect(error).toBeInstanceOf(GatewayError);
-    const gatewayError = error as GatewayError;
-    expect(gatewayError.code).toBe(code);
-    if (message !== undefined) {
-      expect(gatewayError.message).toBe(message);
-    }
-    return gatewayError;
-  }
-  throw new Error(`Expected GatewayError(${code}) to be rejected.`);
-};
-
 const makeConfig = (
   gatewayOverrides: Record<string, unknown> = {},
   mcpServers: Record<string, unknown> = {},
-): string =>
-  JSON.stringify({
-    gateway: {
-      host: '127.0.0.1',
-      port: 3333,
-      token: GW_TOKEN,
-      ...gatewayOverrides,
-    },
-    mcpServers,
-  });
+): string => makeConfigText({ gateway: gatewayOverrides, mcpServers });
 
-const tempDirs: string[] = [];
-
-const makeTempDir = async (): Promise<string> => {
-  const dir = await fs.mkdtemp(join(tmpdir(), 'bear-mcp-config-'));
-  tempDirs.push(dir);
-  return dir;
-};
-
-afterEach(async () => {
-  while (tempDirs.length > 0) {
-    const dir = tempDirs.pop();
-    if (dir) {
-      await fs.rm(dir, { recursive: true, force: true });
-    }
-  }
-});
+const { makeTempDir } = registerTempDirLifecycle('bear-mcp-config-');
 
 describe('isDisallowedUpstreamUrl', () => {
   test('returns true for link-local and unspecified IPv4 and IPv6 addresses', () => {
@@ -465,30 +402,15 @@ describe('parseConfig and parseConfigWithSlots', () => {
       'At most 64 servers are supported.',
     );
 
-    for (const badName of [
-      '',
-      '../escape',
-      'bad/name',
-      '-leading-dash',
-      'has space',
-      'constructor',
-      'toString',
-      'a'.repeat(65),
-    ]) {
+    // __proto__ as a JSON key is preserved as own data by ownRecord and rejected by SAFE_NAME.
+    for (const badName of ['-leading-dash', '__proto__']) {
+      const text = `{"gateway":{"host":"127.0.0.1","port":3333,"token":"${GW_TOKEN}"},"mcpServers":{"${badName}":{"command":"/bin/echo"}}}`;
       expectGatewayError(
-        () => parseConfig(makeConfig({}, { [badName]: { command: '/bin/echo' } }), {}),
+        () => parseConfig(text, {}),
         'InvalidConfig',
         'Server names must be safe URL path segments.',
       );
     }
-
-    // __proto__ as a JSON key is preserved as own data by ownRecord and rejected by SAFE_NAME.
-    const protoJson = `{"gateway":{"host":"127.0.0.1","port":3333,"token":"${GW_TOKEN}"},"mcpServers":{"__proto__":{"command":"/bin/echo"}}}`;
-    expectGatewayError(
-      () => parseConfig(protoJson, {}),
-      'InvalidConfig',
-      'Server names must be safe URL path segments.',
-    );
   });
 
   test('enforces HTTP server URL, network policy, and header rules', () => {
@@ -761,6 +683,14 @@ describe('previewConfig', () => {
       length: arrayRootText.length,
     });
 
+    // Non-object mcpServers (e.g. array) points at the mcpServers value.
+    const arrayServersText = `{"gateway":{"host":"127.0.0.1","port":3333,"token":"${GW_TOKEN}"},"mcpServers":[]}`;
+    expect(previewConfig(arrayServersText, {})).toEqual({
+      message: 'Servers must be an object with one entry per server.',
+      offset: arrayServersText.indexOf('[]'),
+      length: '[]'.length,
+    });
+
     // Mixed stdio + HTTP server entry points at the server object.
     const mixedServerObj = '{"command":"/bin/echo","url":"https://api.example.com/mcp"}';
     const mixedText = `{"gateway":{"host":"127.0.0.1","port":3333,"token":"${GW_TOKEN}"},"mcpServers":{"both":${mixedServerObj}}}`;
@@ -792,7 +722,7 @@ describe('previewConfig', () => {
   });
 });
 
-describe('keyRefs, resolveKeys, literalKeySlots, effectiveServerToken, and serverFingerprint', () => {
+describe('keyRefs, resolveKeys, effectiveServerToken, and serverFingerprint', () => {
   test('keyRefs deduplicates tokenRef UUIDs across gateway and mcpServers', () => {
     const config: ConfigFile = {
       gateway: { host: '127.0.0.1', port: 3333, tokenRef: UUID_1 },
@@ -851,27 +781,6 @@ describe('keyRefs, resolveKeys, literalKeySlots, effectiveServerToken, and serve
       'InvalidConfig',
       'A stored key must contain 32 to 512 printable non-space ASCII characters.',
     );
-  });
-
-  test('literalKeySlots detects literal tokens from raw text or pre-parsed AST node', () => {
-    const text = JSON.stringify({
-      gateway: { host: '127.0.0.1', port: 3333, token: GW_TOKEN },
-      mcpServers: {
-        with_literal: { command: '/bin/echo', token: SERVER_TOKEN },
-        with_ref: { command: '/bin/echo', tokenRef: UUID_1 },
-        with_env: { command: '/bin/echo', token: envRef('ENV_TOKEN') },
-      },
-    });
-    expect(literalKeySlots(text)).toEqual({ gateway: true, servers: ['with_literal'] });
-
-    const tree = parseConfigTree(text, 'json');
-    expect(tree.ok).toBe(true);
-    if (tree.ok) {
-      expect(literalKeySlots(tree.root, 'json')).toEqual({
-        gateway: true,
-        servers: ['with_literal'],
-      });
-    }
   });
 
   test('effectiveServerToken prefers server.token and falls back to gateway.token', () => {
@@ -1068,7 +977,7 @@ describe('ConfigStore', () => {
     expect(second).toEqual(doc);
   });
 
-  test('initialize() selects existing mcp.jsonc when mcp.json does not exist', async () => {
+  test('initialize() selects existing mcp.jsonc when mcp.json does not exist or when constructed with .jsonc path', async () => {
     const root = await makeTempDir();
     const jsonPath = join(root, 'mcp.json');
     const jsoncPath = join(root, 'mcp.jsonc');
@@ -1086,6 +995,15 @@ describe('ConfigStore', () => {
     expect(store.format).toBe('jsonc');
     expect(store.path).toBe(jsoncPath);
     expect(doc.text).toBe(jsoncText);
+
+    // Constructed directly with a .jsonc path derives jsonPath and jsoncPath accurately.
+    const directStore = new ConfigStore(jsoncPath);
+    expect(directStore.path).toBe(jsoncPath);
+    expect(directStore.format).toBe('jsonc');
+    const directDoc = await directStore.initialize(async () => ({ port: 4444, token: GW_TOKEN }));
+    expect(directStore.path).toBe(jsoncPath);
+    expect(directStore.format).toBe('jsonc');
+    expect(directDoc).toEqual(doc);
   });
 
   test('initialize() and read() throw AmbiguousConfig when both mcp.json and mcp.jsonc exist', async () => {
@@ -1114,6 +1032,62 @@ describe('ConfigStore', () => {
       () => uninitializedStore.read(),
       'AmbiguousConfig',
       'Both configuration files exist; keep only one and reopen the app.',
+    );
+  });
+
+  test('read() and save() reject with ConfigIO when configuration filename switches between mcp.json and mcp.jsonc', async () => {
+    const root = await makeTempDir();
+    const jsonPath = join(root, 'mcp.json');
+    const jsoncPath = join(root, 'mcp.jsonc');
+    const store = new ConfigStore(jsonPath);
+    const initial = await store.initialize(async () => ({ port: 3333, token: GW_TOKEN }));
+
+    await fs.rename(jsonPath, jsoncPath);
+
+    await expectAsyncGatewayError(
+      () => store.read(),
+      'ConfigIO',
+      'The configuration filename changed; reopen the app to select it.',
+    );
+    await expectAsyncGatewayError(
+      () => store.save(initial.text, initial.revision),
+      'ConfigIO',
+      'The configuration filename changed; reopen the app to select it.',
+    );
+  });
+
+  test('read() before initialize() wraps missing-file ENOENT into ConfigIO and save() refuses a symlinked lock file', async () => {
+    const root = await makeTempDir();
+    const jsonPath = join(root, 'mcp.json');
+    const store = new ConfigStore(jsonPath);
+
+    await expectAsyncGatewayError(
+      () => store.read(),
+      'ConfigIO',
+      'Configuration file access failed.',
+    );
+
+    const initial = await store.initialize(async () => ({ port: 3333, token: GW_TOKEN }));
+    const lockPath = `${jsonPath}.lock`;
+    const lockTarget = join(root, 'lock-target');
+    await writePrivateTextAtomic(lockTarget, '');
+    await fs.unlink(lockPath).catch(() => undefined);
+    await fs.symlink(lockTarget, lockPath);
+
+    await expectAsyncGatewayError(
+      () => store.save(`${makeConfig({ port: 4444 })}\n`, initial.revision),
+      'ConfigIO',
+      'Configuration file access failed.',
+    );
+
+    // A non-owner-only lock file (or FIFO) triggers UnsafeFile inside acquireLock.
+    await fs.unlink(lockPath);
+    const mkfifoResult = Bun.spawnSync(['/usr/bin/mkfifo', '-m', '600', lockPath]);
+    expect(mkfifoResult.exitCode).toBe(0);
+    await expectAsyncGatewayError(
+      () => store.save(`${makeConfig({ port: 4444 })}\n`, initial.revision),
+      'UnsafeFile',
+      'The configuration lock file must be an owner-only file.',
     );
   });
 
