@@ -326,7 +326,7 @@ export const GatewayViewProvider = ({ client, children }: GatewayViewProviderPro
       t('app.configSaved'),
       true,
       true,
-      text,
+      docRef.current?.text,
     );
   };
 
