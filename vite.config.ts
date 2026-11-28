@@ -3,7 +3,6 @@ import { resolve } from 'node:path';
 
 import { DevToolsVite } from '@effect/ui-devtools/node';
 import tailwindcss from '@tailwindcss/vite';
-import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 
 import { electrobunViteAliases } from './.hutch/devkit/api/config/electrobun-vite.ts';
@@ -14,10 +13,9 @@ export default defineConfig({
   root: 'src/mainview',
   base: './',
   plugins: [
-    react(),
     tailwindcss(),
-    // Dev-only Effect UI DevTools MCP server + HMR state preservation; overlay is mounted by Logs.tsx.
-    DevToolsVite.plugin({ dispatch: true, overlay: false }),
+    // Dev-only Effect UI DevTools MCP server, non-blocking overlay attach, and HMR state preservation.
+    DevToolsVite.plugin({ dispatch: true, overlay: { position: 'BottomRight' } }),
     {
       // Vite nonces its refresh preamble and injected styles; packaged CSP is unchanged.
       name: 'development-csp',

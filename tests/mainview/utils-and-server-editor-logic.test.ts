@@ -3,6 +3,7 @@ import { describe, expect, mock, spyOn, test } from 'bun:test';
 import { undoDepth } from '@codemirror/commands';
 import { indentUnit, language, matchBrackets, syntaxTree } from '@codemirror/language';
 import { EditorState } from '@codemirror/state';
+import { Redacted } from 'effect';
 
 import {
   bearPreset,
@@ -10,10 +11,9 @@ import {
   formConfig,
   keyValueRowsToRecord,
   recordToKeyValueRows,
-} from '@mcp-gateway/mainview/dialogs/ServerEditor';
+} from '@mcp-gateway/mainview/effect-dialogs/server-editor-logic';
 import { jsonEditing } from '@mcp-gateway/mainview/lib/json-editing';
 import { generateToken } from '@mcp-gateway/mainview/lib/token';
-import { cn } from '@mcp-gateway/mainview/lib/utils';
 import type { AppSnapshot, MenuCommand } from '@mcp-gateway/shared/rpc';
 import { installDomEnvironment } from '../helpers/dom';
 import { makeSnapshot } from '../helpers/mainview';
@@ -51,23 +51,6 @@ describe('generateToken', () => {
   });
 });
 
-describe('cn', () => {
-  test('preserves custom macOS typography scale tokens alongside text color classes and deduplicates macOS typography, radius, and shadow tokens', () => {
-    expect(cn('text-mac-title-1', 'text-red-500')).toBe('text-mac-title-1 text-red-500');
-    expect(cn('text-mac-headline', 'text-mac-text')).toBe('text-mac-headline text-mac-text');
-    expect(cn('text-mac-body', 'text-mac-muted')).toBe('text-mac-body text-mac-muted');
-    expect(cn('text-mac-muted', 'text-mac-subheadline')).toBe(
-      'text-mac-muted text-mac-subheadline',
-    );
-    expect(cn('text-mac-body', 'text-mac-headline')).toBe('text-mac-headline');
-    expect(cn('text-sm', 'text-mac-subheadline')).toBe('text-mac-subheadline');
-    expect(cn('text-mac-title-1', 'text-lg')).toBe('text-lg');
-    expect(cn('rounded-md', 'rounded-mac-control')).toBe('rounded-mac-control');
-    expect(cn('rounded-mac-control', 'rounded-mac-popover')).toBe('rounded-mac-popover');
-    expect(cn('shadow-sm', 'shadow-mac-popover')).toBe('shadow-mac-popover');
-  });
-});
-
 describe('jsonEditing', () => {
   test('creates an EditorState with JSON/JSONC language, 2-space indent, history, and bracket matching', () => {
     const doc = '{\n  // comment\n  "gateway": { "port": 3100 }\n}';
@@ -99,7 +82,7 @@ describe('ServerEditor key-value row helpers', () => {
     expect(second.id).toMatch(/^kv-\d+$/);
     expect(first.id).not.toBe(second.id);
     expect(first.key).toBe('');
-    expect(first.value).toBe('');
+    expect(Redacted.value(first.value)).toBe('');
     expect(first.secret).toBe(false);
   });
 
@@ -138,7 +121,9 @@ describe('ServerEditor key-value row helpers', () => {
 
     expect(rows).toHaveLength(3);
     expect(new Set(rows.map((row) => row.id)).size).toBe(3);
-    expect(rows.map(({ key, value, secret }) => ({ key, value, secret }))).toEqual([
+    expect(
+      rows.map(({ key, value, secret }) => ({ key, value: Redacted.value(value), secret })),
+    ).toEqual([
       { key: 'NODE_ENV', value: 'production', secret: false },
       { key: 'API_TOKEN', value: 'secret-value', secret: true },
       // biome-ignore lint/suspicious/noTemplateCurlyInString: literal environment variable reference syntax.

@@ -12,10 +12,6 @@ export default defineConfig({
     ],
   },
   test: {
-    include: [
-      'tests/effect-logs/**/*.test.ts',
-      'tests/effect-settings/**/*.test.ts',
-      'tests/effect-overview/**/*.test.ts',
-    ],
+    include: ['tests/effect-*/**/*.test.ts'],
   },
 });

@@ -1,19 +1,14 @@
-import { Component } from '@effect/ui';
 import { Story } from '@effect/ui/testing';
 import { assert, describe, it } from '@effect/vitest';
 
 import {
   CopyClientConfig,
-  DeleteServer,
   ExpireCopiedBadge,
-  OpenBearPreset,
-  OpenKeyMigration,
-  OpenServerEditor,
+  OverviewEvent,
   OverviewMessage,
   type OverviewProps,
   OverviewView,
   TestServer,
-  ToggleServer,
 } from '@mcp-gateway/mainview/effect-overview/OverviewView';
 import { TestServerOutcome } from '@mcp-gateway/mainview/effect-overview/services';
 import { translator } from '@mcp-gateway/shared/i18n';
@@ -133,7 +128,12 @@ describe('OverviewView Story tests', () => {
       .expectExact(CopyClientConfig.make({ name: 'bear' }))
       .resolve(
         CopyClientConfig,
-        OverviewMessage.CopyClientConfigCompleted({ name: 'bear', copied: true }),
+        OverviewMessage.CopyClientConfigCompleted({
+          name: 'bear',
+          copied: true,
+          errorKind: null,
+          errorMessage: null,
+        }),
       )
       .expectExact(ExpireCopiedBadge.make({ name: 'bear' }));
 
@@ -146,18 +146,24 @@ describe('OverviewView Story tests', () => {
     story.resolve(ExpireCopiedBadge, OverviewMessage.CopiedBadgeExpired({ name: 'bear' }));
     assert.strictEqual(story.model.copiedServer, null);
 
-    // Failed copy does not set copiedServer or start expiry timer.
+    // Failed copy reports error and does not set copiedServer or start expiry timer.
     story
       .send(OverviewMessage.ClickedCopyClientConfig({ name: 'notes' }))
       .resolve(
         CopyClientConfig,
-        OverviewMessage.CopyClientConfigCompleted({ name: 'notes', copied: false }),
+        OverviewMessage.CopyClientConfigCompleted({
+          name: 'notes',
+          copied: false,
+          errorKind: 'rpc',
+          errorMessage: 'ClipboardError: unavailable',
+        }),
       )
+      .emitted(OverviewEvent.ReportedError({ message: 'ClipboardError: unavailable' }))
       .expectNone();
     assert.strictEqual(story.model.copiedServer, null);
   });
 
-  it('enforces configurationLocked, dirty, hasConfigError, and hasConfig guards', () => {
+  it('enforces configurationLocked, dirty, hasConfigError, and hasConfig guards and emits events', () => {
     const lockedStory = Story.start(OverviewView, {
       ...defaultProps,
       configurationLocked: true,
@@ -191,23 +197,17 @@ describe('OverviewView Story tests', () => {
     const unlockedStory = Story.start(OverviewView, defaultProps);
     unlockedStory
       .send(OverviewMessage.ClickedReviewKeys())
-      .expectExact(OpenKeyMigration.make())
-      .resolve(OpenKeyMigration, Component.noop)
+      .emitted(OverviewEvent.RequestedOpenKeyMigration())
       .send(OverviewMessage.ClickedAddServer())
-      .expectExact(OpenServerEditor.make({ name: null }))
-      .resolve(OpenServerEditor, Component.noop)
+      .emitted(OverviewEvent.RequestedOpenServerEditor({ name: null }))
       .send(OverviewMessage.ClickedEditServer({ name: 'bear' }))
-      .expectExact(OpenServerEditor.make({ name: 'bear' }))
-      .resolve(OpenServerEditor, Component.noop)
+      .emitted(OverviewEvent.RequestedOpenServerEditor({ name: 'bear' }))
       .send(OverviewMessage.ClickedBearPreset())
-      .expectExact(OpenBearPreset.make())
-      .resolve(OpenBearPreset, Component.noop)
+      .emitted(OverviewEvent.RequestedOpenBearPreset())
       .send(OverviewMessage.ToggledServer({ name: 'bear', enabled: false }))
-      .expectExact(ToggleServer.make({ name: 'bear', disabled: true }))
-      .resolve(ToggleServer, Component.noop)
+      .emitted(OverviewEvent.RequestedToggleServer({ name: 'bear', disabled: true }))
       .send(OverviewMessage.ClickedDeleteServer({ name: 'bear' }))
-      .expectExact(DeleteServer.make({ name: 'bear' }))
-      .resolve(DeleteServer, Component.noop);
+      .emitted(OverviewEvent.RequestedDeleteServer({ name: 'bear' }));
   });
 
   it('explores interleaved test runs, client config copies, and expiry timers', () => {
@@ -240,8 +240,18 @@ describe('OverviewView Story tests', () => {
           CopyClientConfig,
           {
             success: ({ name }) => [
-              OverviewMessage.CopyClientConfigCompleted({ name, copied: true }),
-              OverviewMessage.CopyClientConfigCompleted({ name, copied: false }),
+              OverviewMessage.CopyClientConfigCompleted({
+                name,
+                copied: true,
+                errorKind: null,
+                errorMessage: null,
+              }),
+              OverviewMessage.CopyClientConfigCompleted({
+                name,
+                copied: false,
+                errorKind: 'bridge',
+                errorMessage: 'bridge rejected',
+              }),
             ],
           },
         ],

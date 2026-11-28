@@ -1,8 +1,9 @@
-import { Command, Component, UiSchema } from '@effect/ui';
+import { Command, Subscription, UiSchema } from '@effect/ui';
 import { Html } from '@effect/ui/html';
 import { Switch } from '@effect/ui-kit';
-import { Effect, Layer, Schema } from 'effect';
+import { Effect, Layer, Schema, Stream } from 'effect';
 
+import { GatewayRpc } from '@mcp-gateway/mainview/effect-app/services';
 import {
   isTestOutdated,
   resolveTestBlockedKey,
@@ -10,10 +11,24 @@ import {
   visibleTestForServer,
 } from '@mcp-gateway/mainview/effect-overview/logic';
 import {
-  OverviewActions,
   TestServerOutcome,
   type TestServerOutcomeValue,
 } from '@mcp-gateway/mainview/effect-overview/services';
+import {
+  buttonClasses,
+  iconCheck,
+  iconCode2,
+  iconCopy,
+  iconLoader,
+  iconPencil,
+  iconPlugZap,
+  iconServer,
+  iconTrash,
+  iconX,
+  renderAlert,
+  SWITCH_ROOT_CLASSES,
+  SWITCH_THUMB_CLASSES,
+} from '@mcp-gateway/mainview/effect-ui';
 import { type Locale, translator } from '@mcp-gateway/shared/i18n';
 
 export const ServerRowStatusSchema = Schema.Literals(['mounted', 'error', 'disabled', 'stopped']);
@@ -74,7 +89,12 @@ export const OverviewMessage = UiSchema.TaggedEnum({
   ToggledServer: { name: Schema.String, enabled: Schema.Boolean },
   ClickedDeleteServer: { name: Schema.String },
   ClickedCopyClientConfig: { name: Schema.String },
-  CopyClientConfigCompleted: { name: Schema.String, copied: Schema.Boolean },
+  CopyClientConfigCompleted: {
+    name: Schema.String,
+    copied: Schema.Boolean,
+    errorKind: Schema.NullOr(Schema.Literals(['rpc', 'bridge'])),
+    errorMessage: Schema.NullOr(Schema.String),
+  },
   CopiedBadgeExpired: { name: Schema.String },
   ClickedTestServer: { name: Schema.String },
   TestServerCompleted: {
@@ -85,101 +105,17 @@ export const OverviewMessage = UiSchema.TaggedEnum({
   ClearedOutdatedTest: {},
 });
 
-export class ClearError extends Command.Service<ClearError>()('mcp-gateway/overview/ClearError', {
-  args: {},
-}) {
-  static readonly layer = this.toLayer(
-    Effect.gen(function* () {
-      const actions = yield* OverviewActions;
-      return () => actions.clearError().pipe(Effect.as(Component.noop));
-    }),
-  );
-}
-
-export class DismissOperationalError extends Command.Service<DismissOperationalError>()(
-  'mcp-gateway/overview/DismissOperationalError',
-  { args: {} },
-) {
-  static readonly layer = this.toLayer(
-    Effect.gen(function* () {
-      const actions = yield* OverviewActions;
-      return () => actions.dismissOperationalError().pipe(Effect.as(Component.noop));
-    }),
-  );
-}
-
-export class DismissKeyReminder extends Command.Service<DismissKeyReminder>()(
-  'mcp-gateway/overview/DismissKeyReminder',
-  { args: {} },
-) {
-  static readonly layer = this.toLayer(
-    Effect.gen(function* () {
-      const actions = yield* OverviewActions;
-      return () => actions.dismissKeyReminder().pipe(Effect.as(Component.noop));
-    }),
-  );
-}
-
-export class OpenKeyMigration extends Command.Service<OpenKeyMigration>()(
-  'mcp-gateway/overview/OpenKeyMigration',
-  { args: {} },
-) {
-  static readonly layer = this.toLayer(
-    Effect.gen(function* () {
-      const actions = yield* OverviewActions;
-      return () => actions.openKeyMigration().pipe(Effect.as(Component.noop));
-    }),
-  );
-}
-
-export class OpenServerEditor extends Command.Service<OpenServerEditor>()(
-  'mcp-gateway/overview/OpenServerEditor',
-  { args: { name: Schema.NullOr(Schema.String) } },
-) {
-  static readonly layer = this.toLayer(
-    Effect.gen(function* () {
-      const actions = yield* OverviewActions;
-      return ({ name }) => actions.openServerEditor(name).pipe(Effect.as(Component.noop));
-    }),
-  );
-}
-
-export class OpenBearPreset extends Command.Service<OpenBearPreset>()(
-  'mcp-gateway/overview/OpenBearPreset',
-  { args: {} },
-) {
-  static readonly layer = this.toLayer(
-    Effect.gen(function* () {
-      const actions = yield* OverviewActions;
-      return () => actions.openBearPreset().pipe(Effect.as(Component.noop));
-    }),
-  );
-}
-
-export class ToggleServer extends Command.Service<ToggleServer>()(
-  'mcp-gateway/overview/ToggleServer',
-  { args: { name: Schema.String, disabled: Schema.Boolean } },
-) {
-  static readonly layer = this.toLayer(
-    Effect.gen(function* () {
-      const actions = yield* OverviewActions;
-      return ({ name, disabled }) =>
-        actions.toggleServer(name, disabled).pipe(Effect.as(Component.noop));
-    }),
-  );
-}
-
-export class DeleteServer extends Command.Service<DeleteServer>()(
-  'mcp-gateway/overview/DeleteServer',
-  { args: { name: Schema.String } },
-) {
-  static readonly layer = this.toLayer(
-    Effect.gen(function* () {
-      const actions = yield* OverviewActions;
-      return ({ name }) => actions.deleteServer(name).pipe(Effect.as(Component.noop));
-    }),
-  );
-}
+export const OverviewEvent = UiSchema.TaggedEnum({
+  DismissedError: {},
+  DismissedOperationalError: {},
+  DismissedKeyReminder: {},
+  RequestedOpenKeyMigration: {},
+  RequestedOpenServerEditor: { name: Schema.NullOr(Schema.String) },
+  RequestedOpenBearPreset: {},
+  RequestedToggleServer: { name: Schema.String, disabled: Schema.Boolean },
+  RequestedDeleteServer: { name: Schema.String },
+  ReportedError: { message: Schema.String },
+});
 
 export class CopyClientConfig extends Command.Service<CopyClientConfig>()(
   'mcp-gateway/overview/CopyClientConfig',
@@ -187,13 +123,28 @@ export class CopyClientConfig extends Command.Service<CopyClientConfig>()(
 ) {
   static readonly layer = this.toLayer(
     Effect.gen(function* () {
-      const actions = yield* OverviewActions;
+      const rpc = yield* GatewayRpc;
       return ({ name }) =>
-        actions
-          .copyClientConfig(name)
-          .pipe(
-            Effect.map((copied) => OverviewMessage.CopyClientConfigCompleted({ name, copied })),
-          );
+        rpc.copyClientConfig({ name }).pipe(
+          Effect.map((outcome) =>
+            outcome.ok
+              ? OverviewMessage.CopyClientConfigCompleted({
+                  name,
+                  copied: true,
+                  errorKind: null,
+                  errorMessage: null,
+                })
+              : OverviewMessage.CopyClientConfigCompleted({
+                  name,
+                  copied: false,
+                  errorKind: outcome.error.kind,
+                  errorMessage:
+                    outcome.error.kind === 'rpc'
+                      ? `${outcome.error.code}: ${outcome.error.message}`
+                      : outcome.error.message,
+                }),
+          ),
+        );
     }),
   );
 }
@@ -212,144 +163,31 @@ export class TestServer extends Command.Service<TestServer>()('mcp-gateway/overv
 }) {
   static readonly layer = this.toLayer(
     Effect.gen(function* () {
-      const actions = yield* OverviewActions;
+      const rpc = yield* GatewayRpc;
       return ({ name, expectedRevision }) =>
-        actions
-          .testServer(name, expectedRevision)
-          .pipe(
-            Effect.map((outcome) =>
-              OverviewMessage.TestServerCompleted({ name, revision: expectedRevision, outcome }),
-            ),
-          );
+        rpc.testServer({ name, expectedRevision }).pipe(
+          Effect.map((outcome): TestServerOutcomeValue => {
+            if (outcome.ok) {
+              return TestServerOutcome.Passed({ protocolVersion: outcome.value.protocolVersion });
+            }
+            if (outcome.error.kind === 'bridge') {
+              return TestServerOutcome.Unavailable();
+            }
+            return outcome.error.code === 'Cancelled'
+              ? TestServerOutcome.Cancelled({ message: outcome.error.message })
+              : TestServerOutcome.Failed({ message: outcome.error.message });
+          }),
+          Effect.map((outcome) =>
+            OverviewMessage.TestServerCompleted({ name, revision: expectedRevision, outcome }),
+          ),
+        );
     }),
   );
 }
 
-export const OverviewCommandLayers = Layer.mergeAll(
-  ClearError.layer,
-  DismissOperationalError.layer,
-  DismissKeyReminder.layer,
-  OpenKeyMigration.layer,
-  OpenServerEditor.layer,
-  OpenBearPreset.layer,
-  ToggleServer.layer,
-  DeleteServer.layer,
-  CopyClientConfig.layer,
-  TestServer.layer,
-);
-
-const ALERT_BASE =
-  "group/alert relative grid w-full gap-0.5 rounded-[10px] px-3 py-2.5 text-left text-mac-body has-[>svg]:grid-cols-[auto_1fr] has-[>svg]:gap-x-2.5 *:[svg]:row-span-2 *:[svg]:translate-y-px *:[svg:not([class*='size-'])]:size-4 flex items-center gap-2.5 text-mac-label";
-const ALERT_DESTRUCTIVE =
-  'bg-mac-red/8 text-mac-red shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--mac-red)_30%,transparent)] *:[svg]:text-current';
-const ALERT_WARNING =
-  'bg-mac-yellow/12 text-mac-label shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--mac-yellow)_35%,transparent)] *:[svg]:text-mac-orange';
-
-const BUTTON_BASE =
-  'inline-flex shrink-0 cursor-pointer items-center justify-center gap-1.5 font-medium whitespace-nowrap select-none transition-[background-color,color,opacity] outline-none focus-visible:mac-focus-ring disabled:pointer-events-none data-disabled:pointer-events-none aria-invalid:mac-focus-ring [&_svg]:pointer-events-none [&_svg]:shrink-0';
-const BUTTON_DEFAULT =
-  'bg-mac-accent text-mac-accent-foreground active:brightness-90 disabled:opacity-45';
-const BUTTON_SECONDARY =
-  'bg-mac-control text-mac-label active:bg-mac-control-pressed disabled:bg-mac-control-disabled disabled:text-mac-label-tertiary';
-const BUTTON_GHOST =
-  'text-mac-label hover:bg-mac-fill-tertiary active:bg-mac-control-pressed disabled:text-mac-label-tertiary';
-const BUTTON_LINK =
-  'h-auto px-0 text-mac-link underline-offset-2 hover:underline disabled:opacity-45';
-const BUTTON_XL = "h-9 rounded-full px-4 text-mac-body [&_svg:not([class*='size-'])]:size-4";
-const BUTTON_ICON = "size-6 rounded-[6px] [&_svg:not([class*='size-'])]:size-3.5";
-
-const SWITCH_ROOT_CLASSES =
-  'peer group/switch inline-flex shrink-0 items-center rounded-full transition-colors outline-none focus-visible:mac-focus-ring data-disabled:cursor-not-allowed data-disabled:opacity-40 data-[size=mini]:h-4 data-[size=mini]:w-9 data-[size=mini]:px-[1.5px] data-[size=sm]:h-5 data-[size=sm]:w-11 data-[size=sm]:px-0.5 data-checked:bg-mac-accent data-unchecked:bg-black/8.5 dark:data-unchecked:bg-white/8.5 group-data-inactive/window:data-checked:bg-black/14 dark:group-data-inactive/window:data-checked:bg-white/13';
-
-const SWITCH_THUMB_CLASSES =
-  'pointer-events-none block rounded-full bg-white shadow-[0_3px_36px_rgb(0_0_0/0.05),0_0_0_0.5px_rgb(0_0_0/0.04),0_1px_2px_rgb(0_0_0/0.12)] transition-transform duration-200 dark:shadow-none dark:group-data-inactive/window:bg-[#e2e2e2] group-data-[size=mini]/switch:h-3.25 group-data-[size=mini]/switch:w-5.25 group-data-[size=sm]/switch:h-4 group-data-[size=sm]/switch:w-6.5 data-unchecked:translate-x-0 group-data-[size=mini]/switch:data-checked:translate-x-3 group-data-[size=sm]/switch:data-checked:translate-x-3.5 rtl:group-data-[size=mini]/switch:data-checked:-translate-x-3 rtl:group-data-[size=sm]/switch:data-checked:-translate-x-3.5';
-
-type OverviewHelper = Html.H<typeof OverviewMessage.Type>;
+export const OverviewCommandLayers = Layer.mergeAll(CopyClientConfig.layer, TestServer.layer);
 
 const resolveTranslator = (locale: string) => translator(locale as Locale);
-
-const svgIcon = (h: OverviewHelper, sizeClass: string, paths: ReadonlyArray<string>) =>
-  h.svg
-    .class(sizeClass)
-    .attr('viewBox', '0 0 24 24')
-    .attr('fill', 'none')
-    .attr('stroke', 'currentColor')
-    .attr('stroke-width', '2')
-    .attr('stroke-linecap', 'round')
-    .attr('stroke-linejoin', 'round')
-    .attr('aria-hidden', 'true')
-    .children(...paths.map((d) => h.path.attr('d', d)));
-
-const closeIcon = (h: OverviewHelper) => svgIcon(h, 'size-3.5', ['M18 6 6 18', 'm6 6 12 12']);
-
-const checkIcon = (h: OverviewHelper) => svgIcon(h, 'size-3.5', ['M20 6 9 17l-5-5']);
-
-const loaderIcon = (h: OverviewHelper) =>
-  svgIcon(h, 'size-3.5 motion-safe:animate-spin', ['M21 12a9 9 0 1 1-6.219-8.56']);
-
-const plugZapIcon = (h: OverviewHelper) =>
-  svgIcon(h, 'size-3.5', [
-    'M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4Z',
-    'm2 22 3-3',
-    'M7.5 13.5 10 11',
-    'M10.5 16.5 13 14',
-    'm18 3-4 4h6l-4 4',
-  ]);
-
-const copyIcon = (h: OverviewHelper) =>
-  svgIcon(h, 'size-3.5', [
-    'M10 8h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2Z',
-    'M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2',
-  ]);
-
-const pencilIcon = (h: OverviewHelper) =>
-  svgIcon(h, 'size-3.5', [
-    'M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z',
-    'm15 5 4 4',
-  ]);
-
-const trashIcon = (h: OverviewHelper) =>
-  svgIcon(h, 'size-3.5', [
-    'M3 6h18',
-    'M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6',
-    'M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2',
-    'M10 11v6',
-    'M14 11v6',
-  ]);
-
-const serverIcon = (h: OverviewHelper) =>
-  h.svg
-    .class('size-6')
-    .attr('width', '24')
-    .attr('height', '24')
-    .attr('viewBox', '0 0 24 24')
-    .attr('fill', 'none')
-    .attr('stroke', 'currentColor')
-    .attr('stroke-width', '2')
-    .attr('stroke-linecap', 'round')
-    .attr('stroke-linejoin', 'round')
-    .attr('aria-hidden', 'true')
-    .children(
-      h.rect
-        .attr('width', '20')
-        .attr('height', '8')
-        .attr('x', '2')
-        .attr('y', '2')
-        .attr('rx', '2')
-        .attr('ry', '2'),
-      h.rect
-        .attr('width', '20')
-        .attr('height', '8')
-        .attr('x', '2')
-        .attr('y', '14')
-        .attr('rx', '2')
-        .attr('ry', '2'),
-      h.path.attr('d', 'M6 6h.01'),
-      h.path.attr('d', 'M6 18h.01'),
-    );
-
-const code2Icon = (h: OverviewHelper) =>
-  svgIcon(h, 'size-6', ['m18 16 4-4-4-4', 'm6 8-4 4 4 4', 'm14.5 4-5 16']);
 
 const resolveTestOutcome = (
   locale: string,
@@ -395,32 +233,52 @@ export const OverviewView = Html.component({
   props: OverviewProps,
   model: OverviewModel,
   message: OverviewMessage,
+  events: OverviewEvent,
 }).make({
   init: ($) => $.set({ test: null, copiedServer: null }),
+  subscriptions: ({ props }) => {
+    const statusKey = `${props.running}:${props.servers
+      .map((server) => `${server.name}:${server.status}`)
+      .join(',')}`;
+    return [
+      Subscription.make('clear-outdated-test', [statusKey], () =>
+        Stream.succeed(OverviewMessage.ClearedOutdatedTest()),
+      ),
+    ];
+  },
   update: {
-    DismissedError: ($) => $.run(ClearError.make()),
-    DismissedOperationalError: ($) => $.run(DismissOperationalError.make()),
-    DismissedKeyReminder: ($) => $.run(DismissKeyReminder.make()),
+    DismissedError: ($) => $.emit(OverviewEvent.DismissedError()),
+    DismissedOperationalError: ($) => $.emit(OverviewEvent.DismissedOperationalError()),
+    DismissedKeyReminder: ($) => $.emit(OverviewEvent.DismissedKeyReminder()),
     ClickedReviewKeys: ($) =>
-      $.props.configurationLocked ? $.model : $.run(OpenKeyMigration.make()),
+      $.props.configurationLocked ? $.model : $.emit(OverviewEvent.RequestedOpenKeyMigration()),
     ClickedAddServer: ($) =>
       $.props.configurationLocked || !$.props.hasConfig
         ? $.model
-        : $.run(OpenServerEditor.make({ name: null })),
+        : $.emit(OverviewEvent.RequestedOpenServerEditor({ name: null })),
     ClickedEditServer: ($, { name }) =>
-      $.props.configurationLocked ? $.model : $.run(OpenServerEditor.make({ name })),
+      $.props.configurationLocked
+        ? $.model
+        : $.emit(OverviewEvent.RequestedOpenServerEditor({ name })),
     ClickedBearPreset: ($) =>
-      $.props.configurationLocked ? $.model : $.run(OpenBearPreset.make()),
+      $.props.configurationLocked ? $.model : $.emit(OverviewEvent.RequestedOpenBearPreset()),
     ToggledServer: ($, { name, enabled }) =>
       $.props.configurationLocked || $.props.dirty || $.props.hasConfigError
         ? $.model
-        : $.run(ToggleServer.make({ name, disabled: !enabled })),
+        : $.emit(OverviewEvent.RequestedToggleServer({ name, disabled: !enabled })),
     ClickedDeleteServer: ($, { name }) =>
-      $.props.configurationLocked ? $.model : $.run(DeleteServer.make({ name })),
+      $.props.configurationLocked ? $.model : $.emit(OverviewEvent.RequestedDeleteServer({ name })),
     ClickedCopyClientConfig: ($, { name }) =>
       $.props.dirty ? $.model : $.run(CopyClientConfig.make({ name })),
-    CopyClientConfigCompleted: ($, { name, copied }) =>
-      copied ? $.evolve({ copiedServer: name }).run(ExpireCopiedBadge.make({ name })) : $.model,
+    CopyClientConfigCompleted: ($, { name, copied, errorKind, errorMessage }) => {
+      if (copied) {
+        return $.evolve({ copiedServer: name }).run(ExpireCopiedBadge.make({ name }));
+      }
+      const t = resolveTranslator($.props.locale);
+      const message =
+        errorKind === 'rpc' && errorMessage !== null ? errorMessage : t('operations.nativeFailed');
+      return $.emit(OverviewEvent.ReportedError({ message }));
+    },
     CopiedBadgeExpired: ($, { name }) =>
       $.model.copiedServer === name ? $.evolve({ copiedServer: null }) : $.model,
     ClickedTestServer: ($, { name }) => {
@@ -450,61 +308,37 @@ export const OverviewView = Html.component({
     const testingServerName = testing ? (model.test?.name ?? null) : null;
     const outdated = isTestOutdated(model.test, h.props.running, h.props.servers);
 
-    const renderDestructiveAlert = (text: string, onDismiss: typeof OverviewMessage.Type) =>
-      h.div
-        .attr('data-slot', 'alert')
-        .attr('role', 'alert')
-        .class(ALERT_BASE, ALERT_DESTRUCTIVE)
-        .children(
-          h.span.class('min-w-0 flex-1 wrap-anywhere').children(text),
-          h.button
-            .attr('type', 'button')
-            .attr('data-slot', 'button')
-            .attr('data-variant', 'ghost')
-            .attr('data-size', 'icon')
-            .attr('aria-label', t('common.dismissError'))
-            .class(BUTTON_BASE, BUTTON_GHOST, BUTTON_ICON)
-            .on('click', onDismiss)
-            .children(closeIcon(h)),
-        );
-
     return h.div.class('grid gap-5').children(
       h.props.error !== null &&
-        renderDestructiveAlert(h.props.error, OverviewMessage.DismissedError()),
+        renderAlert(h, {
+          dismissLabel: t('common.dismissError'),
+          onDismiss: OverviewMessage.DismissedError(),
+          content: h.props.error,
+        }),
       h.props.operationalError !== null &&
-        renderDestructiveAlert(
-          `${h.props.operationalError.code}: ${h.props.operationalError.message}`,
-          OverviewMessage.DismissedOperationalError(),
-        ),
+        renderAlert(h, {
+          dismissLabel: t('common.dismissError'),
+          onDismiss: OverviewMessage.DismissedOperationalError(),
+          content: `${h.props.operationalError.code}: ${h.props.operationalError.message}`,
+        }),
       h.props.keyReminder &&
-        h.div
-          .attr('data-slot', 'alert')
-          .attr('role', 'status')
-          .class(ALERT_BASE, ALERT_WARNING)
-          .children(
-            h.span
-              .class('min-w-0 flex-1 wrap-anywhere')
-              .children(
-                `${t('keys.reminder')} `,
-                h.button
-                  .attr('type', 'button')
-                  .attr('data-slot', 'button')
-                  .attr('data-variant', 'link')
-                  .disabled(locked)
-                  .class(BUTTON_BASE, BUTTON_LINK)
-                  .on('click', OverviewMessage.ClickedReviewKeys())
-                  .children(t('keys.review')),
-              ),
+        renderAlert(h, {
+          kind: 'warning',
+          role: 'status',
+          dismissLabel: t('keys.dismiss'),
+          onDismiss: OverviewMessage.DismissedKeyReminder(),
+          content: [
+            `${t('keys.reminder')} `,
             h.button
               .attr('type', 'button')
               .attr('data-slot', 'button')
-              .attr('data-variant', 'ghost')
-              .attr('data-size', 'icon')
-              .attr('aria-label', t('keys.dismiss'))
-              .class(BUTTON_BASE, BUTTON_GHOST, BUTTON_ICON)
-              .on('click', OverviewMessage.DismissedKeyReminder())
-              .children(closeIcon(h)),
-          ),
+              .attr('data-variant', 'link')
+              .disabled(locked)
+              .class(buttonClasses('link', 'xl'))
+              .on('click', OverviewMessage.ClickedReviewKeys())
+              .children(t('keys.review')),
+          ],
+        }),
       h.section.attr('aria-labelledby', 'servers-heading').children(
         h.div.class('section-heading').children(
           h.div.class('flex flex-wrap items-center gap-3').children(
@@ -534,7 +368,7 @@ export const OverviewView = Html.component({
             .attr('data-variant', 'default')
             .attr('data-size', 'xl')
             .disabled(locked || !h.props.hasConfig)
-            .class(BUTTON_BASE, BUTTON_DEFAULT, BUTTON_XL)
+            .class(buttonClasses('default', 'xl'))
             .on('click', OverviewMessage.ClickedAddServer())
             .children(t('overview.addServer')),
         ),
@@ -587,10 +421,10 @@ export const OverviewView = Html.component({
                           )
                           .children(
                             shown.state === 'testing'
-                              ? loaderIcon(h)
+                              ? iconLoader(h)
                               : shown.state === 'passed'
-                                ? checkIcon(h)
-                                : closeIcon(h),
+                                ? iconCheck(h)
+                                : iconX(h),
                             h.span.class('sr-only').children(shown.message),
                           ),
                     ),
@@ -644,9 +478,9 @@ export const OverviewView = Html.component({
                         .attr('aria-describedby', testReason ? testReasonId : undefined)
                         .attr('title', testReason ?? t('overview.testConnection'))
                         .disabled(locked || testBlocked !== undefined || testing)
-                        .class(BUTTON_BASE, BUTTON_GHOST, BUTTON_ICON)
+                        .class(buttonClasses('ghost', 'icon'))
                         .on('click', OverviewMessage.ClickedTestServer({ name: server.name }))
-                        .children(plugZapIcon(h)),
+                        .children(iconPlugZap(h)),
                       testReason !== undefined &&
                         h.span.attr('id', testReasonId).class('sr-only').children(testReason),
                       h.button
@@ -657,9 +491,9 @@ export const OverviewView = Html.component({
                         .attr('aria-label', t('overview.copyClientConfig'))
                         .attr('title', clientCopied ? 'Copied' : t('overview.copyClientConfig'))
                         .disabled(!server.hasLive || h.props.dirty)
-                        .class(BUTTON_BASE, BUTTON_GHOST, BUTTON_ICON)
+                        .class(buttonClasses('ghost', 'icon'))
                         .on('click', OverviewMessage.ClickedCopyClientConfig({ name: server.name }))
-                        .children(clientCopied ? checkIcon(h) : copyIcon(h)),
+                        .children(clientCopied ? iconCheck(h) : iconCopy(h)),
                       h.button
                         .attr('type', 'button')
                         .attr('data-slot', 'button')
@@ -668,9 +502,9 @@ export const OverviewView = Html.component({
                         .attr('aria-label', t('common.editServer'))
                         .attr('title', t('common.editServer'))
                         .disabled(locked)
-                        .class(BUTTON_BASE, BUTTON_GHOST, BUTTON_ICON)
+                        .class(buttonClasses('ghost', 'icon'))
                         .on('click', OverviewMessage.ClickedEditServer({ name: server.name }))
-                        .children(pencilIcon(h)),
+                        .children(iconPencil(h)),
                       h.button
                         .attr('type', 'button')
                         .attr('data-slot', 'button')
@@ -679,9 +513,9 @@ export const OverviewView = Html.component({
                         .attr('aria-label', t('overview.delete', { name: server.name }))
                         .attr('title', t('overview.delete', { name: server.name }))
                         .disabled(locked)
-                        .class(BUTTON_BASE, BUTTON_GHOST, BUTTON_ICON)
+                        .class(buttonClasses('ghost', 'icon'))
                         .on('click', OverviewMessage.ClickedDeleteServer({ name: server.name }))
-                        .children(trashIcon(h)),
+                        .children(iconTrash(h)),
                     ),
                   ),
                   server.liveError !== null &&
@@ -696,7 +530,7 @@ export const OverviewView = Html.component({
           h.div
             .class('empty-state panel')
             .children(
-              serverIcon(h),
+              iconServer(h),
               h.h3.children(t('overview.emptyTitle')),
               h.p.children(t('overview.emptyLine1'), h.br, t('overview.emptyLine2')),
               h.button
@@ -705,7 +539,7 @@ export const OverviewView = Html.component({
                 .attr('data-variant', 'secondary')
                 .attr('data-size', 'xl')
                 .disabled(locked)
-                .class(BUTTON_BASE, BUTTON_SECONDARY, BUTTON_XL)
+                .class(buttonClasses('secondary', 'xl'))
                 .on('click', OverviewMessage.ClickedBearPreset())
                 .children(t('overview.bearPreset')),
               h.small.children(t('overview.bearNote')),
@@ -715,7 +549,7 @@ export const OverviewView = Html.component({
           h.div
             .class('panel empty-state')
             .children(
-              code2Icon(h),
+              iconCode2(h),
               h.h3.children(t('overview.repairTitle')),
               h.p.children(t('overview.repairBody')),
             ),

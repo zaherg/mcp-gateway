@@ -4,12 +4,13 @@ import { assert, describe, it } from '@effect/vitest';
 import { Effect, Layer } from 'effect';
 import { TestClock } from 'effect/testing';
 
+import { GatewayRpc } from '@mcp-gateway/mainview/effect-app/services';
 import {
   OverviewCommandLayers,
+  OverviewEvent,
   type OverviewProps,
   OverviewView,
 } from '@mcp-gateway/mainview/effect-overview/OverviewView';
-import { OverviewActions, TestServerOutcome } from '@mcp-gateway/mainview/effect-overview/services';
 import { translator } from '@mcp-gateway/shared/i18n';
 
 const t = translator('en_US');
@@ -44,61 +45,25 @@ describe('OverviewView Play tests', () => {
   it.effect(
     'exercises server switches, connection testing, timed copy badge expiry, and alerts',
     () => {
-      const toggled: Array<{ name: string; disabled: boolean }> = [];
-      const edited: Array<string | null> = [];
-      const deleted: string[] = [];
       const copied: string[] = [];
-      const tested: Array<{ name: string; revision: string }> = [];
-      let clearErrorCalls = 0;
-      let dismissOpErrorCalls = 0;
-      let dismissReminderCalls = 0;
-      let openKeyMigrationCalls = 0;
+      const tested: Array<{ name: string; expectedRevision: string }> = [];
 
-      const actionsLayer = Layer.succeed(OverviewActions, {
-        clearError: () =>
-          Effect.sync(() => {
-            clearErrorCalls++;
-          }),
-        dismissOperationalError: () =>
-          Effect.sync(() => {
-            dismissOpErrorCalls++;
-          }),
-        dismissKeyReminder: () =>
-          Effect.sync(() => {
-            dismissReminderCalls++;
-          }),
-        openKeyMigration: () =>
-          Effect.sync(() => {
-            openKeyMigrationCalls++;
-          }),
-        openServerEditor: (name) =>
-          Effect.sync(() => {
-            edited.push(name);
-          }),
-        openBearPreset: () => Effect.void,
-        toggleServer: (name, disabled) =>
-          Effect.sync(() => {
-            toggled.push({ name, disabled });
-          }),
-        deleteServer: (name) =>
-          Effect.sync(() => {
-            deleted.push(name);
-          }),
-        copyClientConfig: (name) =>
+      const rpcLayer = GatewayRpc.test({
+        copyClientConfig: ({ name }) =>
           Effect.sync(() => {
             copied.push(name);
-            return true;
+            return { ok: true as const, value: null };
           }),
-        testServer: (name, expectedRevision) =>
+        testServer: ({ name, expectedRevision }) =>
           Effect.sync(() => {
-            tested.push({ name, revision: expectedRevision });
-            return TestServerOutcome.Passed({ protocolVersion: '2025-11-25' });
+            tested.push({ name, expectedRevision });
+            return { ok: true as const, value: { protocolVersion: '2025-11-25' } };
           }),
       });
 
       const env = Layer.mergeAll(
         TestHost.layer(),
-        OverviewCommandLayers.pipe(Layer.provide(actionsLayer)),
+        OverviewCommandLayers.pipe(Layer.provide(rpcLayer)),
       );
 
       return Effect.gen(function* () {
@@ -111,25 +76,19 @@ describe('OverviewView Play tests', () => {
         // Destructive alert and key reminder alert.
         yield* play.expect(HtmlLocator.role('alert')).toHaveText('Could not reach gateway');
         yield* play.click(HtmlLocator.role('button', { name: t('common.dismissError') }));
-        assert.strictEqual(clearErrorCalls, 1);
-
         yield* play.click(HtmlLocator.role('button', { name: t('keys.review') }));
-        assert.strictEqual(openKeyMigrationCalls, 1);
-
         yield* play.click(HtmlLocator.role('button', { name: t('keys.dismiss') }));
-        assert.strictEqual(dismissReminderCalls, 1);
 
         // Server table metadata & @effect/ui-kit Switch toggle.
         yield* play.expect(Locator.text('/mcp/bear')).toExist();
         yield* play.expect(Locator.text('127.0.0.1:8787')).toExist();
         yield* play.click(HtmlLocator.role('switch', { name: t('overview.stop') }));
-        assert.deepStrictEqual(toggled, [{ name: 'bear', disabled: true }]);
 
         // Test connection renders passed status.
         yield* play.click(
           HtmlLocator.role('button', { name: t('overview.testConnectionFor', { name: 'bear' }) }),
         );
-        assert.deepStrictEqual(tested, [{ name: 'bear', revision: 'rev-1' }]);
+        assert.deepStrictEqual(tested, [{ name: 'bear', expectedRevision: 'rev-1' }]);
         yield* play
           .expect(Locator.text(t('overview.testPassed', { version: '2025-11-25' })))
           .toExist();
@@ -149,8 +108,16 @@ describe('OverviewView Play tests', () => {
         yield* play.click(
           HtmlLocator.role('button', { name: t('overview.delete', { name: 'bear' }) }),
         );
-        assert.deepStrictEqual(edited, [null, 'bear']);
-        assert.deepStrictEqual(deleted, ['bear']);
+
+        assert.deepStrictEqual(play.root.emitted, [
+          OverviewEvent.DismissedError(),
+          OverviewEvent.RequestedOpenKeyMigration(),
+          OverviewEvent.DismissedKeyReminder(),
+          OverviewEvent.RequestedToggleServer({ name: 'bear', disabled: true }),
+          OverviewEvent.RequestedOpenServerEditor({ name: null }),
+          OverviewEvent.RequestedOpenServerEditor({ name: 'bear' }),
+          OverviewEvent.RequestedDeleteServer({ name: 'bear' }),
+        ]);
 
         // Operational error alert dismiss.
         const opPlay = yield* HtmlPlay.make(OverviewView, {
@@ -161,32 +128,15 @@ describe('OverviewView Play tests', () => {
           .expect(HtmlLocator.role('alert'))
           .toHaveText('BridgeTimeout: Upstream timed out');
         yield* opPlay.click(HtmlLocator.role('button', { name: t('common.dismissError') }));
-        assert.strictEqual(dismissOpErrorCalls, 1);
+        assert.deepStrictEqual(opPlay.root.emitted, [OverviewEvent.DismissedOperationalError()]);
       }).pipe(Effect.provide(env));
     },
   );
 
   it.effect('renders empty Bear preset state and repair state vs KeySetupFailed', () => {
-    let bearPresetCalls = 0;
-    const actionsLayer = Layer.succeed(OverviewActions, {
-      clearError: () => Effect.void,
-      dismissOperationalError: () => Effect.void,
-      dismissKeyReminder: () => Effect.void,
-      openKeyMigration: () => Effect.void,
-      openServerEditor: () => Effect.void,
-      openBearPreset: () =>
-        Effect.sync(() => {
-          bearPresetCalls++;
-        }),
-      toggleServer: () => Effect.void,
-      deleteServer: () => Effect.void,
-      copyClientConfig: () => Effect.succeed(true),
-      testServer: () => Effect.succeed(TestServerOutcome.Passed({ protocolVersion: '2025-11-25' })),
-    });
-
     const env = Layer.mergeAll(
       TestHost.layer(),
-      OverviewCommandLayers.pipe(Layer.provide(actionsLayer)),
+      OverviewCommandLayers.pipe(Layer.provide(GatewayRpc.test())),
     );
 
     return Effect.gen(function* () {
@@ -196,7 +146,7 @@ describe('OverviewView Play tests', () => {
       });
       yield* emptyPlay.expect(Locator.text(t('overview.emptyTitle'))).toExist();
       yield* emptyPlay.click(HtmlLocator.role('button', { name: t('overview.bearPreset') }));
-      assert.strictEqual(bearPresetCalls, 1);
+      assert.deepStrictEqual(emptyPlay.root.emitted, [OverviewEvent.RequestedOpenBearPreset()]);
 
       const repairPlay = yield* HtmlPlay.make(OverviewView, {
         ...baseProps,

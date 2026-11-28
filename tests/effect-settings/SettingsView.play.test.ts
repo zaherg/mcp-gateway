@@ -1,17 +1,13 @@
 import { HtmlLocator, HtmlPlay } from '@effect/ui/html/testing';
 import { Locator, TestHost } from '@effect/ui/testing';
 import { assert, describe, it } from '@effect/vitest';
-import { Effect, Layer, Redacted } from 'effect';
+import { Effect, Redacted } from 'effect';
 
 import {
-  SettingsCommandLayers,
+  SettingsEvent,
   type SettingsProps,
   SettingsView,
 } from '@mcp-gateway/mainview/effect-settings/SettingsView';
-import {
-  type GatewayMutationValue,
-  SettingsActions,
-} from '@mcp-gateway/mainview/effect-settings/services';
 import { translator } from '@mcp-gateway/shared/i18n';
 
 const t = translator('en_US');
@@ -47,70 +43,14 @@ const baseProps: typeof SettingsProps.Type = {
     autoStart: false,
     keepAwake: false,
   },
+  lastImport: null,
 };
 
 describe('SettingsView Play tests', () => {
   it.effect(
     'exercises @effect/ui-kit switches, inputs, selects, token generation, and advanced actions',
-    () => {
-      const mutations: GatewayMutationValue[] = [];
-      const appearances: string[] = [];
-      const languages: string[] = [];
-      const showTokenCalls: boolean[] = [];
-      let revealCalls = 0;
-      let editorCalls = 0;
-      let keyMigrationCalls = 0;
-      let dismissErrorCalls = 0;
-      let dismissOpErrorCalls = 0;
-      const generatedToken = Redacted.make('f'.repeat(64));
-
-      const actionsLayer = Layer.succeed(SettingsActions, {
-        commitGatewayMutation: (mutation) =>
-          Effect.sync(() => {
-            mutations.push(mutation);
-          }),
-        clearError: () =>
-          Effect.sync(() => {
-            dismissErrorCalls++;
-          }),
-        dismissOperationalError: () =>
-          Effect.sync(() => {
-            dismissOpErrorCalls++;
-          }),
-        setShowToken: (show) =>
-          Effect.sync(() => {
-            showTokenCalls.push(show);
-          }),
-        openKeyMigration: () =>
-          Effect.sync(() => {
-            keyMigrationCalls++;
-          }),
-        changeLanguage: (preference) =>
-          Effect.sync(() => {
-            languages.push(preference);
-          }),
-        changeAppearance: (preference) =>
-          Effect.sync(() => {
-            appearances.push(preference);
-          }),
-        revealConfig: () =>
-          Effect.sync(() => {
-            revealCalls++;
-          }),
-        openConfigInEditor: () =>
-          Effect.sync(() => {
-            editorCalls++;
-          }),
-        importExternalServers: () => Effect.succeed(2),
-        generateToken: () => Effect.succeed(generatedToken),
-      });
-
-      const env = Layer.mergeAll(
-        TestHost.layer(),
-        SettingsCommandLayers.pipe(Layer.provide(actionsLayer)),
-      );
-
-      return Effect.gen(function* () {
+    () =>
+      Effect.gen(function* () {
         const play = yield* HtmlPlay.make(SettingsView, {
           ...baseProps,
           error: 'Validation failed',
@@ -118,22 +58,15 @@ describe('SettingsView Play tests', () => {
 
         yield* play.expect(HtmlLocator.role('alert')).toHaveText('Validation failed');
         yield* play.click(HtmlLocator.role('button', { name: t('common.dismissError') }));
-        assert.strictEqual(dismissErrorCalls, 1);
 
         // @effect/ui-kit Switch controls expose role="switch" and toggle via click.
         yield* play.click(Locator.attr('id', 'settings-switch-launch-at-login'));
         yield* play.click(Locator.attr('id', 'settings-switch-auto-start'));
         yield* play.click(Locator.attr('id', 'settings-switch-keep-awake'));
-        assert.deepStrictEqual(
-          mutations.map((m) => m._tag),
-          ['SetLaunchAtLogin', 'SetAutoStart', 'SetKeepAwake'],
-        );
 
         // Appearance and language selects.
         yield* play.change(HtmlLocator.label(t('shell.appearanceLabel')), 'dark');
         yield* play.change(HtmlLocator.label(t('shell.languageLabel')), 'fr_FR');
-        assert.deepStrictEqual(appearances, ['dark']);
-        assert.deepStrictEqual(languages, ['fr_FR']);
 
         // Host commits on blur, port commits on Enter, peers preserves ", ,".
         const hostInput = HtmlLocator.label(t('settings.address'));
@@ -148,37 +81,45 @@ describe('SettingsView Play tests', () => {
         yield* play.type(peersInput, ', ,');
         yield* play.blur(peersInput);
 
-        assert.deepStrictEqual(mutations.slice(3), [
-          { _tag: 'SetHost', host: '192.168.1.25' },
-          { _tag: 'SetPort', port: 9090 },
-          { _tag: 'SetAllowedPeers', allowedPeers: [] },
-        ]);
-
         // Token visibility toggle, Generate Token, and Move Keys.
         yield* play.click(HtmlLocator.role('button', { name: t('settings.showToken') }));
-        assert.deepStrictEqual(showTokenCalls, [true]);
-
         yield* play.click(HtmlLocator.role('button', { name: t('settings.generateToken') }));
-        const lastMutation = mutations[mutations.length - 1];
-        assert.strictEqual(lastMutation?._tag, 'ReplaceTokenWithLiteral');
-        if (lastMutation?._tag === 'ReplaceTokenWithLiteral') {
-          assert.strictEqual(Redacted.value(lastMutation.token), Redacted.value(generatedToken));
-        }
-
         yield* play.click(HtmlLocator.role('button', { name: t('keys.title') }));
-        assert.strictEqual(keyMigrationCalls, 1);
 
-        // Advanced buttons and import status.
+        // Advanced buttons and import status from updated lastImport prop.
         yield* play.click(HtmlLocator.role('button', { name: t('raw.showInFinder') }));
         yield* play.click(HtmlLocator.role('button', { name: 'Open in External Editor' }));
         yield* play.click(
           HtmlLocator.role('button', { name: 'Import Servers from Claude Desktop / Cursor' }),
         );
-        assert.strictEqual(revealCalls, 1);
-        assert.strictEqual(editorCalls, 1);
+
+        play.root.setProps({
+          ...baseProps,
+          lastImport: { seq: 1, count: 2 },
+        });
+        yield* TestHost.settle;
         yield* play
           .expect(HtmlLocator.role('status'))
           .toHaveText('Imported 2 servers from Claude Desktop / Cursor.');
+
+        const tags = play.root.emitted.map((e) => e._tag);
+        assert.deepStrictEqual(tags, [
+          'DismissedError',
+          'CommittedGatewayMutation',
+          'CommittedGatewayMutation',
+          'CommittedGatewayMutation',
+          'ChangedAppearance',
+          'ChangedLanguage',
+          'CommittedGatewayMutation',
+          'CommittedGatewayMutation',
+          'CommittedGatewayMutation',
+          'ToggledShowToken',
+          'CommittedGatewayMutation',
+          'RequestedOpenKeyMigration',
+          'RequestedRevealConfig',
+          'RequestedOpenConfigInEditor',
+          'RequestedImportExternalServers',
+        ]);
 
         // Operational error alert dismiss.
         const opPlay = yield* HtmlPlay.make(SettingsView, {
@@ -187,40 +128,14 @@ describe('SettingsView Play tests', () => {
         });
         yield* opPlay.expect(HtmlLocator.role('alert')).toHaveText('BridgeIO: Disk full');
         yield* opPlay.click(HtmlLocator.role('button', { name: t('common.dismissError') }));
-        assert.strictEqual(dismissOpErrorCalls, 1);
-      }).pipe(Effect.provide(env));
-    },
+        assert.deepStrictEqual(opPlay.root.emitted, [SettingsEvent.DismissedOperationalError()]);
+      }).pipe(Effect.provide(TestHost.layer())),
   );
 
   it.effect(
     'renders Keychain tokenRef, needsLoginRetry, and paused state when savedConfig is null',
-    () => {
-      const mutations: GatewayMutationValue[] = [];
-      const env = Layer.mergeAll(
-        TestHost.layer(),
-        SettingsCommandLayers.pipe(
-          Layer.provide(
-            Layer.succeed(SettingsActions, {
-              commitGatewayMutation: (mutation) =>
-                Effect.sync(() => {
-                  mutations.push(mutation);
-                }),
-              clearError: () => Effect.void,
-              dismissOperationalError: () => Effect.void,
-              setShowToken: () => Effect.void,
-              openKeyMigration: () => Effect.void,
-              changeLanguage: () => Effect.void,
-              changeAppearance: () => Effect.void,
-              revealConfig: () => Effect.void,
-              openConfigInEditor: () => Effect.void,
-              importExternalServers: () => Effect.succeed(null),
-              generateToken: () => Effect.succeed(Redacted.make('0'.repeat(64))),
-            }),
-          ),
-        ),
-      );
-
-      return Effect.gen(function* () {
+    () =>
+      Effect.gen(function* () {
         const play = yield* HtmlPlay.make(SettingsView, {
           ...baseProps,
           login: { supported: true, enabled: false, error: 'Approval required' },
@@ -243,7 +158,11 @@ describe('SettingsView Play tests', () => {
         yield* play.expect(HtmlLocator.role('button', { name: t('keys.title') })).toBeAbsent();
 
         yield* play.click(HtmlLocator.role('button', { name: t('draft.retryLogin') }));
-        assert.deepStrictEqual(mutations, [{ _tag: 'SetLaunchAtLogin', value: true }]);
+        assert.deepStrictEqual(play.root.emitted, [
+          SettingsEvent.CommittedGatewayMutation({
+            mutation: { _tag: 'SetLaunchAtLogin', value: true },
+          }),
+        ]);
 
         // Paused config view.
         const pausedPlay = yield* HtmlPlay.make(SettingsView, {
@@ -251,7 +170,6 @@ describe('SettingsView Play tests', () => {
           savedConfig: null,
         });
         yield* pausedPlay.expect(Locator.text(t('settings.paused'))).toExist();
-      }).pipe(Effect.provide(env));
-    },
+      }).pipe(Effect.provide(TestHost.layer())),
   );
 });

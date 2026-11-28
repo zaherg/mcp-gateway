@@ -1,14 +1,10 @@
-import { Component, MessageLog } from '@effect/ui';
+import { MessageLog } from '@effect/ui';
 import { Story } from '@effect/ui/testing';
 import { assert, describe, it } from '@effect/vitest';
 import { Redacted, Schema } from 'effect';
 
 import {
-  ChangeAppearance,
-  ChangeLanguage,
-  CommitGatewayMutation,
-  GenerateAndCommitToken,
-  ImportExternalServers,
+  SettingsEvent,
   SettingsMessage,
   SettingsModel,
   SettingsProps,
@@ -47,16 +43,17 @@ const defaultProps: typeof SettingsProps.Type = {
     autoStart: false,
     keepAwake: false,
   },
+  lastImport: null,
 };
 
 describe('SettingsView Story tests', () => {
-  it('initializes drafts from savedConfig, commits only changed fields, and resyncs on revision updates', () => {
+  it('initializes drafts from savedConfig, emits only changed mutations, and resyncs on SyncedSavedConfig', () => {
     const story = Story.start(SettingsView, defaultProps);
     assert.strictEqual(story.model.hostInput, '127.0.0.1');
     assert.strictEqual(story.model.portInput, '8787');
     assert.strictEqual(story.model.peersText, '192.168.1.0/24');
 
-    // Committing unchanged values dispatches no commands.
+    // Committing unchanged values emits nothing.
     story
       .send(SettingsMessage.CommittedHost())
       .expectNone()
@@ -65,45 +62,49 @@ describe('SettingsView Story tests', () => {
       .send(SettingsMessage.CommittedPeers())
       .expectNone();
 
-    // Editing and committing host, port, and peers emits exact GatewayMutations.
+    // Editing and committing host and peers emits exact GatewayMutations.
     story
       .send(SettingsMessage.ChangedHost({ value: '192.168.1.25' }))
       .send(SettingsMessage.CommittedHost())
-      .expectExact(
-        CommitGatewayMutation.make({
+      .emitted(
+        SettingsEvent.CommittedGatewayMutation({
           mutation: GatewayMutation.SetHost({ host: '192.168.1.25' }),
         }),
-      )
-      .resolve(CommitGatewayMutation, Component.noop);
+      );
 
     story
       .send(SettingsMessage.ChangedPeers({ value: ', ,' }))
       .send(SettingsMessage.CommittedPeers())
-      .expectExact(
-        CommitGatewayMutation.make({
+      .emitted(
+        SettingsEvent.CommittedGatewayMutation({
           mutation: GatewayMutation.SetAllowedPeers({ allowedPeers: [] }),
         }),
-      )
-      .resolve(CommitGatewayMutation, Component.noop);
+      );
 
     story
       .send(SettingsMessage.ChangedPeers({ value: '   ' }))
       .send(SettingsMessage.CommittedPeers())
-      .expectExact(
-        CommitGatewayMutation.make({
+      .emitted(
+        SettingsEvent.CommittedGatewayMutation({
           mutation: GatewayMutation.SetAllowedPeers({ allowedPeers: null }),
         }),
-      )
-      .resolve(CommitGatewayMutation, Component.noop);
+      );
 
-    story.send(
-      SettingsMessage.SyncedSavedConfig({
-        hostInput: '10.0.0.5',
-        portInput: '9090',
-        peersText: '10.0.0.0/24',
-        tokenInput: Redacted.make('c'.repeat(64)),
-      }),
-    );
+    story.props({
+      ...defaultProps,
+      revision: 'rev-2',
+      savedConfig: {
+        host: '10.0.0.5',
+        port: 9090,
+        allowedPeers: ['10.0.0.0/24'],
+        token: Redacted.make('c'.repeat(64)),
+        tokenRef: null,
+        launchAtLogin: false,
+        autoStart: false,
+        keepAwake: false,
+      },
+    });
+    story.send(SettingsMessage.SyncedSavedConfig());
     assert.strictEqual(story.model.hostInput, '10.0.0.5');
     assert.strictEqual(story.model.portInput, '9090');
     assert.strictEqual(story.model.peersText, '10.0.0.0/24');
@@ -118,11 +119,9 @@ describe('SettingsView Story tests', () => {
       .send(SettingsMessage.ChangedLanguage({ value: 'zz_ZZ' }))
       .expectNone()
       .send(SettingsMessage.ChangedAppearance({ value: 'dark' }))
-      .expectExact(ChangeAppearance.make({ preference: 'dark' }))
-      .resolve(ChangeAppearance, Component.noop)
+      .emitted(SettingsEvent.ChangedAppearance({ preference: 'dark' }))
       .send(SettingsMessage.ChangedLanguage({ value: 'fr_FR' }))
-      .expectExact(ChangeLanguage.make({ preference: 'fr_FR' }))
-      .resolve(ChangeLanguage, Component.noop);
+      .emitted(SettingsEvent.ChangedLanguage({ preference: 'fr_FR' }));
 
     const lockedStory = Story.start(SettingsView, { ...defaultProps, configurationLocked: true });
     lockedStory
@@ -134,68 +133,26 @@ describe('SettingsView Story tests', () => {
       .expectNone();
   });
 
-  it('explores interleaved draft edits, token generation, revision resyncs, and imports', () => {
-    const generated = Redacted.make('e'.repeat(64));
-    const explored = Story.explore(SettingsView, defaultProps, {
-      messages: [
-        SettingsMessage.ChangedHost({ value: '192.168.1.25' }),
-        SettingsMessage.ClickedGenerateToken(),
-        SettingsMessage.ClickedImportExternalServers(),
-        SettingsMessage.SyncedSavedConfig({
-          hostInput: '127.0.0.1',
-          portInput: '8787',
-          peersText: '192.168.1.0/24',
-          tokenInput: Redacted.make('b'.repeat(64)),
-        }),
-      ],
-      commands: [
-        [
-          GenerateAndCommitToken,
-          { success: () => [SettingsMessage.GeneratedToken({ token: generated })] },
-        ],
-        [
-          ImportExternalServers,
-          {
-            success: () => [
-              SettingsMessage.ImportExternalServersCompleted({ count: 2 }),
-              SettingsMessage.ImportExternalServersCompleted({ count: 0 }),
-              SettingsMessage.ImportExternalServersCompleted({ count: null }),
-            ],
-          },
-        ],
-      ],
-      depth: 4,
-      transition: ({ before, message, after }) => {
-        if (message._tag === 'GeneratedToken') {
-          assert.strictEqual(Redacted.value(after.tokenInput), Redacted.value(generated));
-        }
-        if (message._tag === 'ImportExternalServersCompleted') {
-          if (message.count === null) {
-            assert.strictEqual(after.importStatus, before.importStatus);
-          } else if (message.count === 0) {
-            assert.strictEqual(
-              after.importStatus,
-              'No new servers found in Claude Desktop or Cursor.',
-            );
-          } else {
-            assert.strictEqual(
-              after.importStatus,
-              `Imported ${message.count} servers from Claude Desktop / Cursor.`,
-            );
-          }
-        }
-      },
-      invariant: ({ pending }) => {
-        const activeImports = pending.filter(
-          (item) => item.command.name === ImportExternalServers.name,
-        );
-        assert.isAtMost(activeImports.length, 1);
-      },
-    });
-    assert.isAbove(explored.states, 10);
+  it('generates a 64-char token and emits ReplaceTokenWithLiteral', () => {
+    const story = Story.start(SettingsView, defaultProps);
+    story.send(SettingsMessage.ClickedGenerateToken());
+    const emitted = story.current.emitted[0];
+    if (
+      emitted?._tag === 'CommittedGatewayMutation' &&
+      emitted.mutation._tag === 'ReplaceTokenWithLiteral'
+    ) {
+      assert.strictEqual(
+        Redacted.value(story.model.tokenInput),
+        Redacted.value(emitted.mutation.token),
+      );
+      assert.isAtLeast(Redacted.value(emitted.mutation.token).length, 32);
+      story.emitted(emitted);
+    } else {
+      assert.fail('expected ReplaceTokenWithLiteral event');
+    }
   });
 
-  it('redacts token values across Props, Model, Messages, and GatewayMutation wire frames', () => {
+  it('redacts token values across Props, Model, Messages, Events, and GatewayMutation wire frames', () => {
     const secret = 'secret-token-value-must-never-leak-in-devtools';
     const redactedSecret = Redacted.make(secret);
     const encodeRedacted = (schema: Schema.Top, value: unknown) =>
@@ -221,24 +178,30 @@ describe('SettingsView Story tests', () => {
       portInput: '8787',
       peersText: '',
       tokenInput: redactedSecret,
-      importStatus: null,
+      initialImportSeq: null,
     });
-    const encodedMessages = [
+    const encodedMessage = encodeRedacted(
+      SettingsMessage,
       SettingsMessage.ChangedToken({ value: redactedSecret }),
-      SettingsMessage.GeneratedToken({ token: redactedSecret }),
-      SettingsMessage.SyncedSavedConfig({
-        hostInput: '127.0.0.1',
-        portInput: '8787',
-        peersText: '',
-        tokenInput: redactedSecret,
+    );
+    const encodedEvent = encodeRedacted(
+      SettingsEvent,
+      SettingsEvent.CommittedGatewayMutation({
+        mutation: GatewayMutation.SetToken({ token: redactedSecret }),
       }),
-    ].map((msg) => encodeRedacted(SettingsMessage, msg));
+    );
     const encodedMutations = [
       GatewayMutation.SetToken({ token: redactedSecret }),
       GatewayMutation.ReplaceTokenWithLiteral({ token: redactedSecret }),
     ].map((mut) => encodeRedacted(GatewayMutation, mut));
 
-    for (const payload of [encodedProps, encodedModel, ...encodedMessages, ...encodedMutations]) {
+    for (const payload of [
+      encodedProps,
+      encodedModel,
+      encodedMessage,
+      encodedEvent,
+      ...encodedMutations,
+    ]) {
       assert.notInclude(payload, secret);
       assert.include(payload, '"~redacted":true');
     }

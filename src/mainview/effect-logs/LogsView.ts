@@ -10,6 +10,18 @@ import {
   formatLogEntryForCopy,
 } from '@mcp-gateway/mainview/effect-logs/buffer';
 import { LogsDom, LogsRpc } from '@mcp-gateway/mainview/effect-logs/services';
+import {
+  buttonClasses,
+  INPUT_CLASSES,
+  iconArrowDownToLine,
+  iconCheck,
+  iconChevronsUpDown,
+  iconCircleHelp,
+  iconCopy,
+  renderAlert,
+  SELECT_CLASSES,
+  SELECT_OPTION_CLASSES,
+} from '@mcp-gateway/mainview/effect-ui';
 import { type Locale, translator } from '@mcp-gateway/shared/i18n';
 import { LOG_LEVELS, LOG_LIMITS, type LogEntry, type LogLevel } from '@mcp-gateway/shared/types';
 
@@ -201,74 +213,7 @@ export const LogsCommandLayers = Layer.mergeAll(
   CheckScrollBottom.layer,
 );
 
-const BUTTON_BASE =
-  'inline-flex shrink-0 cursor-pointer items-center justify-center gap-1.5 font-medium whitespace-nowrap select-none transition-[background-color,color,opacity] outline-none focus-visible:mac-focus-ring disabled:pointer-events-none data-disabled:pointer-events-none aria-invalid:mac-focus-ring [&_svg]:pointer-events-none [&_svg]:shrink-0';
-const BUTTON_DEFAULT =
-  'bg-mac-accent text-mac-accent-foreground active:brightness-90 disabled:opacity-45';
-const BUTTON_SECONDARY =
-  'bg-mac-control text-mac-label active:bg-mac-control-pressed disabled:bg-mac-control-disabled disabled:text-mac-label-tertiary';
-const BUTTON_GHOST =
-  'text-mac-label hover:bg-mac-fill-tertiary active:bg-mac-control-pressed disabled:text-mac-label-tertiary';
-const BUTTON_XL = "h-9 rounded-full px-4 text-mac-body [&_svg:not([class*='size-'])]:size-4";
-const BUTTON_ICON = "size-6 rounded-[6px] [&_svg:not([class*='size-'])]:size-3.5";
-
-const SELECT_CLASSES =
-  'h-9 w-full min-w-0 cursor-default appearance-none rounded-lg bg-mac-control py-0 pr-7 pl-3 text-mac-body font-medium text-mac-label outline-none select-none focus-visible:mac-focus-ring active:bg-mac-control-pressed disabled:pointer-events-none aria-invalid:mac-focus-ring';
-
-const INPUT_CLASSES =
-  'h-9 w-full min-w-0 rounded-[6px] bg-mac-field px-2 text-mac-body font-medium text-mac-label shadow-[0_0_0_1px_var(--mac-field-border)] transition-[box-shadow] outline-none selection:bg-mac-accent/30 placeholder:font-normal placeholder:text-mac-label-tertiary disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 focus-visible:shadow-[0_0_0_1px_var(--mac-field-border),0_0_0_3.5px_color-mix(in_srgb,var(--mac-accent)_50%,transparent),inset_0_0_0_1px_color-mix(in_srgb,var(--mac-accent)_50%,transparent)]';
-
-const ALERT_CLASSES =
-  'group/alert relative grid w-full gap-0.5 rounded-[10px] px-3 py-2.5 text-left text-mac-body bg-mac-red/8 text-mac-red shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--mac-red)_30%,transparent)] mb-4 flex items-center gap-2.5 text-mac-label';
-
-type LogsHelper = Html.H<typeof LogsMessage.Type>;
-
 const resolveTranslator = (locale: string) => translator(locale as Locale);
-
-const svgIcon = (h: LogsHelper, sizeClass: string, paths: ReadonlyArray<string>) =>
-  h.svg
-    .class(sizeClass)
-    .attr('viewBox', '0 0 24 24')
-    .attr('fill', 'none')
-    .attr('stroke', 'currentColor')
-    .attr('stroke-width', '2')
-    .attr('stroke-linecap', 'round')
-    .attr('stroke-linejoin', 'round')
-    .attr('aria-hidden', 'true')
-    .children(...paths.map((d) => h.path.attr('d', d)));
-
-const chevronsUpDownIcon = (h: LogsHelper) =>
-  h.svg
-    .class('pointer-events-none absolute top-1/2 right-2 size-3 -translate-y-1/2 text-mac-label')
-    .attr('viewBox', '0 0 24 24')
-    .attr('fill', 'none')
-    .attr('stroke', 'currentColor')
-    .attr('stroke-width', '2.5')
-    .attr('stroke-linecap', 'round')
-    .attr('stroke-linejoin', 'round')
-    .attr('aria-hidden', 'true')
-    .attr('data-slot', 'native-select-icon')
-    .children(h.path.attr('d', 'm7 15 5 5 5-5'), h.path.attr('d', 'm7 9 5-5 5 5'));
-
-const arrowDownToLineIcon = (h: LogsHelper) =>
-  svgIcon(h, 'size-4', ['M12 17V3', 'm6 11 6 6 6-6', 'M19 21H5']);
-
-const circleHelpIcon = (h: LogsHelper) =>
-  svgIcon(h, 'size-3.5', [
-    'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z',
-    'M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3',
-    'M12 17h.01',
-  ]);
-
-const copyIcon = (h: LogsHelper) =>
-  svgIcon(h, 'size-3.5', [
-    'M10 8h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2Z',
-    'M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2',
-  ]);
-
-const checkIcon = (h: LogsHelper) => svgIcon(h, 'size-3.5', ['M20 6 9 17l-5-5']);
-
-const closeIcon = (h: LogsHelper) => svgIcon(h, 'size-3.5', ['M18 6 6 18', 'm6 6 12 12']);
 
 const initialModel = (): typeof LogsModel.Type => ({
   entries: [...EMPTY_LOG_BUFFER.entries],
@@ -406,22 +351,6 @@ export const LogsView = Html.component({
     const serverOptions = availableLogServers(h.props.servers, model.entries);
     const clearing = model.pollPhase === 'clearing' || h.isRunning(ClearLogs);
 
-    const renderAlert = (text: string, onDismiss: typeof LogsMessage.Type) =>
-      h.div
-        .attr('data-slot', 'alert')
-        .attr('role', 'alert')
-        .class(ALERT_CLASSES)
-        .children(
-          h.span.class('min-w-0 flex-1 wrap-anywhere').children(text),
-          h.button
-            .attr('type', 'button')
-            .attr('data-slot', 'button')
-            .attr('aria-label', t('common.dismissError'))
-            .class(BUTTON_BASE, BUTTON_GHOST, BUTTON_ICON)
-            .on('click', onDismiss)
-            .children(closeIcon(h)),
-        );
-
     return h.section
       .class('panel logs-panel')
       .attr('aria-label', t('logs.title'))
@@ -442,17 +371,17 @@ export const LogsView = Html.component({
                 .children(
                   h.option
                     .attr('value', '')
-                    .class('bg-[Canvas] text-[CanvasText]')
+                    .class(SELECT_OPTION_CLASSES)
                     .children(t('logs.allLevels')),
                   ...LOG_LEVELS.map((value) =>
                     h.option
                       .key(value)
                       .attr('value', value)
-                      .class('bg-[Canvas] text-[CanvasText]')
+                      .class(SELECT_OPTION_CLASSES)
                       .children(value),
                   ),
                 ),
-              chevronsUpDownIcon(h),
+              iconChevronsUpDown(h),
             ),
           h.div
             .class('group/native-select relative w-fit max-w-44 shrink-0')
@@ -469,17 +398,17 @@ export const LogsView = Html.component({
                 .children(
                   h.option
                     .attr('value', '')
-                    .class('bg-[Canvas] text-[CanvasText]')
+                    .class(SELECT_OPTION_CLASSES)
                     .children(t('logs.allServers')),
                   ...serverOptions.map((value) =>
                     h.option
                       .key(value)
                       .attr('value', value)
-                      .class('bg-[Canvas] text-[CanvasText]')
+                      .class(SELECT_OPTION_CLASSES)
                       .children(value),
                   ),
                 ),
-              chevronsUpDownIcon(h),
+              iconChevronsUpDown(h),
             ),
           h.div.class('min-w-28 flex-1').children(
             h.input
@@ -496,14 +425,14 @@ export const LogsView = Html.component({
             .attr('type', 'button')
             .attr('data-slot', 'button')
             .attr('aria-pressed', String(model.followTail))
-            .class(BUTTON_BASE, model.followTail ? BUTTON_DEFAULT : BUTTON_SECONDARY, BUTTON_XL)
+            .class(buttonClasses(model.followTail ? 'default' : 'secondary', 'xl'))
             .on('click', LogsMessage.ToggledFollowTail())
-            .children(arrowDownToLineIcon(h), ' Follow Tail'),
+            .children(iconArrowDownToLine(h), ' Follow Tail'),
           h.button
             .attr('type', 'button')
             .attr('data-slot', 'button')
             .disabled(clearing)
-            .class(BUTTON_BASE, BUTTON_SECONDARY, BUTTON_XL)
+            .class(buttonClasses('secondary', 'xl'))
             .on('click', LogsMessage.ClickedClear())
             .children(t('logs.clear')),
           h.button
@@ -512,9 +441,9 @@ export const LogsView = Html.component({
             .attr('aria-label', t('logs.sensitiveTitle'))
             .attr('aria-expanded', String(model.infoOpen))
             .attr('title', `${t('logs.sensitiveTitle')} ${t('logs.sensitiveBody')}`)
-            .class(BUTTON_BASE, BUTTON_GHOST, BUTTON_ICON)
+            .class(buttonClasses('ghost', 'icon'))
             .on('click', LogsMessage.ToggledInfo())
-            .children(circleHelpIcon(h)),
+            .children(iconCircleHelp(h)),
         ),
         model.infoOpen &&
           h.div.class('schema-popover mb-3').children(
@@ -529,9 +458,18 @@ export const LogsView = Html.component({
               }),
             ),
           ),
-        model.readError !== null && renderAlert(model.readError, LogsMessage.DismissedReadError()),
+        model.readError !== null &&
+          renderAlert(h, {
+            dismissLabel: t('common.dismissError'),
+            onDismiss: LogsMessage.DismissedReadError(),
+            content: model.readError,
+          }),
         model.clearError !== null &&
-          renderAlert(model.clearError, LogsMessage.DismissedClearError()),
+          renderAlert(h, {
+            dismissLabel: t('common.dismissError'),
+            onDismiss: LogsMessage.DismissedClearError(),
+            content: model.clearError,
+          }),
         model.gap &&
           h.p
             .attr('role', 'status')
@@ -560,12 +498,12 @@ export const LogsView = Html.component({
                             .attr('type', 'button')
                             .attr('data-slot', 'button')
                             .attr('aria-label', 'Copy log entry')
-                            .class(BUTTON_BASE, BUTTON_GHOST, BUTTON_ICON, 'ml-auto')
+                            .class(buttonClasses('ghost', 'icon', 'ml-auto'))
                             .on(
                               'click',
                               LogsMessage.ClickedCopy({ entryId: entry.id, text: copyText }),
                             )
-                            .children(copied ? checkIcon(h) : copyIcon(h)),
+                            .children(copied ? iconCheck(h) : iconCopy(h)),
                         ),
                         h.div
                           .class('log-message')
