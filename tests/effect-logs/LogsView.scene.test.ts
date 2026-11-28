@@ -70,18 +70,18 @@ describe('LogsView Scene tests', () => {
       .expect(Locator.text(t('logs.sensitiveBody')))
       .toExist();
 
-    const followTailButton = HtmlLocator.role('button', { name: 'Follow Tail' });
+    const followTailSwitch = HtmlLocator.role('switch', { name: 'Follow Tail' });
     scene
-      .expect(followTailButton)
-      .toHaveAttribute('aria-pressed', 'true')
-      .click(followTailButton)
-      .expect(followTailButton)
-      .toHaveAttribute('aria-pressed', 'false')
-      .click(followTailButton)
+      .expect(followTailSwitch)
+      .toHaveAttribute('aria-checked', 'true')
+      .click(followTailSwitch)
+      .expect(followTailSwitch)
+      .toHaveAttribute('aria-checked', 'false')
+      .click(followTailSwitch)
       .expectExact(ReadLogsPage.make({ after: 0 }), ScrollToBottom.make())
       .resolve(ScrollToBottom, Component.noop)
-      .expect(followTailButton)
-      .toHaveAttribute('aria-pressed', 'true');
+      .expect(followTailSwitch)
+      .toHaveAttribute('aria-checked', 'true');
 
     scene
       .fireDocument('keydown', { key: 'f', meta: true })

@@ -39,6 +39,10 @@ const NATIVE_SYMBOLS = {
     args: [FFIType.ptr, FFIType.f64, FFIType.f64],
     returns: FFIType.i32,
   },
+  mcp_window_start_drag: {
+    args: [FFIType.ptr],
+    returns: FFIType.i32,
+  },
   mcp_tray_set_running: {
     args: [FFIType.cstring, FFIType.f64, FFIType.i32],
     returns: FFIType.i32,
@@ -242,6 +246,16 @@ export const openMinimumWindowSize = (path: string): MinimumWindowSize => {
     if (!pointer) throw new Error('The window no longer exists.');
     const status = library.symbols.mcp_window_set_min_content_size(pointer, width, height);
     if (status !== 0) throw new Error(`The native window minimum size was refused (${status}).`);
+  };
+};
+
+// Electrobun's built-in drag regions listen to MouseMoved and leak monitors; use AppKit natively.
+export const openWindowDrag = (path: string): ((window: NativeWindowHandle) => void) => {
+  const library = getNativeLibrary(path);
+  return (window) => {
+    const pointer = window.ptr;
+    if (!pointer) return;
+    library.symbols.mcp_window_start_drag(pointer);
   };
 };
 

@@ -9,6 +9,7 @@ export {
   iconCircleHelp,
   iconCode2,
   iconCopy,
+  iconEraser,
   iconEye,
   iconEyeOff,
   iconLoader,

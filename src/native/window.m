@@ -1,5 +1,27 @@
 #import <AppKit/AppKit.h>
 
+static __weak NSWindow *mcpTrackedWindow = nil;
+static NSEvent *mcpLastLeftMouseDown = nil;
+
+static void mcpInstallDragEventMonitorOnce(void) {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        [NSEvent addLocalMonitorForEventsMatchingMask:(NSEventMaskLeftMouseDown | NSEventMaskLeftMouseUp)
+                                              handler:^NSEvent *(NSEvent *event) {
+            if (event.type == NSEventTypeLeftMouseDown) {
+                if (event.window != nil && event.window == mcpTrackedWindow && event.clickCount == 1) {
+                    mcpLastLeftMouseDown = event;
+                } else {
+                    mcpLastLeftMouseDown = nil;
+                }
+            } else if (event.type == NSEventTypeLeftMouseUp) {
+                mcpLastLeftMouseDown = nil;
+            }
+            return event;
+        }];
+    });
+}
+
 static NSColor *mcpWindowBackgroundColor(void) {
     return [NSColor colorWithName:nil
                   dynamicProvider:^NSColor *(NSAppearance *appearance) {
@@ -28,6 +50,9 @@ __attribute__((visibility("default"))) int mcp_window_set_min_content_size(
     void (^apply)(void) = ^{
         for (NSWindow *window in NSApp.windows) {
             if ((__bridge void *)window != pointer) continue;
+            mcpTrackedWindow = window;
+            mcpLastLeftMouseDown = nil;
+            mcpInstallDragEventMonitorOnce();
             window.backgroundColor = mcpWindowBackgroundColor();
             window.contentMinSize = NSMakeSize(width, height);
             [window setFrameAutosaveName:@"MCPGatewayMainWindow"];
@@ -43,4 +68,27 @@ __attribute__((visibility("default"))) int mcp_window_set_min_content_size(
     if ([NSThread isMainThread]) apply();
     else dispatch_sync(dispatch_get_main_queue(), apply);
     return result;
+}
+
+// Hands off a primary single-click drag on our tracked NSWindow to WindowServer via
+// -[NSWindow performWindowDragWithEvent:]. Dispatches asynchronously so Bun never blocks on a
+// WindowServer tracking handshake, and ignores stale or already-released clicks.
+__attribute__((visibility("default"))) int mcp_window_start_drag(void *pointer) {
+    if (pointer == NULL) return -1;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (([NSEvent pressedMouseButtons] & 1) == 0) {
+            mcpLastLeftMouseDown = nil;
+            return;
+        }
+        NSEvent *event = mcpLastLeftMouseDown;
+        mcpLastLeftMouseDown = nil;
+        if (event == nil || event.type != NSEventTypeLeftMouseDown) return;
+        for (NSWindow *window in NSApp.windows) {
+            if ((__bridge void *)window != pointer) continue;
+            if (event.window != window) return;
+            [window performWindowDragWithEvent:event];
+            return;
+        }
+    });
+    return 0;
 }

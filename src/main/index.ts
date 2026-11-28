@@ -31,6 +31,7 @@ import {
   openLoginManager,
   openMinimumWindowSize,
   openTrayIndicator,
+  openWindowDrag,
   postNativeNotification,
   preventIdleSleep,
   readPreferredLanguages,
@@ -89,6 +90,7 @@ const nativeLibrary = join(PATHS.RESOURCES_FOLDER, 'app/native/login.dylib');
 const nativeQuitSignal = observeNativeQuitSignals(nativeLibrary);
 const login = openLoginManager(nativeLibrary);
 const setMinimumWindowSize = openMinimumWindowSize(nativeLibrary);
+const startNativeWindowDrag = openWindowDrag(nativeLibrary);
 // Opening the controller creates the folder on a first launch, so look before it does.
 const existingInstall = existsSync(dataDirectory);
 const defaultPort = identifier === TEST_IDENTIFIER ? 8766 : 8765;
@@ -394,7 +396,16 @@ const openWindow = () => {
           return result;
         },
       },
-      messages: {},
+      messages: {
+        startWindowDrag: () => {
+          if (!created || desktopState.window !== created) return;
+          try {
+            startNativeWindowDrag(created);
+          } catch (error) {
+            controller.recordLocalError(error);
+          }
+        },
+      },
     },
   });
   desktopState.rpc = rpc;

@@ -39,6 +39,10 @@ const rpc = Electroview.defineRPC<AppRPC>({
 });
 new Electroview({ rpc });
 
+export const startWindowDrag = () => {
+  rpc.send.startWindowDrag();
+};
+
 const scrubElectrobunWindowSecrets = () => {
   const globalWindow = window as unknown as Record<string, unknown>;
   const rawKeyBytes = globalWindow.__electrobunSecretKeyBytes;

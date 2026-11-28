@@ -81,6 +81,12 @@ export const iconTrash = <M>(h: Html.H<M>, sizeClass = 'size-3.5') =>
     'M14 11v6',
   ]);
 
+export const iconEraser = <M>(h: Html.H<M>, sizeClass = 'size-3.5') =>
+  svgIcon(h, sizeClass, [
+    'M21 21H8a2 2 0 0 1-1.42-.587l-3.994-3.999a2 2 0 0 1 0-2.828l10-10a2 2 0 0 1 2.829 0l5.999 6a2 2 0 0 1 0 2.828L12.834 21',
+    'm5.082 11.09 8.828 8.828',
+  ]);
+
 export const iconCode2 = <M>(h: Html.H<M>, sizeClass = 'size-6') =>
   svgIcon(h, sizeClass, ['m18 16 4-4-4-4', 'm6 8-4 4 4 4', 'm14.5 4-5 16']);
 

@@ -12,6 +12,18 @@ import { buttonClasses, iconAlertTriangle, iconNetwork } from '@mcp-gateway/main
 import { type Locale, type MessageKey, type Translate, translator } from '@mcp-gateway/shared/i18n';
 import type { NetworkKind } from '@mcp-gateway/shared/types';
 
+const INTERACTIVE_DRAG_EXCLUSION_SELECTOR =
+  'button, a, input, textarea, select, [role="button"], [contenteditable="true"]';
+
+export const isWindowDragTarget = (target: EventTarget | null): boolean => {
+  const element =
+    target instanceof Element ? target : target instanceof Node ? target.parentElement : null;
+  if (!element) return false;
+  if (element.closest(INTERACTIVE_DRAG_EXCLUSION_SELECTOR)) return false;
+  const region = element.closest('[data-window-drag], [data-window-no-drag]');
+  return Boolean(region && !region.hasAttribute('data-window-no-drag'));
+};
+
 // Sidebar notice for the saved listener address: [title, detail].
 const NETWORK_NOTICES: Record<NetworkKind, readonly [MessageKey, MessageKey]> = {
   loopback: ['shell.network.loopback', 'shell.network.loopbackDetail'],
@@ -118,7 +130,8 @@ export const renderSidebarUpdates = <M>(
     button = button.attr('aria-haspopup', 'dialog');
   }
   return h.div
-    .class('sidebar-updates electrobun-webkit-app-region-no-drag')
+    .class('sidebar-updates')
+    .attr('data-window-no-drag', 'true')
     .children(
       h.span.class('sr-only').attr('role', 'status').children(announcement),
       button.children(
@@ -281,47 +294,50 @@ export const renderShell = <M, R1 = never, R2 = never, R3 = never, R4 = never>(
         : t('shell.subtitle.settings');
 
   return h.div.class('app-shell').children(
-    h.div.class('window-titlebar electrobun-webkit-app-region-drag').attr('aria-hidden', 'true'),
-    h.aside.class('sidebar electrobun-webkit-app-region-drag').children(
-      h.div
-        .class('brand')
-        .children(
-          h.span.class('brand-mark').children(iconNetwork(h, 'size-[18px]')),
-          h.span.children(title),
-        ),
-      h.nav
-        .attr('aria-label', t('shell.mainNavigation'))
-        .class('electrobun-webkit-app-region-no-drag')
-        .children(
-          h.button
-            .attr('type', 'button')
-            .attr('data-fallback-focus', 'true')
-            .class(tab === 'overview' ? 'nav-item active' : 'nav-item')
-            .on('click', () => onSelectTab('overview'))
-            .children(t('shell.tab.overview')),
-          h.button
-            .attr('type', 'button')
-            .class(tab === 'settings' ? 'nav-item active' : 'nav-item')
-            .on('click', () => onSelectTab('settings'))
-            .children(t('shell.tab.settings')),
-          h.button
-            .attr('type', 'button')
-            .class(tab === 'logs' ? 'nav-item active' : 'nav-item')
-            .on('click', () => onSelectTab('logs'))
-            .children(t('shell.tab.logs')),
-        ),
-      h.div
-        .class('sidebar-bottom')
-        .children(
-          sidebarUpdates,
-          h.div
-            .class('sidebar-footer')
-            .children(
-              h.span.class(`led ${snapshot?.gateway.running ? 'on' : ''}`),
-              h.span.children(t(networkTitle), h.small.children(t(networkDetail))),
-            ),
-        ),
-    ),
+    h.div.class('window-titlebar').attr('data-window-drag', 'true').attr('aria-hidden', 'true'),
+    h.aside
+      .class('sidebar')
+      .attr('data-window-drag', 'true')
+      .children(
+        h.div
+          .class('brand')
+          .children(
+            h.span.class('brand-mark').children(iconNetwork(h, 'size-[18px]')),
+            h.span.children(title),
+          ),
+        h.nav
+          .attr('aria-label', t('shell.mainNavigation'))
+          .attr('data-window-no-drag', 'true')
+          .children(
+            h.button
+              .attr('type', 'button')
+              .attr('data-fallback-focus', 'true')
+              .class(tab === 'overview' ? 'nav-item active' : 'nav-item')
+              .on('click', () => onSelectTab('overview'))
+              .children(t('shell.tab.overview')),
+            h.button
+              .attr('type', 'button')
+              .class(tab === 'settings' ? 'nav-item active' : 'nav-item')
+              .on('click', () => onSelectTab('settings'))
+              .children(t('shell.tab.settings')),
+            h.button
+              .attr('type', 'button')
+              .class(tab === 'logs' ? 'nav-item active' : 'nav-item')
+              .on('click', () => onSelectTab('logs'))
+              .children(t('shell.tab.logs')),
+          ),
+        h.div
+          .class('sidebar-bottom')
+          .children(
+            sidebarUpdates,
+            h.div
+              .class('sidebar-footer')
+              .children(
+                h.span.class(`led ${snapshot?.gateway.running ? 'on' : ''}`),
+                h.span.children(t(networkTitle), h.small.children(t(networkDetail))),
+              ),
+          ),
+      ),
     h.main
       .attr('data-tab', tab)
       .children(

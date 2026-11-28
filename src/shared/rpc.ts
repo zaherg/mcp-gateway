@@ -152,7 +152,9 @@ export type AppRPC = {
         response: AppResult<QuitRequest>;
       };
     };
-    messages: Record<string, never>;
+    messages: {
+      startWindowDrag: undefined;
+    };
   };
   webview: {
     requests: {

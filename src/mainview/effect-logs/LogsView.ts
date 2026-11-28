@@ -1,5 +1,6 @@
 import { Command, Component, UiSchema } from '@effect/ui';
 import { Html, HtmlSubscription } from '@effect/ui/html';
+import { Switch } from '@effect/ui-kit';
 import { Effect, Layer, Schema } from 'effect';
 
 import {
@@ -13,14 +14,16 @@ import { LogsDom, LogsRpc } from '@mcp-gateway/mainview/effect-logs/services';
 import {
   buttonClasses,
   INPUT_CLASSES,
-  iconArrowDownToLine,
   iconCheck,
   iconCircleHelp,
   iconCopy,
+  iconEraser,
   LocaleSchema,
   renderAlert,
   renderNativeSelect,
   SELECT_OPTION_CLASSES,
+  SWITCH_ROOT_CLASSES,
+  SWITCH_THUMB_CLASSES,
 } from '@mcp-gateway/mainview/effect-ui';
 import { type Locale, translator } from '@mcp-gateway/shared/i18n';
 import { LOG_LEVELS, LOG_LIMITS, type LogEntry, type LogLevel } from '@mcp-gateway/shared/types';
@@ -404,20 +407,42 @@ export const LogsView = Html.component({
               .on('input', ({ value }) => LogsMessage.ChangedSearch({ text: value }))
               .on('change', ({ value }) => LogsMessage.ChangedSearch({ text: value })),
           ),
+          Switch(h, {
+            props: { checked: model.followTail, disabled: false },
+            onToggle: () => LogsMessage.ToggledFollowTail(),
+            view: (parts) =>
+              h.label
+                .class(
+                  'inline-flex shrink-0 cursor-pointer items-center gap-2 px-1 text-[13px] font-medium text-mac-label select-none',
+                )
+                .attr('for', 'logs-follow-tail')
+                .children(
+                  parts
+                    .root(
+                      h.button
+                        .attr('id', 'logs-follow-tail')
+                        .attr('data-slot', 'switch')
+                        .attr('data-size', 'sm')
+                        .attr('aria-label', 'Follow Tail')
+                        .class(SWITCH_ROOT_CLASSES),
+                    )
+                    .children(
+                      parts.thumb(
+                        h.span.attr('data-slot', 'switch-thumb').class(SWITCH_THUMB_CLASSES),
+                      ),
+                    ),
+                  h.span.children('Follow Tail'),
+                ),
+          }),
           h.button
             .attr('type', 'button')
             .attr('data-slot', 'button')
-            .attr('aria-pressed', String(model.followTail))
-            .class(buttonClasses(model.followTail ? 'default' : 'secondary', 'xl'))
-            .on('click', LogsMessage.ToggledFollowTail())
-            .children(iconArrowDownToLine(h), ' Follow Tail'),
-          h.button
-            .attr('type', 'button')
-            .attr('data-slot', 'button')
+            .attr('aria-label', t('logs.clear'))
+            .attr('title', t('logs.clear'))
             .disabled(clearing)
-            .class(buttonClasses('secondary', 'xl'))
+            .class(buttonClasses('ghost', 'icon'))
             .on('click', LogsMessage.ClickedClear())
-            .children(t('logs.clear')),
+            .children(iconEraser(h)),
           h.button
             .attr('type', 'button')
             .attr('data-slot', 'button')

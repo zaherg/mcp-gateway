@@ -5,6 +5,7 @@ import { EditorView } from '@codemirror/view';
 import { Effect, Layer } from 'effect';
 
 import { AppLiveLayers, AppRoot, AppView } from '@mcp-gateway/mainview/effect-app/AppView';
+import { isWindowDragTarget } from '@mcp-gateway/mainview/effect-app/chrome';
 import { GatewayRpc, WindowEnv } from '@mcp-gateway/mainview/effect-app/services';
 import { alertClasses } from '@mcp-gateway/mainview/effect-ui';
 import { CONFIG_TOO_LARGE, MAX_CONFIG_BYTES } from '@mcp-gateway/shared/config-document';
@@ -916,5 +917,42 @@ describe('AppView DOM shell, native <dialog> focus restoration, and modal arbitr
     await waitFor(() => {
       expect(document.activeElement === settingsTabBtn).toBe(true);
     });
+  });
+
+  test('shell marks titlebar and sidebar with native drag attributes without Electrobun drag classes', async () => {
+    const mockBundle = createMockAppClient(makeSnapshot());
+    const view = await mountApp(mockBundle.client);
+    await view.findByRole('heading', { level: 1, name: t('shell.title.overview') });
+
+    expect(view.container.querySelector('.electrobun-webkit-app-region-drag')).toBeNull();
+    expect(view.container.querySelector('.electrobun-webkit-app-region-no-drag')).toBeNull();
+
+    const titlebar = must(view.container.querySelector('.window-titlebar'), '.window-titlebar');
+    const sidebar = must(view.container.querySelector('.sidebar'), '.sidebar');
+    const brandText = must(
+      view.container.querySelector('.brand span:last-child')?.firstChild,
+      'brand text',
+    );
+    const nav = view.getByRole('navigation', { name: t('shell.mainNavigation') });
+    const navButton = within(nav).getByRole('button', { name: t('shell.tab.overview') });
+    const updatesWrapper = must(
+      view.container.querySelector('.sidebar-updates'),
+      '.sidebar-updates',
+    );
+    const updatesButton = must(
+      view.container.querySelector('[data-sidebar-updates-trigger]'),
+      '[data-sidebar-updates-trigger]',
+    );
+    const main = must(view.container.querySelector('main'), 'main');
+
+    expect(isWindowDragTarget(titlebar)).toBe(true);
+    expect(isWindowDragTarget(sidebar)).toBe(true);
+    expect(isWindowDragTarget(brandText)).toBe(true);
+    expect(isWindowDragTarget(nav)).toBe(false);
+    expect(isWindowDragTarget(navButton)).toBe(false);
+    expect(isWindowDragTarget(updatesWrapper)).toBe(false);
+    expect(isWindowDragTarget(updatesButton)).toBe(false);
+    expect(isWindowDragTarget(main)).toBe(false);
+    expect(isWindowDragTarget(null)).toBe(false);
   });
 });
