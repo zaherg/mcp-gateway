@@ -70,13 +70,20 @@ All bundle sizes come from `bun run ui:build` (`vite build` v8.3.8). All test ti
 - `POST http://127.0.0.1:4774/mcp` (`initialize` and `tools/list`) returned `200 OK` and exposed `16` Streamable HTTP MCP tools (`list_sessions`, `list_instances`, `list_entries`, `count_entries`, `get_entry`, `get_chain`, `get_state`, `diff_state`, `show_entry`, `resume`, `set_recording`, `get_message_schema`, `find_instances`, `get_picked`, `dispatch`, `wait`).
 - WebMCP (`node_modules/@effect/ui-devtools/dist/internal/webmcp.js`) activates only when `document.modelContext.registerTool` exists. macOS `WKWebView` in Electrobun does not expose `document.modelContext`, so agent inspection in Electrobun uses the loopback MCP server at `http://127.0.0.1:4774/mcp` instead of WebMCP.
 
-### Remaining manual macOS GUI checks (not automatable headlessly)
+### Verified live in the running macOS Electrobun dev app
 
-Run `bun run dev` and open the macOS window if you want visual sign-off before deleting the spike branch.
+Tested directly against `MCP Gateway-dev.app` running under `bun run dev` (Vite `127.0.0.1:5173` + DevTools server `127.0.0.1:4774`).
 
-1. Open Logs in light and dark macOS appearance and confirm toolbar spacing, `Follow Tail`, `Clear`, info popover, alert banners, and `.log-row` styling match trunk.
-2. Press `Cmd+F`, filter by text/level/server, scroll up and click `Follow Tail`, copy a row to the macOS clipboard, click `Clear`, and toggle `Overview -> Logs -> Settings -> Logs` five times rapidly.
-3. Open the Effect UI DevTools button in the bottom-right corner of the Logs tab, confirm zero CSP errors in WebKit Web Inspector, test Pick on a `.log-row`, scrub Time travel and click Resume, and pause `PollTicked` in the timeline.
+1. **Visual rendering in macOS dark mode.** Captured live window screenshots of the Logs tab and the open Sensitive data popover. Toolbar spacing, `All levels` / `All servers` selects, `Search text (⌘F)`, active teal `Follow Tail`, `Clear logs`, info popover, log rows, and the bottom-right Effect UI DevTools launcher button (`[UI] 73`) rendered cleanly with zero CSP blocking.
+2. **Live WebSocket bridge from `WKWebView` to MCP.** `list_sessions` reported `{ app: "LogsView", host: "browser", connected: true, controllable: true }`, `list_instances` showed `/LogsView`, and `get_state` automatically outlined the `39,137`-byte Model and returned exact subtrees when passed `path: ["props"]` or `path: ["model", "pollPhase"]`.
+3. **Dispatch, state diff, and Time travel.** Dispatched `ToggledInfo` and `ChangedSearch({ text: "liveness" })` over MCP (`applied: 2 of 2`), read `diff_state` (`text: "" -> "liveness"`), called `show_entry` at the earlier seq (`{ paused: 86, fellBack: [], fallbacks: [], skipped: [] }`), visually confirmed the frozen painted copy showing the open info popover plus `Paused at #86 [Resume]` in the DevTools overlay, and resumed cleanly (`{ resumed: true }`). As documented by Effect UI, scroll position is DOM state outside the Model and resets to top in the painted Time travel copy.
+4. **Recording pause.** `set_recording({ tag: "PollTicked", recording: false })` suppressed `PollTicked` bursts while live `PollSucceeded` polling continued, and `recording: true` restored it.
+5. **5x rapid tab toggle cleanup.** Sent `Cmd+1 -> Cmd+2 -> Cmd+3 -> Cmd+2` five times via System Events. All five previous sessions disconnected cleanly (`connected: false, controllable: false`), exactly `1` session stayed connected with `1` running `SchedulePollWait`, and `4.2` seconds of observation recorded `deltaPollSucceeded: 2` (exact `2,000` ms cadence with zero duplicate timers).
+6. **Clipboard gesture note.** Dispatching `ClickedCopy` synthetically via MCP (without a user click gesture) did not write to the macOS clipboard because `WKWebView` gates `navigator.clipboard.writeText` on user activation.
+
+### Remaining quick manual spot-checks (optional)
+
+1. Click a row's Copy button directly in the window to verify user-gesture clipboard write and `1.5`s check-icon revert, click Pick inside the DevTools pill, and check light macOS appearance if you want visual sign-off in light mode.
 
 ## Practical takeaway for `develop`
 
