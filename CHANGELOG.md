@@ -7,45 +7,53 @@ Release dates are the dates each section was stamped for release.
 
 ## [Unreleased]
 
+Changes after `1.0.0`.
+
+## [1.0.0] - 2026-11-28
+
 ### Added
 
-- Save structured edits in **Settings**, **Overview** and the server dialog immediately, keeping draft mode for **Authoritative configuration**
-- Replace the raw JSON editors in the server dialog with structured **Arguments**, **Environment** and **Headers** row editors, including automatic secret masking and warnings for sensitive environment variable overrides
-- Import existing server definitions from Claude Desktop (`claude_desktop_config.json`) and Cursor (`~/.cursor/mcp.json`) from **Settings → Advanced** or **Authoritative configuration**
-- Add **Open in External Editor** to **Settings → Advanced** and **Authoritative configuration**
-- Add a collapsible schema reference popover (`?`), 2-space Tab indentation and clickable **Line N** links on validation errors in **Authoritative configuration**
-- Redesign **Logs** with a single-row toolbar, **Follow Tail**, `Cmd+F` search focus, single-line tabular rows, per-row copy buttons and a collapsible info popover
-- Add **View** (`Cmd+1`–`Cmd+4`, `Cmd+R`), **Server** (`Cmd+N`), **Window** (`Cmd+M`, `Cmd+W`), **About** and **Hide** items to the application menu
-- Add **Copy Gateway Endpoint URL**, per-server quick-toggle items and direct **Restart to Update** to the menu-bar icon menu
-- Show determinate download progress and a single **Install and Relaunch** button in **Updates**, auto-check when opening **Updates** while idle, and allow clicking **Update ready** in the sidebar to restart directly
-- Post native macOS notifications for background startup errors, ready updates and failed menu-bar actions when the window is closed
-- Add an automated unit, integration and full-stack end-to-end test suite (`bun run test`)
+- Test a server's connection from its card
+- Keep the Mac awake while the gateway runs
+- Move gateway keys to the macOS Keychain
+- Rename Keychain services and the signed development app
+- Store the initial gateway key in Keychain on fresh signed installs
+- Polish UI/UX, add manual appearance setting, and remove server restart
 
 ### Changed
 
-- Replace `supergateway`, `express` and `cors` with an in-repo MCP `2026-07-28` adapter and direct `@modelcontextprotocol/sdk` Streamable HTTP transports, bundling all runtime dependencies into the app
-- Switch **Overview** from a card grid to a compact server table with a gateway status pill, enable/disable switches and inline copy feedback
-- Reorganize **Settings** into **General**, **Network**, **Security** and **Advanced** groups, moving the **Language** picker and **Retry login registration** into **General**
-- Replace the top-of-window banner stack, header **Quit** button, page footer and in-app confirmation dialogs with a compact configuration blocker bar, per-view alerts and native macOS confirmation dialogs
-- Replace periodic status polling with native push updates and persist window size and position natively through AppKit instead of `window.json`
-- Access the macOS Keychain directly through `Security.framework` FFI (with `kSecAttrAccessibleWhenUnlocked`), falling back to `Bun.secrets` only when the native library is absent
-- Coordinate configuration writes with advisory `flock` locking on `mcp.json.lock` so stale locks clear automatically when a writer exits
-- Keep the window hidden on background launches even when release notes are pending, posting a notification on startup errors instead
-- Enable delta update patch generation in release builds and update libraries
-
-### Security
-
-- Redact tokens, authorization and API key headers, JSON secret fields, query secrets and configured server secrets in **Logs** and sanitized error messages, and suppress raw stdio `stderr` output by default
-- Restrict local stdio servers to a minimal safe allowlist of parent environment variables and reject dangerous loader and runtime environment keys (`NODE_OPTIONS`, `BUN_OPTIONS`, `DYLD_*`, `LD_*`)
-- Block link-local and cloud metadata upstream addresses (`169.254.0.0/16`, `0.0.0.0/8`, `fe80::/10`, `::` and IPv4-mapped IPv6 forms) and refuse HTTP redirects on all HTTP upstreams
-- Reject HTTP `Upgrade` / WebSocket requests (`403` on invalid `Host` or `Origin`, `405` otherwise), strip `Access-Control-Allow-Origin` headers and enforce a 30-second request body read timeout
-- Verify downloaded update manifests when present and check the staged app bundle's code signature and `TeamIdentifier` against the installed app before restarting to update
-- Harden `seen-version.json` and `key-reminder.json` with atomic owner-only file I/O, scrub Electrobun window secret globals after renderer RPC initialization and default `Bun.serve` to loopback binding
-- Refuse `SIGN_VERIFY_SKIP` during release verification and require all production signature, notarization and Gatekeeper checks to pass
+- Update libraries
+- Update changelog
+- Add the pause note
+- Update libraries
+- Update libraries
+- Complete audit remediation plans 047-053 (security, direct SDK transports, native macOS UX)
+- Remove inferrable TypeScript type annotations
+- PR-1 pin Effect UI snapshot deps and verify build gate
+- PR-2 build pure log buffer, Effect UI LogsView, and Story/Scene/Play tests
+- PR-3 mount Effect UI LogsView inside React Logs adapter
+- PR-4 wire dev-only Effect UI DevTools and write SPIKE-REPORT.md
+- Record live macOS Electrobun verification in SPIKE-REPORT.md
+- Migrate Settings view to Effect UI and @effect/ui-kit Switch
+- Record live Settings and Logs inspection findings
+- Migrate Overview view to Effect UI and @effect/ui-kit Switch
+- Record live Overview CRUD and 3-tab handoff inspection
+- Remove React and migrate full renderer to Effect UI
 
 ### Fixed
 
-- Preserve concurrent edits in **Authoritative configuration** when a save finishes
+- Name the Dev app in its labels and clarify first-run Keychain failures
+- Apply review fixes for discovery, shutdown, Stop and validation
+- Refuse queued controller work at dequeue after Stop
+- Clean up helpers left by a backend that exits by itself
+- Keep one server's stuck cleanup from blocking other changes
+- Report a written configuration as saved when applying it fails
+- Keep an enabled server's pending cleanup off unrelated saves
+- Redact bearer token fields with Schema.Redacted
+- Defer window reveal until snapshot ready and match native background
+- Remediate Effect UI migration audit findings
+- Use native window drag, block prod context menu, and refine logs toolbar
+- Resolve nested app bundle inside Electrobun staging dir
 
 ## [0.9.0] - 2026-11-25
 
@@ -264,7 +272,8 @@ The first release.
 - In-memory logs, launch at login, and an optional gateway start when the app opens.
 - Experimental Linux and Windows packaging.
 
-[Unreleased]: https://github.com/zaherg/mcp-gateway/compare/0.9.0...HEAD
+[Unreleased]: https://github.com/zaherg/mcp-gateway/compare/1.0.0...HEAD
+[1.0.0]: https://github.com/zaherg/mcp-gateway/compare/0.9.0...1.0.0
 [0.9.0]: https://github.com/zaherg/mcp-gateway/compare/0.8.3...0.9.0
 [0.8.3]: https://github.com/zaherg/mcp-gateway/compare/0.8.2...0.8.3
 [0.8.2]: https://github.com/zaherg/mcp-gateway/compare/0.8.0...0.8.2
