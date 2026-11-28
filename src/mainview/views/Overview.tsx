@@ -1,29 +1,30 @@
-import { Check, Code2, Copy, Loader2, Pencil, PlugZap, Server, Trash2, X } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import type { Renderer } from '@effect/ui';
+import { BrowserHost } from '@effect/ui/html';
+import { DevTools } from '@effect/ui-devtools';
+import { Effect, Exit, Fiber, Layer, Scope } from 'effect';
+import { useEffect, useMemo, useRef } from 'react';
 
-import { Button } from '@mcp-gateway/mainview/components/mac/button';
-import { Switch } from '@mcp-gateway/mainview/components/mac/switch';
-import { Alert } from '@mcp-gateway/mainview/components/ui';
 import { useGatewayView } from '@mcp-gateway/mainview/context/GatewayViewContext';
 import { bearPreset, emptyEditor } from '@mcp-gateway/mainview/dialogs/ServerEditor';
+import {
+  OverviewCommandLayers,
+  OverviewMessage,
+  type OverviewModel,
+  type OverviewProps,
+  OverviewView,
+} from '@mcp-gateway/mainview/effect-overview/OverviewView';
+import {
+  OverviewActions,
+  type OverviewCallbacks,
+  TestServerOutcome,
+} from '@mcp-gateway/mainview/effect-overview/services';
 import { useI18n } from '@mcp-gateway/mainview/i18n';
-import type { MessageKey } from '@mcp-gateway/shared/i18n';
 
-// The LED carries the state; the word names it.
-const SERVER_STATUS = {
-  mounted: { label: 'overview.status.mounted', led: 'on' },
-  error: { label: 'overview.status.error', led: 'error' },
-  disabled: { label: 'overview.status.disabled', led: '' },
-  stopped: { label: 'overview.status.stopped', led: '' },
-} as const satisfies Record<string, { label: MessageKey; led: string }>;
-
-/** The latest manual test, tied to the saved revision it ran against. */
-interface ServerTest {
-  name: string;
-  revision: string;
-  state: 'testing' | 'passed' | 'failed' | 'cancelled';
-  message: string;
-}
+type OverviewRoot = Renderer.Root<
+  typeof OverviewModel.Type,
+  typeof OverviewMessage.Type,
+  typeof OverviewProps.Type
+>;
 
 export const Overview = () => {
   const {
@@ -46,283 +47,157 @@ export const Overview = () => {
     setEditor,
     setEditorError,
   } = useGatewayView();
-  const { t } = useI18n();
-  const serverCount = config ? Object.keys(config.mcpServers).length : 0;
-  const [test, setTest] = useState<ServerTest | null>(null);
-  const [copiedServer, setCopiedServer] = useState<string | null>(null);
-  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // A reply that arrives after a newer test or after leaving Overview is dropped.
-  const testGeneration = useRef(0);
-  useEffect(
-    () => () => {
-      testGeneration.current++;
-      if (copyTimer.current !== null) clearTimeout(copyTimer.current);
-    },
-    [],
-  );
-  const copyClientConfig = async (name: string) => {
-    const ok = await run(() => client.copyClientConfig({ name }), '');
-    if (!ok) return;
-    if (copyTimer.current !== null) clearTimeout(copyTimer.current);
-    setCopiedServer(name);
-    copyTimer.current = setTimeout(() => {
-      copyTimer.current = null;
-      setCopiedServer((previous) => (previous === name ? null : previous));
-    }, 1_500);
-  };
-  const revision = gateway?.revision;
-  const testing = test?.state === 'testing';
-  const testedStatus = gateway?.servers.find((item) => item.name === test?.name)?.status;
-  // A pass or failure describes the mount it ran against, so it ends when the gateway stops
-  // or the server unmounts. A cancellation stays: it explains why the test stopped.
-  const outdated =
-    (test?.state === 'passed' || test?.state === 'failed') &&
-    !(gateway?.running && testedStatus === 'mounted');
-  useEffect(() => {
-    if (outdated) setTest(null);
-  }, [outdated]);
-  const testServer = async (name: string) => {
-    if (!revision || testing) return;
-    const generation = ++testGeneration.current;
-    setTest({ name, revision, state: 'testing', message: t('overview.testing') });
-    let next: ServerTest;
-    try {
-      const result = await client.testServer({ name, expectedRevision: revision });
-      next = result.ok
-        ? {
-            name,
-            revision,
-            state: 'passed',
-            message: t('overview.testPassed', { version: result.value.protocolVersion }),
-          }
-        : {
-            name,
-            revision,
-            state: result.error.code === 'Cancelled' ? 'cancelled' : 'failed',
-            message: result.error.message,
-          };
-    } catch {
-      next = { name, revision, state: 'failed', message: t('overview.testUnavailable') };
-    }
-    if (generation === testGeneration.current) setTest(next);
-  };
-  const listenerAddress = config ? `${config.gateway.host}:${config.gateway.port}` : null;
+  const { locale } = useI18n();
 
-  return (
-    <>
-      {error && <Alert onDismiss={clearError}>{error}</Alert>}
-      {operationalError && (
-        <Alert onDismiss={dismissOperationalError}>
-          {operationalError.code}: {operationalError.message}
-        </Alert>
-      )}
-      {snapshot?.keyReminder && (
-        <Alert
-          kind="warning"
-          role="status"
-          label={t('keys.dismiss')}
-          onDismiss={dismissKeyReminder}
-        >
-          {t('keys.reminder')}{' '}
-          <Button variant="link" disabled={configurationLocked} onClick={openKeyMigration}>
-            {t('keys.review')}
-          </Button>
-        </Alert>
-      )}
-      <section aria-labelledby="servers-heading">
-        <div className="section-heading">
-          <div className="flex flex-wrap items-center gap-3">
-            <h2 id="servers-heading" className="flex items-center gap-1.5">
-              {t('overview.servers')}
-              {config && <span className="count">{serverCount}</span>}
-            </h2>
-            <span className="inline-flex items-center gap-2 rounded-full border border-mac-border bg-mac-group px-2.5 py-1 text-[12px] text-mac-label">
-              <span className={`led ${gateway?.running ? 'on' : ''}`} />
-              <span>
-                {gateway?.running ? t('common.gatewayRunning') : t('common.gatewayStopped')}
-              </span>
-              {listenerAddress && (
-                <span className="mono text-mac-label-secondary">{listenerAddress}</span>
-              )}
-            </span>
-          </div>
-          <Button
-            variant="default"
-            disabled={configurationLocked || !config}
-            onClick={() => openServerEditor()}
-          >
-            {t('overview.addServer')}
-          </Button>
-        </div>
-        {config && serverCount > 0 && (
-          <div className="server-table panel">
-            {Object.entries(config.mcpServers).map(([name, server]) => {
-              const live = gateway?.servers.find((item) => item.name === name);
-              const status = live?.status ?? (server.disabled ? 'disabled' : 'stopped');
-              const state = SERVER_STATUS[status];
-              const http = 'url' in server;
-              // A result for an older revision no longer describes this entry.
-              const shown =
-                !outdated && test?.name === name && test.revision === revision ? test : null;
-              const testBlocked = dirty
-                ? t('toggle.saveFirst')
-                : gateway?.configError
-                  ? t('toggle.repairFirst')
-                  : !gateway?.running
-                    ? t('overview.testStartGateway')
-                    : status !== 'mounted'
-                      ? t('overview.testNotMounted')
-                      : test?.state === 'testing' && test.name !== name
-                        ? t('overview.testBusy')
-                        : undefined;
-              const testReason = configurationLocked ? undefined : testBlocked;
-              const testReasonId = `test-reason-${name}`;
-              const clientCopied = copiedServer === name;
-              return (
-                <article
-                  className={status === 'error' ? 'server-row error' : 'server-row'}
-                  key={name}
-                >
-                  <div className="server-row-main">
-                    <div className="server-cell-name">
-                      <span className={`led ${state.led}`} title={t(state.label)} />
-                      <strong>{name}</strong>
-                      <span className="server-transport-badge">{http ? 'HTTP' : 'STDIO'}</span>
-                      {shown && (
-                        <span
-                          role="status"
-                          title={shown.message}
-                          className={`inline-flex shrink-0 items-center ${
-                            shown.state === 'passed'
-                              ? 'text-mac-green'
-                              : shown.state === 'failed'
-                                ? 'text-mac-red-ink'
-                                : 'text-mac-label-secondary'
-                          }`}
-                        >
-                          {shown.state === 'testing' ? (
-                            <Loader2
-                              className="size-3.5 motion-safe:animate-spin"
-                              aria-hidden="true"
-                            />
-                          ) : shown.state === 'passed' ? (
-                            <Check className="size-3.5" aria-hidden="true" />
-                          ) : (
-                            <X className="size-3.5" aria-hidden="true" />
-                          )}
-                          <span className="sr-only">{shown.message}</span>
-                        </span>
-                      )}
-                    </div>
-                    <div className="server-cell-target">
-                      <div className="server-endpoint-line">
-                        <span className="mono">/mcp/{name}</span>
-                      </div>
-                      <p className="server-detail mono" title={http ? server.url : server.command}>
-                        {http ? server.url : server.command}
-                      </p>
-                    </div>
-                    <div className="server-cell-switch">
-                      <Switch
-                        size="sm"
-                        aria-label={server.disabled ? t('overview.start') : t('overview.stop')}
-                        checked={!server.disabled}
-                        disabled={configurationLocked || dirty || !!gateway?.configError}
-                        onCheckedChange={(enabled) => void toggleServer(name, !enabled)}
-                      />
-                    </div>
-                    <div className="server-cell-actions">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label={t('overview.testConnectionFor', { name })}
-                        aria-describedby={testReason ? testReasonId : undefined}
-                        title={testReason ?? t('overview.testConnection')}
-                        disabled={configurationLocked || testBlocked !== undefined || testing}
-                        onClick={() => void testServer(name)}
-                      >
-                        <PlugZap />
-                      </Button>
-                      {testReason && (
-                        <span id={testReasonId} className="sr-only">
-                          {testReason}
-                        </span>
-                      )}
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label={t('overview.copyClientConfig')}
-                        title={clientCopied ? 'Copied' : t('overview.copyClientConfig')}
-                        disabled={!live || dirty}
-                        onClick={() => void copyClientConfig(name)}
-                      >
-                        {clientCopied ? <Check /> : <Copy />}
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label={t('common.editServer')}
-                        title={t('common.editServer')}
-                        disabled={configurationLocked}
-                        onClick={() => openServerEditor(name)}
-                      >
-                        <Pencil />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label={t('overview.delete', { name })}
-                        title={t('overview.delete', { name })}
-                        disabled={configurationLocked}
-                        onClick={() => {
-                          if (!configurationLocked) void deleteServer(name);
-                        }}
-                      >
-                        <Trash2 />
-                      </Button>
-                    </div>
-                  </div>
-                  {live?.error && (
-                    <div className="server-row-detail">
-                      <p className="inline-error">{live.error.message}</p>
-                    </div>
-                  )}
-                </article>
-              );
-            })}
-          </div>
-        )}
-        {config && serverCount === 0 && (
-          <div className="empty-state panel">
-            <Server size={24} />
-            <h3>{t('overview.emptyTitle')}</h3>
-            <p>
-              {t('overview.emptyLine1')}
-              <br />
-              {t('overview.emptyLine2')}
-            </p>
-            <Button
-              disabled={configurationLocked}
-              onClick={() => {
-                if (configurationLocked) return;
-                setEditorError(null);
-                setEditor({ ...emptyEditor(), ...bearPreset() });
-              }}
-            >
-              {t('overview.bearPreset')}
-            </Button>
-            <small>{t('overview.bearNote')}</small>
-          </div>
-        )}
-        {/* A first-run Keychain failure has no file to repair; its banner gives the remedy. */}
-        {!config && gateway?.configError?.code !== 'KeySetupFailed' && (
-          <div className="panel empty-state">
-            <Code2 size={24} />
-            <h3>{t('overview.repairTitle')}</h3>
-            <p>{t('overview.repairBody')}</p>
-          </div>
-        )}
-      </section>
-    </>
+  const overviewProps = useMemo<typeof OverviewProps.Type>(() => {
+    const servers = config
+      ? Object.entries(config.mcpServers).map(([name, server]) => {
+          const live = gateway?.servers.find((item) => item.name === name);
+          const status = live?.status ?? (server.disabled ? 'disabled' : 'stopped');
+          const http = 'url' in server;
+          return {
+            name,
+            transport: http ? ('http' as const) : ('stdio' as const),
+            target: http ? server.url : server.command,
+            disabled: Boolean(server.disabled),
+            status,
+            hasLive: live !== undefined,
+            liveError: live?.error?.message ?? null,
+          };
+        })
+      : [];
+
+    return {
+      locale,
+      hasConfig: config !== null,
+      dirty,
+      running: Boolean(gateway?.running),
+      revision: gateway?.revision ?? null,
+      listenerAddress: config ? `${config.gateway.host}:${config.gateway.port}` : null,
+      configurationLocked,
+      hasConfigError: Boolean(gateway?.configError),
+      configErrorCode: gateway?.configError?.code ?? null,
+      error,
+      operationalError: operationalError
+        ? { code: operationalError.code, message: operationalError.message }
+        : null,
+      keyReminder: Boolean(snapshot?.keyReminder),
+      servers,
+    };
+  }, [config, configurationLocked, dirty, error, gateway, locale, operationalError, snapshot]);
+
+  const mountStatusKey = useMemo(
+    () =>
+      JSON.stringify([
+        overviewProps.running,
+        overviewProps.servers.map((server) => [server.name, server.status]),
+      ]),
+    [overviewProps.running, overviewProps.servers],
   );
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<OverviewRoot | null>(null);
+  const latestPropsRef = useRef(overviewProps);
+  latestPropsRef.current = overviewProps;
+
+  const callbacksRef = useRef<OverviewCallbacks>({
+    clearError: () => {},
+    dismissOperationalError: () => {},
+    dismissKeyReminder: () => {},
+    openKeyMigration: () => {},
+    openServerEditor: () => {},
+    openBearPreset: () => {},
+    toggleServer: async () => {},
+    deleteServer: async () => {},
+    copyClientConfig: async () => false,
+    testServer: async () => TestServerOutcome.Unavailable(),
+  });
+  callbacksRef.current = {
+    clearError,
+    dismissOperationalError,
+    dismissKeyReminder,
+    openKeyMigration,
+    openServerEditor,
+    openBearPreset: () => {
+      if (configurationLocked) return;
+      setEditorError(null);
+      setEditor({ ...emptyEditor(), ...bearPreset() });
+    },
+    toggleServer,
+    deleteServer,
+    copyClientConfig: (name) => run(() => client.copyClientConfig({ name }), ''),
+    testServer: async (name, expectedRevision) => {
+      try {
+        const result = await client.testServer({ name, expectedRevision });
+        if (result.ok) {
+          return TestServerOutcome.Passed({ protocolVersion: result.value.protocolVersion });
+        }
+        return result.error.code === 'Cancelled'
+          ? TestServerOutcome.Cancelled({ message: result.error.message })
+          : TestServerOutcome.Failed({ message: result.error.message });
+      } catch {
+        return TestServerOutcome.Unavailable();
+      }
+    },
+  };
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const scope = Scope.makeUnsafe();
+    const useDevTools = import.meta.env.DEV && !('Bun' in globalThis);
+    const commandLayers = OverviewCommandLayers.pipe(
+      Layer.provide(OverviewActions.fromRef(callbacksRef)),
+    );
+    const layers = useDevTools
+      ? Layer.mergeAll(commandLayers, DevTools.layer({ position: 'BottomRight' }))
+      : commandLayers;
+
+    const mountProgram = Effect.gen(function* () {
+      const context = yield* Layer.buildWithScope(layers, scope);
+      return yield* BrowserHost.mountEffect(OverviewView, latestPropsRef.current, container, {
+        head: false,
+      }).pipe(Effect.provideContext(context), Effect.provideService(Scope.Scope, scope));
+    });
+
+    let disposed = false;
+    let mountFiber: Fiber.Fiber<OverviewRoot> | null = null;
+
+    if (useDevTools) {
+      mountFiber = Effect.runFork(
+        mountProgram.pipe(
+          Effect.tap((root) =>
+            Effect.sync(() => {
+              if (disposed) return;
+              rootRef.current = root;
+              root.setProps(latestPropsRef.current);
+            }),
+          ),
+        ),
+      );
+    } else {
+      rootRef.current = Effect.runSync(mountProgram);
+    }
+
+    return () => {
+      disposed = true;
+      rootRef.current = null;
+      const closeScope = Scope.close(scope, Exit.void);
+      Effect.runFork(
+        mountFiber ? Fiber.interrupt(mountFiber).pipe(Effect.andThen(closeScope)) : closeScope,
+      );
+    };
+  }, []);
+
+  useEffect(() => {
+    rootRef.current?.setProps(overviewProps);
+  }, [overviewProps]);
+
+  useEffect(() => {
+    if (!mountStatusKey) return;
+    rootRef.current?.send(OverviewMessage.ClearedOutdatedTest());
+  }, [mountStatusKey]);
+
+  return <div ref={containerRef} className="min-w-0" />;
 };

@@ -993,7 +993,7 @@ describe('Views: Overview, Settings, Updates, Logs', () => {
     });
 
     fireEvent.click(view.getByRole('button', { name: t('overview.bearPreset') }));
-    const dialog = view.getByRole('dialog', { name: t('editor.addTitle') });
+    const dialog = await view.findByRole('dialog', { name: t('editor.addTitle') });
     expect((within(dialog).getByLabelText(t('editor.name')) as HTMLInputElement).value).toBe(
       'bear',
     );
@@ -1065,14 +1065,16 @@ describe('Views: Overview, Settings, Updates, Logs', () => {
         }),
       );
     });
-    expect(mockBundle.calls.testServer).toEqual([
-      { name: 'bear', expectedRevision: DEFAULT_REVISION },
-    ]);
-    expect(bearRow.textContent).toContain(t('overview.testPassed', { version: '2025-11-25' }));
+    await waitFor(() => {
+      expect(mockBundle.calls.testServer).toEqual([
+        { name: 'bear', expectedRevision: DEFAULT_REVISION },
+      ]);
+      expect(bearRow.textContent).toContain(t('overview.testPassed', { version: '2025-11-25' }));
+    });
 
     // Edit button opens ServerEditor for that server, and Add Server opens a blank ServerEditor.
     fireEvent.click(within(bearRow).getByRole('button', { name: t('common.editServer') }));
-    const editDialog = view.getByRole('dialog', { name: t('common.editServer') });
+    const editDialog = await view.findByRole('dialog', { name: t('common.editServer') });
     expect((within(editDialog).getByLabelText(t('editor.name')) as HTMLInputElement).value).toBe(
       'bear',
     );
@@ -1080,7 +1082,7 @@ describe('Views: Overview, Settings, Updates, Logs', () => {
     expect(view.queryByRole('dialog')).toBeNull();
 
     fireEvent.click(view.getByRole('button', { name: t('overview.addServer') }));
-    expect(view.getByRole('dialog', { name: t('editor.addTitle') })).toBeTruthy();
+    expect(await view.findByRole('dialog', { name: t('editor.addTitle') })).toBeTruthy();
     fireEvent.click(view.getByRole('button', { name: t('common.cancel') }));
 
     // Key reminder banner opens KeyMigration on Review, or dismisses via dismissKeyReminder.
@@ -1096,8 +1098,10 @@ describe('Views: Overview, Settings, Updates, Logs', () => {
         within(remoteRow).getByRole('button', { name: t('overview.delete', { name: 'remote' }) }),
       );
     });
-    expect(mockBundle.calls.confirmDeleteServer).toEqual([{ name: 'remote' }]);
-    expect(mockBundle.calls.saveConfig).toHaveLength(1);
+    await waitFor(() => {
+      expect(mockBundle.calls.confirmDeleteServer).toEqual([{ name: 'remote' }]);
+      expect(mockBundle.calls.saveConfig).toHaveLength(1);
+    });
     const saved = lastSavedConfig(mockBundle);
     expect(saved.mcpServers.remote).toBeUndefined();
     expect(saved.mcpServers.bear).toBeDefined();
@@ -1137,7 +1141,9 @@ describe('Views: Overview, Settings, Updates, Logs', () => {
         }),
       );
     });
-    expect(brokenView.queryByText(t('overview.repairTitle'))).toBeNull();
+    await waitFor(() => {
+      expect(brokenView.queryByText(t('overview.repairTitle')) === null).toBe(true);
+    });
     cleanupDom();
 
     const configText = makeConfigText({
@@ -1183,7 +1189,9 @@ describe('Views: Overview, Settings, Updates, Logs', () => {
     const opAlert = liveView.getByRole('alert');
     expect(opAlert.textContent).toContain('ListenerFailure: Address 127.0.0.1:8787 already in use');
     fireEvent.click(within(opAlert).getByRole('button', { name: t('common.dismissError') }));
-    expect(liveView.queryByRole('alert')).toBeNull();
+    await waitFor(() => {
+      expect(liveView.queryByRole('alert') === null).toBe(true);
+    });
 
     act(() => {
       liveBundle.emitSnapshot(
@@ -1210,9 +1218,11 @@ describe('Views: Overview, Settings, Updates, Logs', () => {
         }),
       );
     });
-    expect(liveView.getByRole('alert').textContent).toContain(
-      'ListenerFailure: Second bind failure',
-    );
+    await waitFor(() => {
+      expect(liveView.getByRole('alert').textContent).toContain(
+        'ListenerFailure: Second bind failure',
+      );
+    });
 
     // A passed ServerTest badge clears when the server unmounts or becomes disabled (`outdated`).
     await act(async () => {
@@ -1220,7 +1230,9 @@ describe('Views: Overview, Settings, Updates, Logs', () => {
         liveView.getByRole('button', { name: t('overview.testConnectionFor', { name: 'bear' }) }),
       );
     });
-    expect(liveView.getByText(t('overview.testPassed', { version: '2025-11-25' }))).toBeTruthy();
+    await waitFor(() => {
+      expect(liveView.getByText(t('overview.testPassed', { version: '2025-11-25' }))).toBeTruthy();
+    });
 
     act(() => {
       liveBundle.emitSnapshot(
@@ -1243,7 +1255,9 @@ describe('Views: Overview, Settings, Updates, Logs', () => {
       );
     });
     await waitFor(() => {
-      expect(liveView.queryByText(t('overview.testPassed', { version: '2025-11-25' }))).toBeNull();
+      expect(
+        liveView.queryByText(t('overview.testPassed', { version: '2025-11-25' })) === null,
+      ).toBe(true);
     });
 
     // Re-mount server, run a test that returns `Cancelled`, then stop gateway: `cancelled` badge stays.
@@ -1268,12 +1282,18 @@ describe('Views: Overview, Settings, Updates, Logs', () => {
         }),
       );
     });
-    await act(async () => {
-      fireEvent.click(
-        liveView.getByRole('button', { name: t('overview.testConnectionFor', { name: 'bear' }) }),
-      );
+    const retestButton = liveView.getByRole('button', {
+      name: t('overview.testConnectionFor', { name: 'bear' }),
+    }) as HTMLButtonElement;
+    await waitFor(() => {
+      expect(retestButton.disabled).toBe(false);
     });
-    expect(liveView.getByText('Test cancelled by stop')).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(retestButton);
+    });
+    await waitFor(() => {
+      expect(liveView.getByText('Test cancelled by stop')).toBeTruthy();
+    });
 
     act(() => {
       liveBundle.emitSnapshot(
@@ -1295,7 +1315,9 @@ describe('Views: Overview, Settings, Updates, Logs', () => {
         }),
       );
     });
-    expect(liveView.getByText('Test cancelled by stop')).toBeTruthy();
+    await waitFor(() => {
+      expect(liveView.getByText('Test cancelled by stop')).toBeTruthy();
+    });
   });
 
   test('Settings renders host, port, allowedPeers (Plan 033), auth token, keepAwake (Plan 028), launchAtLogin, language, and advanced actions', async () => {
@@ -1753,7 +1775,7 @@ describe('Views: Overview, Settings, Updates, Logs', () => {
       });
 
       await waitFor(() => {
-        expect(view.queryByRole('alert')).toBeNull();
+        expect(view.queryByRole('alert') === null).toBe(true);
         expect(view.container.querySelectorAll('.log-row')).toHaveLength(3);
       });
       expect(readCalls).toBe(3);
@@ -2161,7 +2183,9 @@ describe('App shell and modal arbitration (src/mainview/App.tsx)', () => {
     fireEvent.click(
       within(view.getByRole('alert')).getByRole('button', { name: t('common.dismissError') }),
     );
-    expect(view.queryByRole('alert')).toBeNull();
+    await waitFor(() => {
+      expect(view.queryByRole('alert') === null).toBe(true);
+    });
 
     const nav = view.getByRole('navigation', { name: t('shell.mainNavigation') });
     fireEvent.click(within(nav).getByRole('button', { name: t('shell.tab.settings') }));
@@ -2225,8 +2249,8 @@ describe('App shell and modal arbitration (src/mainview/App.tsx)', () => {
 
     // 3. Opening KeyMigration via Overview reminder renders KeyMigration as the sole dialog.
     fireEvent.click(view.getByRole('button', { name: t('keys.review') }));
+    expect(await view.findByRole('dialog', { name: t('keys.title') })).toBeTruthy();
     expect(view.getAllByRole('dialog')).toHaveLength(1);
-    expect(view.getByRole('dialog', { name: t('keys.title') })).toBeTruthy();
     fireEvent.click(view.getByRole('button', { name: t('common.closeDialog') }));
     expect(view.queryByRole('dialog')).toBeNull();
 
