@@ -8,7 +8,8 @@ The page heading shows the tab title and, once the configuration has loaded, **S
 When the build supports updates, **Updates** appears above the sidebar footer as a quiet single-line button while idle and shows short status text when an update is active or needs attention.
 Clicking it opens the **Updates** dialog, except when an update is ready (`Update ready` / `Restart to install`), when clicking it restarts to install directly.
 The sidebar footer names the network of the saved address.
-macOS remembers the window's size and position automatically between launches.
+Drag the titlebar or empty sidebar area to move the window; macOS remembers its size and position automatically between launches.
+Release builds disable the WebKit right-click context menu.
 
 ## Saving changes and drafts
 
@@ -55,6 +56,12 @@ The application menu bar includes:
 
 When the window is closed, the app posts native macOS notifications for background startup errors, ready updates and failed menu-bar actions.
 
+## Appearance
+
+Choose **System default**, **Light** or **Dark** from **Appearance** in **Settings → General**.
+The change applies right away to the window and is stored in `appearance.json`, next to `mcp.json`.
+If that file is unreadable or holds an unknown value, the app follows the macOS appearance.
+
 ## Language
 
 The app is available in English (United States), French (France), German (Germany) and Turkish (Turkey).
@@ -99,8 +106,8 @@ Because backend output can still include note content or other unrecognized priv
 The single-row toolbar provides:
 
 - Level filter, Server filter and Search input (`Cmd+F` focuses and selects the search box).
-- **Follow Tail** (on by default), which scrolls to new entries automatically, pauses when you scroll up and resumes when you scroll back to the bottom.
-- **Clear logs** (clearing the list does not fix the failure behind an entry).
+- A **Follow Tail** switch (on by default), which scrolls to new entries automatically, pauses when you scroll up and resumes when you scroll back to the bottom.
+- An eraser **Clear logs** icon button (clearing the list does not fix the failure behind an entry).
 - A **`?`** info button that shows the sensitive-data warning and retention limits (500 entries, 2 MiB total, 16 KiB per entry, with oversized entries marked `truncated`).
 
 Entries display as single-line rows with timestamp, color-coded level pill, server name (or `App`), message and a per-row copy button.
@@ -129,7 +136,7 @@ Opening the **Updates** dialog while idle automatically runs a check.
 You can also check by hand in **Updates**, or from the menu bar and app menu.
 During a download, **Updates** shows a progress bar with percentage and bytes downloaded.
 Choose **Install and Relaunch** to download (if needed) and restart to install; once ready, clicking **Update ready** in the sidebar or **Restart to Update** in the menu-bar icon menu also restarts directly.
-Before applying an update, the app verifies the v2 update manifest metadata when present and checks that the staged app bundle's code signature is valid and its Apple `TeamIdentifier` matches the installed app.
+Before applying an update, the app verifies the v2 update manifest metadata when present, resolves the staged `.app` bundle inside Electrobun's staging directory, and checks that its code signature is valid and its Apple `TeamIdentifier` matches the installed app.
 Restarting stops the gateway and discards unsaved edits in **Authoritative configuration** after asking in a native confirmation dialog.
 If the handoff fails, the gateway stays stopped; quit and reopen the app to try again.
 After an update, the next foreground start shows that version's release notes, taken from `CHANGELOG.md`.

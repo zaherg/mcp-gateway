@@ -24,8 +24,8 @@ Saving always validates the file again.
 
 Use one configuration file, either `mcp.json` or `mcp.jsonc`.
 It lives in `~/Library/Application Support/MCP Gateway/`, and this location cannot be changed.
-The same folder holds `updates.json` (the automatic-update setting), `seen-version.json` (the version whose release notes you closed), `language.json` (the app language you chose in **Settings → General**) and `key-reminder.json` (which records that the Keychain reminder was closed).
-All four preference files use owner-only (`0600`) atomic file I/O with symlink protection and a 64 KiB size limit.
+The same folder holds `updates.json` (the automatic-update setting), `seen-version.json` (the version whose release notes you closed), `language.json` (the app language you chose in **Settings → General**), `appearance.json` (the window appearance you chose in **Settings → General**) and `key-reminder.json` (which records that the Keychain reminder was closed).
+All five preference files use owner-only (`0600`) atomic file I/O with symlink protection and a 64 KiB size limit.
 Window size and position are stored natively by macOS AppKit rather than in a file in this folder.
 
 `mcp.json` must be strict JSON.

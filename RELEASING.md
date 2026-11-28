@@ -78,7 +78,7 @@ The DMG holds an installer wrapper that replaces itself on first launch.
 ### Updates
 
 Production builds use the fixed feed `https://github.com/zaherg/mcp-gateway/releases/latest/download`; only `release:test` builds use another feed.
-Before restarting to apply an update, the updater verifies the v2 manifest metadata when present, checks the staged app bundle with `codesign --verify --deep --strict`, and requires its Apple `TeamIdentifier` to match the installed app.
+Before restarting to apply an update, the updater verifies the v2 manifest metadata when present, resolves the staged `.app` bundle inside Electrobun's staging directory, checks it with `codesign --verify --deep --strict`, and requires its Apple `TeamIdentifier` to match the installed app.
 Version `0.3.0` has no updater and must be upgraded by hand with the DMG.
 Passing the verifier does not prove that in-app updates work; test them with [UPDATE-TESTING.md](UPDATE-TESTING.md).
 

@@ -7,7 +7,7 @@ It does not cover building or releasing the app; `DEVELOPMENT.md` and `RELEASING
 ## Reading order
 
 - [Getting started](getting-started.md): install the app and serve your first server.
-- [Using the app](using-the-app.md): the window, saving changes, language, menus, logs and updates.
+- [Using the app](using-the-app.md): the window, saving changes, appearance, language, menus, logs and updates.
 - [Servers](servers.md): local commands, HTTP servers, importing servers, keys and the Bear preset.
 - [Connect a client](clients.md): setup for six clients, and protocol compatibility.
 - [Remote access](remote-access.md): LAN, Tailscale and WireGuard addresses.

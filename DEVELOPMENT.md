@@ -7,7 +7,7 @@ Run every command from the repository root unless a step says otherwise.
 ## Prerequisites
 
 - An Apple silicon Mac with macOS 14 or later.
-- Git, Bun 1.4.4 and Node.js; the CI workflow uses Node.js 26.13.0.
+- Git, Bun 1.4.5 and Node.js; the CI workflow uses Node.js 26.13.0.
 - Xcode Command Line Tools, including `clang` and `swiftc`.
 - Network access, to install dependencies and download the pinned Electrobun toolchain.
 
@@ -51,18 +51,18 @@ You do not need a global `hutch` installation.
 bun run dev
 ```
 
-This builds and launches the development app with React hot reload and main-process restart.
+This builds and launches the development app with Vite live reload for the Effect UI (`@effect/ui` and `@effect/ui-kit`) renderer and main-process restart.
 It starts Vite on `127.0.0.1:5173` and stops if that port is already in use.
-Renderer edits reload in place with React Fast Refresh.
+Renderer edits reload in place through Vite.
 Main-process and shared-code edits rebuild and restart the app.
 A restart discards unsaved raw configuration drafts and interrupts gateway requests.
 Press `Ctrl+C` to stop the command; it closes Vite and the development app.
 Run the command again after changing native code, dependencies or build scripts.
 
-Development builds have **Developer → Open Developer Tools** (`Cmd+Option+I`).
+Development builds have **Developer → Open Developer Tools** (`Cmd+Option+I`) and keep the WebKit right-click context menu.
 Use it to inspect the renderer, the console and network requests.
 Close the inspector with its own close button.
-Release builds do not have this menu.
+Release builds omit this menu and suppress the WebKit right-click context menu.
 
 ## Checks
 
@@ -71,22 +71,25 @@ Run the available checks:
 ```sh
 bun run typecheck
 bun run lint
+bun run test:effect
 bun run test
 ```
 
 `bun run format` formats `src`, `tests`, `scripts`, root `*.ts` and `*.json` files with Biome.
 
-`bun run test` runs the Bun test suite (`bun test`), covering 19 test files across six areas:
+`bun run test:effect` runs Vitest (`vitest.effect.config.ts`) across 18 test files in `tests/effect-*/` (`effect-app`, `effect-overview`, `effect-settings`, `effect-logs`, `effect-raw-config`, `effect-dialogs` and `effect-updates`) using `@effect/vitest`, `TestClock` and Effect UI's Story/Scene/Play harnesses.
+
+`bun run test` runs the Bun test suite (`bun test`, excluding `tests/effect-*/**`), covering 18 test files across six areas:
 
 - `tests/core/`: stateless `2026-07-28` and session-based MCP adapters, upstream discovery caching, config validation and locking, ingress, `test-server`, controller lifecycle, IPv4/network checks, child process isolation, limits and log redaction.
 - `tests/shared/`: configuration document editing and secret detection, i18n formatting, identity, changelog parsing and RPC schemas.
 - `tests/main/`: `AppService` RPC handlers, updater verification, quit lifecycle, native FFI wrappers and private preference stores.
-- `tests/mainview/`: React components, dialogs, views, `GatewayViewContext`, hooks and renderer utilities under Happy-DOM.
+- `tests/mainview/`: Effect UI `AppRoot` / `AppView` DOM integration, CodeMirror 6 raw config editing, native `<dialog>` focus restoration, modal arbitration, RPC bridge secret scrubbing and renderer utilities under Happy DOM.
 - `tests/scripts/`: build config, toolchain helpers, release artifact verification and DMG/inventory helpers.
-- `tests/e2e/`: full-stack tests wiring `<App />`, `AppService` and `McpGatewayController` to live loopback ports, real stdio MCP servers, real Streamable HTTP upstreams and an in-memory Keychain store.
+- `tests/e2e/`: full-stack tests wiring `AppRoot` / `AppView`, `AppService` and `McpGatewayController` to live loopback ports, real stdio MCP servers, real Streamable HTTP upstreams and an in-memory Keychain store.
 
 Tests run against temporary folders, loopback ports and mock or in-memory stores; they do not touch your real configuration, Keychain items or external services.
-Run a subset with `bun test tests/<folder>`, such as `bun test tests/core` or `bun test tests/e2e`.
+Run a subset with `bun test tests/<folder>`, such as `bun test tests/core` or `bun test tests/e2e`, or run a single Effect UI file with `bunx vitest run --config vitest.effect.config.ts tests/effect-logs/LogsView.play.test.ts`.
 
 `.github/workflows/lint.yml` runs on branch pushes, pull requests, manual runs and calls from the release workflow.
 It uses Actionlint 1.7.12, ShellCheck 0.11.0 and Typos 1.52.0, each pinned by checksum.
@@ -110,7 +113,7 @@ To add a locale:
 
 1. Copy `src/shared/locales/en_US.json` to the new file and translate every value.
 2. In `src/shared/i18n.ts`, import the file and add its code to `CATALOG_LOCALES` and `CATALOGS`.
-3. Run `bun run typecheck`, `bun run lint` and `bun run test`.
+3. Run `bun run typecheck`, `bun run lint`, `bun run test:effect` and `bun run test`.
 
 Current locales: `en_US`, `fr_FR`, `de_DE` and `tr_TR`.
 When no catalog matches a region exactly, the first listed catalog in the same language is used, so list the preferred regional variant first.
@@ -121,7 +124,7 @@ Right-to-left languages are not supported yet.
 
 ## Source conventions
 
-Write ordinary functions as named `const` arrow functions, including React components, hooks and scripts.
+Write ordinary functions as named `const` arrow functions, including Effect UI views, helpers and scripts.
 Keep class and object methods, constructors, accessors and declaration-only signatures as they are, so their behavior does not change.
 Import TypeScript and JavaScript under `src/` through `@mcp-gateway/...`, even from the same folder.
 TypeScript, Bun and Vite all understand this alias.
