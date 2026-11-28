@@ -1,4 +1,4 @@
-import { lstat, readFile } from 'node:fs/promises';
+import { lstat, readdir, readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 
 import { Updater, type UpdateStatusEntry } from 'electrobun/main';
@@ -101,6 +101,21 @@ export const verifyStagedAppBundleSignature = async (
   }
 };
 
+const resolveStagedAppBundle = async (stagingPath: string) => {
+  const stagedStat = await lstat(stagingPath);
+  if (!stagedStat.isDirectory() || stagedStat.isSymbolicLink()) return null;
+  if (stagingPath.endsWith('.app')) return stagingPath;
+  const apps = (await readdir(stagingPath)).filter((name) => name.endsWith('.app'));
+  const appName = apps[0];
+  if (apps.length !== 1 || !appName)
+    throw new Error('Staged update failed codesign integrity verification.');
+  const bundlePath = join(stagingPath, appName);
+  const bundleStat = await lstat(bundlePath);
+  if (!bundleStat.isDirectory() || bundleStat.isSymbolicLink())
+    throw new Error('Staged update failed codesign integrity verification.');
+  return bundlePath;
+};
+
 export const verifyDownloadedUpdate = async (expected: { version: string; hash?: string }) => {
   const localInfo = await Updater.getLocalInfo();
   const baseUrl = localInfo.baseUrl?.replace(/\/+$/, '');
@@ -169,9 +184,8 @@ export const verifyDownloadedUpdate = async (expected: { version: string; hash?:
     if (!stat.isFile() || stat.isSymbolicLink()) return;
     const prepared = JSON.parse(await readFile(preparedPath, 'utf8')) as Record<string, unknown>;
     if (typeof prepared.staging_path === 'string' && prepared.staging_path.length > 0) {
-      const stagedStat = await lstat(prepared.staging_path);
-      if (stagedStat.isDirectory() && !stagedStat.isSymbolicLink())
-        await verifyStagedAppBundleSignature(prepared.staging_path);
+      const stagedBundlePath = await resolveStagedAppBundle(prepared.staging_path);
+      if (stagedBundlePath) await verifyStagedAppBundleSignature(stagedBundlePath);
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;

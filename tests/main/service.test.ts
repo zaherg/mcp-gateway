@@ -957,6 +957,36 @@ describe('app-updater — support resolution & verification helpers', () => {
     );
     expect(runSpy).toHaveBeenCalled();
 
+    // Electrobun v2 streaming updates stage the extracted .app inside `<App>.app.prepared-<hash>`.
+    const stagingContainer = join(dir, 'Installed.app.prepared-def5678');
+    const nestedStagedApp = join(stagingContainer, 'Installed.app');
+    await mkdir(nestedStagedApp, { recursive: true });
+    await writeFile(preparedPath, JSON.stringify({ staging_path: stagingContainer }), 'utf8');
+    runSpy.mockClear();
+    await expect(verifyDownloadedUpdate(expectedUpdate)).resolves.toBeUndefined();
+    expect(runSpy).toHaveBeenCalledWith('/usr/bin/codesign', [
+      '--verify',
+      '--deep',
+      '--strict',
+      '--verbose=2',
+      nestedStagedApp,
+    ]);
+
+    const emptyStagingContainer = join(dir, 'Installed.app.prepared-empty');
+    await mkdir(emptyStagingContainer);
+    await writeFile(preparedPath, JSON.stringify({ staging_path: emptyStagingContainer }), 'utf8');
+    await expect(verifyDownloadedUpdate(expectedUpdate)).rejects.toThrow(
+      'Staged update failed codesign integrity verification.',
+    );
+
+    const symlinkNestedContainer = join(dir, 'Installed.app.prepared-symlink');
+    await mkdir(symlinkNestedContainer);
+    await symlink(stagedApp, join(symlinkNestedContainer, 'Installed.app'));
+    await writeFile(preparedPath, JSON.stringify({ staging_path: symlinkNestedContainer }), 'utf8');
+    await expect(verifyDownloadedUpdate(expectedUpdate)).rejects.toThrow(
+      'Staged update failed codesign integrity verification.',
+    );
+
     runSpy.mockClear();
     const symlinkStagedApp = join(dir, 'SymlinkStaged.app');
     await symlink(stagedApp, symlinkStagedApp);
