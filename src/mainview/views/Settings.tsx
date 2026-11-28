@@ -1,7 +1,7 @@
 import type { Renderer } from '@effect/ui';
 import { BrowserHost } from '@effect/ui/html';
 import { DevTools } from '@effect/ui-devtools';
-import { Effect, Exit, Fiber, Layer, Scope } from 'effect';
+import { Effect, Exit, Fiber, Layer, Redacted, Scope } from 'effect';
 import { useEffect, useMemo, useRef } from 'react';
 
 import { useGatewayView } from '@mcp-gateway/mainview/context/GatewayViewContext';
@@ -103,7 +103,7 @@ export const Settings = () => {
             host: config.gateway.host,
             port: config.gateway.port,
             allowedPeers: config.gateway.allowedPeers ? [...config.gateway.allowedPeers] : null,
-            token: config.gateway.token ?? null,
+            token: config.gateway.token !== undefined ? Redacted.make(config.gateway.token) : null,
             tokenRef: config.gateway.tokenRef ?? null,
             launchAtLogin: config.gateway.launchAtLogin ?? false,
             autoStart: config.gateway.autoStart ?? false,
@@ -140,7 +140,7 @@ export const Settings = () => {
       hostInput: savedHost,
       portInput: savedPort,
       peersText: savedPeers,
-      tokenInput: savedToken,
+      tokenInput: Redacted.make(savedToken),
     },
   });
   latestSyncRef.current = {
@@ -149,7 +149,7 @@ export const Settings = () => {
       hostInput: savedHost,
       portInput: savedPort,
       peersText: savedPeers,
-      tokenInput: savedToken,
+      tokenInput: Redacted.make(savedToken),
     },
   };
   const lastSyncedKeyRef = useRef(savedSyncKey);
@@ -259,7 +259,7 @@ export const Settings = () => {
         hostInput: savedHost,
         portInput: savedPort,
         peersText: savedPeers,
-        tokenInput: savedToken,
+        tokenInput: Redacted.make(savedToken),
       }),
     );
   }, [savedHost, savedPeers, savedPort, savedSyncKey, savedToken]);

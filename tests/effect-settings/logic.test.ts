@@ -1,4 +1,5 @@
 import { assert, describe, it } from '@effect/vitest';
+import { Redacted } from 'effect';
 
 import {
   computeHostPatch,
@@ -106,7 +107,7 @@ describe('effect-settings pure logic', () => {
     );
     const replaced = applyGatewayMutation(
       base,
-      GatewayMutation.ReplaceTokenWithLiteral({ token: 'f'.repeat(64) }),
+      GatewayMutation.ReplaceTokenWithLiteral({ token: Redacted.make('f'.repeat(64)) }),
     );
     assert.strictEqual(replaced.token, 'f'.repeat(64));
     assert.strictEqual(replaced.tokenRef, undefined);

@@ -1,7 +1,7 @@
 import { Command, Component, UiSchema } from '@effect/ui';
 import { Html } from '@effect/ui/html';
 import { Switch } from '@effect/ui-kit';
-import { Effect, Layer, Schema } from 'effect';
+import { Effect, Layer, Redacted, Schema } from 'effect';
 
 import {
   computeHostPatch,
@@ -10,6 +10,7 @@ import {
   computeTokenPatch,
   draftsFromSavedConfig,
   formatImportStatus,
+  type SavedGatewaySnapshot,
 } from '@mcp-gateway/mainview/effect-settings/logic';
 import { GatewayMutation, SettingsActions } from '@mcp-gateway/mainview/effect-settings/services';
 import {
@@ -46,7 +47,7 @@ export const SavedGatewayConfigSchema = Schema.Struct({
   host: Schema.String,
   port: Schema.Number,
   allowedPeers: Schema.NullOr(Schema.Array(Schema.String)),
-  token: Schema.NullOr(Schema.String),
+  token: Schema.NullOr(Schema.Redacted(Schema.String)),
   tokenRef: Schema.NullOr(Schema.String),
   launchAtLogin: Schema.Boolean,
   autoStart: Schema.Boolean,
@@ -78,7 +79,7 @@ export const SettingsModel = Schema.Struct({
   hostInput: Schema.String,
   portInput: Schema.String,
   peersText: Schema.String,
-  tokenInput: Schema.String,
+  tokenInput: Schema.Redacted(Schema.String),
   importStatus: Schema.NullOr(Schema.String),
 });
 
@@ -87,7 +88,7 @@ export const SettingsMessage = UiSchema.TaggedEnum({
     hostInput: Schema.String,
     portInput: Schema.String,
     peersText: Schema.String,
-    tokenInput: Schema.String,
+    tokenInput: Schema.Redacted(Schema.String),
   },
   DismissedError: {},
   DismissedOperationalError: {},
@@ -103,11 +104,11 @@ export const SettingsMessage = UiSchema.TaggedEnum({
   CommittedPort: {},
   ChangedPeers: { value: Schema.String },
   CommittedPeers: {},
-  ChangedToken: { value: Schema.String },
+  ChangedToken: { value: Schema.Redacted(Schema.String) },
   CommittedToken: {},
   ClickedToggleShowToken: {},
   ClickedGenerateToken: {},
-  GeneratedToken: { token: Schema.String },
+  GeneratedToken: { token: Schema.Redacted(Schema.String) },
   ClickedOpenKeyMigration: {},
   ClickedRevealConfig: {},
   ClickedOpenConfigInEditor: {},
@@ -412,17 +413,32 @@ const renderToggleRow = (
         ),
   });
 
+const toPlainSavedConfig = (
+  saved: typeof SavedGatewayConfigSchema.Type | null,
+): SavedGatewaySnapshot | null =>
+  saved === null
+    ? null
+    : {
+        ...saved,
+        token: saved.token === null ? null : Redacted.value(saved.token),
+      };
+
 export const SettingsView = Html.component({
   name: 'SettingsView',
   props: SettingsProps,
   model: SettingsModel,
   message: SettingsMessage,
 }).make({
-  init: ($) =>
-    $.set({
-      ...draftsFromSavedConfig($.props.savedConfig),
+  init: ($) => {
+    const drafts = draftsFromSavedConfig(toPlainSavedConfig($.props.savedConfig));
+    return $.set({
+      hostInput: drafts.hostInput,
+      portInput: drafts.portInput,
+      peersText: drafts.peersText,
+      tokenInput: Redacted.make(drafts.tokenInput),
       importStatus: null,
-    }),
+    });
+  },
   update: {
     SyncedSavedConfig: ($, { hostInput, portInput, peersText, tokenInput }) =>
       $.evolve({ hostInput, portInput, peersText, tokenInput }),
@@ -474,7 +490,7 @@ export const SettingsView = Html.component({
     CommittedHost: ($) => {
       const nextHost = computeHostPatch(
         $.model.hostInput,
-        $.props.savedConfig,
+        toPlainSavedConfig($.props.savedConfig),
         $.props.configurationLocked,
       );
       return nextHost === null
@@ -489,7 +505,7 @@ export const SettingsView = Html.component({
     CommittedPort: ($) => {
       const nextPort = computePortPatch(
         $.model.portInput,
-        $.props.savedConfig,
+        toPlainSavedConfig($.props.savedConfig),
         $.props.configurationLocked,
       );
       return nextPort === null
@@ -504,7 +520,7 @@ export const SettingsView = Html.component({
     CommittedPeers: ($) => {
       const nextPeers = computePeersPatch(
         $.model.peersText,
-        $.props.savedConfig,
+        toPlainSavedConfig($.props.savedConfig),
         $.props.configurationLocked,
       );
       return nextPeers === null
@@ -518,15 +534,15 @@ export const SettingsView = Html.component({
     ChangedToken: ($, { value }) => $.evolve({ tokenInput: value }),
     CommittedToken: ($) => {
       const nextToken = computeTokenPatch(
-        $.model.tokenInput,
-        $.props.savedConfig,
+        Redacted.value($.model.tokenInput),
+        toPlainSavedConfig($.props.savedConfig),
         $.props.configurationLocked,
       );
       return nextToken === null
         ? $.model
         : $.run(
             CommitGatewayMutation.make({
-              mutation: GatewayMutation.SetToken({ token: nextToken }),
+              mutation: GatewayMutation.SetToken({ token: Redacted.make(nextToken) }),
             }),
           );
     },
@@ -867,9 +883,13 @@ export const SettingsView = Html.component({
                         .attr('aria-describedby', 'settings-token-help')
                         .attr('readonly', locked ? '' : undefined)
                         .class(INPUT_CLASSES)
-                        .value(model.tokenInput)
-                        .on('input', ({ value }) => SettingsMessage.ChangedToken({ value }))
-                        .on('change', ({ value }) => SettingsMessage.ChangedToken({ value }))
+                        .value(Redacted.value(model.tokenInput))
+                        .on('input', ({ value }) =>
+                          SettingsMessage.ChangedToken({ value: Redacted.make(value) }),
+                        )
+                        .on('change', ({ value }) =>
+                          SettingsMessage.ChangedToken({ value: Redacted.make(value) }),
+                        )
                         .on('blur', SettingsMessage.CommittedToken())
                         .on(
                           'keydown',

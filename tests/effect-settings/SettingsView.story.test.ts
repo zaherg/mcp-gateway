@@ -1,6 +1,7 @@
-import { Component } from '@effect/ui';
+import { Component, MessageLog } from '@effect/ui';
 import { Story } from '@effect/ui/testing';
 import { assert, describe, it } from '@effect/vitest';
+import { Redacted, Schema } from 'effect';
 
 import {
   ChangeAppearance,
@@ -9,7 +10,8 @@ import {
   GenerateAndCommitToken,
   ImportExternalServers,
   SettingsMessage,
-  type SettingsProps,
+  SettingsModel,
+  SettingsProps,
   SettingsView,
 } from '@mcp-gateway/mainview/effect-settings/SettingsView';
 import { GatewayMutation } from '@mcp-gateway/mainview/effect-settings/services';
@@ -39,7 +41,7 @@ const defaultProps: typeof SettingsProps.Type = {
     host: '127.0.0.1',
     port: 8787,
     allowedPeers: ['192.168.1.0/24'],
-    token: 'b'.repeat(64),
+    token: Redacted.make('b'.repeat(64)),
     tokenRef: null,
     launchAtLogin: false,
     autoStart: false,
@@ -99,13 +101,13 @@ describe('SettingsView Story tests', () => {
         hostInput: '10.0.0.5',
         portInput: '9090',
         peersText: '10.0.0.0/24',
-        tokenInput: 'c'.repeat(64),
+        tokenInput: Redacted.make('c'.repeat(64)),
       }),
     );
     assert.strictEqual(story.model.hostInput, '10.0.0.5');
     assert.strictEqual(story.model.portInput, '9090');
     assert.strictEqual(story.model.peersText, '10.0.0.0/24');
-    assert.strictEqual(story.model.tokenInput, 'c'.repeat(64));
+    assert.strictEqual(Redacted.value(story.model.tokenInput), 'c'.repeat(64));
   });
 
   it('ignores invalid appearance/language preferences and locked mutations', () => {
@@ -133,7 +135,7 @@ describe('SettingsView Story tests', () => {
   });
 
   it('explores interleaved draft edits, token generation, revision resyncs, and imports', () => {
-    const generated = 'e'.repeat(64);
+    const generated = Redacted.make('e'.repeat(64));
     const explored = Story.explore(SettingsView, defaultProps, {
       messages: [
         SettingsMessage.ChangedHost({ value: '192.168.1.25' }),
@@ -143,7 +145,7 @@ describe('SettingsView Story tests', () => {
           hostInput: '127.0.0.1',
           portInput: '8787',
           peersText: '192.168.1.0/24',
-          tokenInput: 'b'.repeat(64),
+          tokenInput: Redacted.make('b'.repeat(64)),
         }),
       ],
       commands: [
@@ -165,7 +167,7 @@ describe('SettingsView Story tests', () => {
       depth: 4,
       transition: ({ before, message, after }) => {
         if (message._tag === 'GeneratedToken') {
-          assert.strictEqual(after.tokenInput, generated);
+          assert.strictEqual(Redacted.value(after.tokenInput), Redacted.value(generated));
         }
         if (message._tag === 'ImportExternalServersCompleted') {
           if (message.count === null) {
@@ -184,7 +186,6 @@ describe('SettingsView Story tests', () => {
         }
       },
       invariant: ({ pending }) => {
-        // ImportExternalServers runs in switch mode: never more than one in flight.
         const activeImports = pending.filter(
           (item) => item.command.name === ImportExternalServers.name,
         );
@@ -192,5 +193,54 @@ describe('SettingsView Story tests', () => {
       },
     });
     assert.isAbove(explored.states, 10);
+  });
+
+  it('redacts token values across Props, Model, Messages, and GatewayMutation wire frames', () => {
+    const secret = 'secret-token-value-must-never-leak-in-devtools';
+    const redactedSecret = Redacted.make(secret);
+    const encodeRedacted = (schema: Schema.Top, value: unknown) =>
+      JSON.stringify(
+        Schema.encodeUnknownSync(MessageLog.redactSchema(schema) as Schema.Codec<unknown>)(value),
+      );
+
+    const encodedProps = encodeRedacted(SettingsProps, {
+      ...defaultProps,
+      savedConfig: {
+        host: '127.0.0.1',
+        port: 8787,
+        allowedPeers: ['192.168.1.0/24'],
+        token: redactedSecret,
+        tokenRef: null,
+        launchAtLogin: false,
+        autoStart: false,
+        keepAwake: false,
+      },
+    });
+    const encodedModel = encodeRedacted(SettingsModel, {
+      hostInput: '127.0.0.1',
+      portInput: '8787',
+      peersText: '',
+      tokenInput: redactedSecret,
+      importStatus: null,
+    });
+    const encodedMessages = [
+      SettingsMessage.ChangedToken({ value: redactedSecret }),
+      SettingsMessage.GeneratedToken({ token: redactedSecret }),
+      SettingsMessage.SyncedSavedConfig({
+        hostInput: '127.0.0.1',
+        portInput: '8787',
+        peersText: '',
+        tokenInput: redactedSecret,
+      }),
+    ].map((msg) => encodeRedacted(SettingsMessage, msg));
+    const encodedMutations = [
+      GatewayMutation.SetToken({ token: redactedSecret }),
+      GatewayMutation.ReplaceTokenWithLiteral({ token: redactedSecret }),
+    ].map((mut) => encodeRedacted(GatewayMutation, mut));
+
+    for (const payload of [encodedProps, encodedModel, ...encodedMessages, ...encodedMutations]) {
+      assert.notInclude(payload, secret);
+      assert.include(payload, '"~redacted":true');
+    }
   });
 });

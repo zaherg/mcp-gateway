@@ -1,5 +1,5 @@
 import { UiSchema } from '@effect/ui';
-import { Context, Effect, Layer, Schema } from 'effect';
+import { Context, Effect, Layer, Redacted, Schema } from 'effect';
 
 import type { ConfigFile } from '@mcp-gateway/shared/types';
 
@@ -10,8 +10,8 @@ export const GatewayMutation = UiSchema.TaggedEnum({
   SetHost: { host: Schema.String },
   SetPort: { port: Schema.Number },
   SetAllowedPeers: { allowedPeers: Schema.NullOr(Schema.Array(Schema.String)) },
-  SetToken: { token: Schema.String },
-  ReplaceTokenWithLiteral: { token: Schema.String },
+  SetToken: { token: Schema.Redacted(Schema.String) },
+  ReplaceTokenWithLiteral: { token: Schema.Redacted(Schema.String) },
 });
 
 export type GatewayMutationValue = typeof GatewayMutation.Type;
@@ -37,9 +37,9 @@ export const applyGatewayMutation = (
         allowedPeers: mutation.allowedPeers === null ? undefined : [...mutation.allowedPeers],
       };
     case 'SetToken':
-      return { ...gateway, token: mutation.token };
+      return { ...gateway, token: Redacted.value(mutation.token) };
     case 'ReplaceTokenWithLiteral':
-      return { ...gateway, token: mutation.token, tokenRef: undefined };
+      return { ...gateway, token: Redacted.value(mutation.token), tokenRef: undefined };
   }
 };
 
@@ -54,7 +54,7 @@ export interface SettingsActionsService {
   readonly revealConfig: () => Effect.Effect<void>;
   readonly openConfigInEditor: () => Effect.Effect<void>;
   readonly importExternalServers: () => Effect.Effect<number | null>;
-  readonly generateToken: () => Effect.Effect<string>;
+  readonly generateToken: () => Effect.Effect<Redacted.Redacted<string>>;
 }
 
 export interface SettingsCallbacks {
@@ -113,7 +113,7 @@ export class SettingsActions extends Context.Service<SettingsActions, SettingsAc
           ref.current.openConfigInEditor();
         }),
       importExternalServers: () => Effect.promise(() => ref.current.importExternalServers()),
-      generateToken: () => Effect.sync(() => ref.current.generateToken()),
+      generateToken: () => Effect.sync(() => Redacted.make(ref.current.generateToken())),
     });
 
   static readonly noop = Layer.succeed(SettingsActions, {
@@ -127,6 +127,6 @@ export class SettingsActions extends Context.Service<SettingsActions, SettingsAc
     revealConfig: () => Effect.void,
     openConfigInEditor: () => Effect.void,
     importExternalServers: () => Effect.succeed(null),
-    generateToken: () => Effect.succeed('0'.repeat(64)),
+    generateToken: () => Effect.succeed(Redacted.make('0'.repeat(64))),
   });
 }

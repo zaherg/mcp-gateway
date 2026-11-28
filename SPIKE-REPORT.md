@@ -33,7 +33,7 @@ All bundle sizes come from `bun run ui:build` (`vite build` v8.3.8). All test ti
 | `@effect/ui-devtools` in `dist/` | `0` matches | `0` matches | `0` matches | Pass |
 | Existing `Logs` DOM test (`bun test`) | `26.50` ms | `98.04` ms full | `98.17` ms full | Pass |
 | Existing `Settings` DOM tests (`bun test`) | Pass | Pass | `43.78` ms + `10.89` ms (`2` pass) | Pass |
-| Effect UI test suite (`bun run test:effect`) | N/A | `14` tests (`656` ms) | `24` tests across `8` files (`917` ms) | Pass |
+| Effect UI test suite (`bun run test:effect`) | N/A | `14` tests (`656` ms) | `25` tests across `8` files (`831` ms) | Pass |
 | Full existing suite (`bun run test`) | `363` pass, `0` fail | `363` pass, `0` fail | `363` pass, `0` fail (`7,363` assertions) | Pass |
 | Typecheck (`tsc --noEmit`, TS 7.0.2) | Exit `0` | Exit `0` | Exit `0` | Pass |
 | Lint (`biome check`) | Exit `0` | Exit `0` | Exit `0` | Pass |
@@ -46,7 +46,7 @@ All bundle sizes come from `bun run ui:build` (`vite build` v8.3.8). All test ti
 | Settings production files | `1` file (`src/mainview/views/Settings.tsx`, `399` lines) | `4` files (`Settings.tsx` `268` + `logic.ts` `88` + `services.ts` `132` + `SettingsView.ts` `960` = `1,448` lines) |
 | React hooks / refs in `Logs.tsx` | `12` `useState`, `6` `useRef`, `4` `useEffect` | `0` `useState`, `3` `useRef`, `2` `useEffect` |
 | React hooks / refs in `Settings.tsx` | `5` `useState`, `1` `useEffect` (`1` `biome-ignore`) | `0` `useState`, `1` `useMemo`, `5` `useRef`, `3` `useEffect` (`0` `biome-ignore`) |
-| Effect UI tests | `0` lines | `8` files (`1,308` lines total, `24` tests: `14` Logs + `10` Settings) |
+| Effect UI tests | `0` lines | `8` files (`1,308` lines total, `25` tests: `14` Logs + `11` Settings) |
 
 ## What worked well
 
@@ -97,7 +97,7 @@ Tested directly against `MCP Gateway-dev.app` running under `bun run dev` (`Cmd+
 
 1. **Visual rendering of Settings in macOS dark mode.** All three `@effect/ui-kit` `Switch` toggles (`Launch app at login`, `Start gateway when the app opens`, `Keep the Mac awake while the gateway runs`), the green login-item LED, `Appearance` and `Language` native selects, `Network` fields, and the bottom-right DevTools launcher (`[UI] 0`) rendered cleanly with zero visual defects or CSP blocking.
 2. **Live MCP inspection on `/SettingsView`.** `list_sessions` reported `{ app: "SettingsView", host: "browser", connected: true, controllable: true }`. Dispatching a non-mutating `ChangedHost({ value: "10.0.0.42" })` returned `{ applied: 1, of: 1, seq: 3 }`, `diff_state` reported the exact `hostInput` change, `show_entry` paused cleanly at `seq: 3` (`fellBack: [], skipped: []`), `resume` returned `{ resumed: true }`, and `ChangedHost` restored the original draft without saving.
-3. **Secret redaction gotcha found live in DevTools.** Calling `get_state` on `/SettingsView` exposed literal `model.tokenInput` and `props.savedConfig.token` in plaintext over local MCP (`127.0.0.1:4774/mcp`) because both fields used plain `Schema.String`. Any production Effect UI form handling secrets must wrap secret fields in `Schema.Redacted` so DevTools traces and MCP `get_state` do not expose raw credentials.
+3. **Secret redaction caught and fixed live with `Schema.Redacted`.** Initially, calling `get_state` on `/SettingsView` exposed literal `model.tokenInput` and `props.savedConfig.token` in plaintext over local MCP (`127.0.0.1:4774/mcp`) because both fields used plain `Schema.String`. Wrapping all token fields across `SettingsProps`, `SettingsModel`, `SettingsMessage`, and `GatewayMutation` in `Schema.Redacted(Schema.String)` fixed the leak: live `get_state` on `MCP Gateway-dev.app` now returns `{ "~redacted": true }` for both `model.tokenInput` and `props.savedConfig.token`, and `tests/effect-settings/SettingsView.story.test.ts` guards wire redaction with `MessageLog.redactSchema`.
 4. **Live Logs inspection and clean `Settings <-> Logs` session handoff.** Switching `Settings` (`Cmd+3`) -> `Logs` (`Cmd+2`) -> `Settings` (`Cmd+3`) cleanly disconnected every previous Effect UI session (`connected: false`), kept exactly `1` connected session at a time, and showed `/LogsView` running `1` `SchedulePollWait` timer with `cursor: 10`, `readError: null`, `clearError: null`, and live `bear` session traffic.
 
 ## Practical takeaway for `develop`

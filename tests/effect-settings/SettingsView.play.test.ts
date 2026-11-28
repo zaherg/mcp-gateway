@@ -1,7 +1,7 @@
 import { HtmlLocator, HtmlPlay } from '@effect/ui/html/testing';
 import { Locator, TestHost } from '@effect/ui/testing';
 import { assert, describe, it } from '@effect/vitest';
-import { Effect, Layer } from 'effect';
+import { Effect, Layer, Redacted } from 'effect';
 
 import {
   SettingsCommandLayers,
@@ -41,7 +41,7 @@ const baseProps: typeof SettingsProps.Type = {
     host: '127.0.0.1',
     port: 8787,
     allowedPeers: ['192.168.1.0/24'],
-    token: 'b'.repeat(64),
+    token: Redacted.make('b'.repeat(64)),
     tokenRef: null,
     launchAtLogin: false,
     autoStart: false,
@@ -62,7 +62,7 @@ describe('SettingsView Play tests', () => {
       let keyMigrationCalls = 0;
       let dismissErrorCalls = 0;
       let dismissOpErrorCalls = 0;
-      const generatedToken = 'f'.repeat(64);
+      const generatedToken = Redacted.make('f'.repeat(64));
 
       const actionsLayer = Layer.succeed(SettingsActions, {
         commitGatewayMutation: (mutation) =>
@@ -159,10 +159,11 @@ describe('SettingsView Play tests', () => {
         assert.deepStrictEqual(showTokenCalls, [true]);
 
         yield* play.click(HtmlLocator.role('button', { name: t('settings.generateToken') }));
-        assert.deepStrictEqual(mutations[mutations.length - 1], {
-          _tag: 'ReplaceTokenWithLiteral',
-          token: generatedToken,
-        });
+        const lastMutation = mutations[mutations.length - 1];
+        assert.strictEqual(lastMutation?._tag, 'ReplaceTokenWithLiteral');
+        if (lastMutation?._tag === 'ReplaceTokenWithLiteral') {
+          assert.strictEqual(Redacted.value(lastMutation.token), Redacted.value(generatedToken));
+        }
 
         yield* play.click(HtmlLocator.role('button', { name: t('keys.title') }));
         assert.strictEqual(keyMigrationCalls, 1);
@@ -213,7 +214,7 @@ describe('SettingsView Play tests', () => {
               revealConfig: () => Effect.void,
               openConfigInEditor: () => Effect.void,
               importExternalServers: () => Effect.succeed(null),
-              generateToken: () => Effect.succeed('0'.repeat(64)),
+              generateToken: () => Effect.succeed(Redacted.make('0'.repeat(64))),
             }),
           ),
         ),
