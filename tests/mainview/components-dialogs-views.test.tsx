@@ -1364,7 +1364,9 @@ describe('Views: Overview, Settings, Updates, Logs', () => {
     const tokenInput = view.getByLabelText(t('settings.token')) as HTMLInputElement;
     expect(tokenInput.type).toBe('password');
     fireEvent.click(view.getByRole('button', { name: t('settings.showToken') }));
-    expect(tokenInput.type).toBe('text');
+    await waitFor(() => {
+      expect(tokenInput.type).toBe('text');
+    });
 
     await act(async () => {
       fireEvent.click(view.getByRole('button', { name: t('settings.generateToken') }));
@@ -1499,7 +1501,9 @@ describe('Views: Overview, Settings, Updates, Logs', () => {
         }),
       );
     });
-    expect(view.getByText(t('settings.paused'))).toBeTruthy();
+    await waitFor(() => {
+      expect(view.getByText(t('settings.paused'))).toBeTruthy();
+    });
   });
 
   test('Updates auto-checks once on idle mount, renders version/auto-check/Check/1-click Install & Relaunch (D-02), and determinate progress bar (D-17)', async () => {

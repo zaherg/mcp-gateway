@@ -15,7 +15,7 @@
         "release:test": "bun scripts/build.ts stable-test",
         "release:all": "bun scripts/publish-release.ts",
         "changelog": "bun scripts/changelog.ts",
-        "test": "bun test --path-ignore-patterns='tests/effect-logs/**'",
+        "test": "bun test --path-ignore-patterns='tests/effect-*/**'",
         "test:effect": "vitest run --config vitest.effect.config.ts",
         "typecheck": "tsc --noEmit",
         "lint": "biome check src tests scripts *.ts",
