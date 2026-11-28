@@ -91,9 +91,14 @@ Tested directly against `MCP Gateway-dev.app` running under `bun run dev` (Vite 
 5. **5x rapid tab toggle cleanup.** Sent `Cmd+1 -> Cmd+2 -> Cmd+3 -> Cmd+2` five times via System Events. All five previous sessions disconnected cleanly (`connected: false, controllable: false`), exactly `1` session stayed connected with `1` running `SchedulePollWait`, and `4.2` seconds of observation recorded `deltaPollSucceeded: 2` (exact `2,000` ms cadence with zero duplicate timers).
 6. **Clipboard gesture note.** Dispatching `ClickedCopy` synthetically via MCP (without a user click gesture) did not write to the macOS clipboard because `WKWebView` gates `navigator.clipboard.writeText` on user activation.
 
-### Remaining manual spot-check (optional)
+### Verified live in the running macOS Electrobun dev app (Settings + Logs handoff)
 
-1. Run `bun run dev` and open the Settings tab (`Cmd+3`) to visually inspect the `@effect/ui-kit` `Switch` toggles, native selects, inputs, and `/SettingsView` DevTools overlay live in `MCP Gateway-dev.app`.
+Tested directly against `MCP Gateway-dev.app` running under `bun run dev` (`Cmd+3` Settings and `Cmd+2` Logs, DevTools server `127.0.0.1:4774`).
+
+1. **Visual rendering of Settings in macOS dark mode.** All three `@effect/ui-kit` `Switch` toggles (`Launch app at login`, `Start gateway when the app opens`, `Keep the Mac awake while the gateway runs`), the green login-item LED, `Appearance` and `Language` native selects, `Network` fields, and the bottom-right DevTools launcher (`[UI] 0`) rendered cleanly with zero visual defects or CSP blocking.
+2. **Live MCP inspection on `/SettingsView`.** `list_sessions` reported `{ app: "SettingsView", host: "browser", connected: true, controllable: true }`. Dispatching a non-mutating `ChangedHost({ value: "10.0.0.42" })` returned `{ applied: 1, of: 1, seq: 3 }`, `diff_state` reported the exact `hostInput` change, `show_entry` paused cleanly at `seq: 3` (`fellBack: [], skipped: []`), `resume` returned `{ resumed: true }`, and `ChangedHost` restored the original draft without saving.
+3. **Secret redaction gotcha found live in DevTools.** Calling `get_state` on `/SettingsView` exposed literal `model.tokenInput` and `props.savedConfig.token` in plaintext over local MCP (`127.0.0.1:4774/mcp`) because both fields used plain `Schema.String`. Any production Effect UI form handling secrets must wrap secret fields in `Schema.Redacted` so DevTools traces and MCP `get_state` do not expose raw credentials.
+4. **Live Logs inspection and clean `Settings <-> Logs` session handoff.** Switching `Settings` (`Cmd+3`) -> `Logs` (`Cmd+2`) -> `Settings` (`Cmd+3`) cleanly disconnected every previous Effect UI session (`connected: false`), kept exactly `1` connected session at a time, and showed `/LogsView` running `1` `SchedulePollWait` timer with `cursor: 10`, `readError: null`, `clearError: null`, and live `bear` session traffic.
 
 ## Practical takeaway for `develop`
 
