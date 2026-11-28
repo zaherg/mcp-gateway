@@ -21,10 +21,15 @@ import {
   PREVIEW_DISPLAY_TIMEOUT_MS,
   tooLarge,
 } from '@mcp-gateway/mainview/effect-raw-config/logic';
-import { buttonClasses, iconChevronRight, iconCircleHelp } from '@mcp-gateway/mainview/effect-ui';
+import {
+  buttonClasses,
+  iconChevronRight,
+  iconCircleHelp,
+  LocaleSchema,
+} from '@mcp-gateway/mainview/effect-ui';
 import { jsonEditing } from '@mcp-gateway/mainview/lib/json-editing';
 import { CONFIG_TOO_LARGE, parseConfigTree } from '@mcp-gateway/shared/config-document';
-import { type Locale, translator } from '@mcp-gateway/shared/i18n';
+import { translator } from '@mcp-gateway/shared/i18n';
 
 const staticExtensions = [...jsonEditing, lineNumbers()];
 
@@ -199,7 +204,7 @@ export const AttachCodeMirror = Mount.makeStream(
 );
 
 export const RawConfigProps = Schema.Struct({
-  locale: Schema.String,
+  locale: LocaleSchema,
   visible: Schema.Boolean,
   rawOpen: Schema.Boolean,
   locked: Schema.Boolean,
@@ -413,7 +418,7 @@ export const RawConfigView = Html.component({
     ClickedJumpToLine: ($, { line }) => $.evolve({ jumpSeq: $.model.jumpSeq + 1, jumpLine: line }),
     ClickedFormat: ($) => {
       if ($.props.locked) return $.model;
-      const t = translator($.props.locale as Locale);
+      const t = translator($.props.locale);
       const result = formatDraftLogic($.props.doc.text, $.props.format, t);
       if (!result.ok) {
         return $.evolve({ feedback: result.feedback });
@@ -441,7 +446,7 @@ export const RawConfigView = Html.component({
     const props = h.props;
     if (!props.visible) return h.text('');
 
-    const t = translator(props.locale as Locale);
+    const t = translator(props.locale);
     const fieldId = 'raw-config-editor';
     const currentRawText = Redacted.value(props.doc.text);
     const savedRawText = Redacted.value(props.savedConfigText);

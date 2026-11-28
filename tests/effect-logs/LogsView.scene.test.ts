@@ -15,7 +15,7 @@ import {
 import { translator } from '@mcp-gateway/shared/i18n';
 
 const t = translator('en_US');
-const defaultProps = { servers: ['bear'], locale: 'en_US' };
+const defaultProps = { servers: ['bear'], locale: 'en_US' as const };
 
 describe('LogsView Scene tests', () => {
   it('disables Clear while ClearLogs is running and toggles toolbar controls', () => {

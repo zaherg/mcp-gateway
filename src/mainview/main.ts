@@ -7,8 +7,9 @@ import {
   onSnapshotChanged,
   setUnsavedRawConfigChecker,
 } from '@mcp-gateway/mainview/client';
-import { AppLiveLayers, AppView } from '@mcp-gateway/mainview/effect-app/AppView';
+import { AppLiveLayers, AppRoot } from '@mcp-gateway/mainview/effect-app/AppView';
 import { GatewayRpc, WindowEnv } from '@mcp-gateway/mainview/effect-app/services';
+import { alertClasses } from '@mcp-gateway/mainview/effect-ui';
 
 import './styles/styles.css';
 
@@ -37,6 +38,17 @@ const runtimeLayer = Layer.mergeAll(envLayer, AppLiveLayers.pipe(Layer.provide(e
 
 Effect.runFork(
   Layer.launch(
-    BrowserHost.mount(AppView, {}, root, { head: false }).pipe(Layer.provide(runtimeLayer)),
+    BrowserHost.mount(AppRoot, {}, root, {
+      head: false,
+      fallback: (_failure, h) =>
+        h.main
+          .class('flex min-h-screen items-center justify-center p-6')
+          .children(
+            h.div
+              .attr('role', 'alert')
+              .class(alertClasses('error', 'max-w-md'))
+              .children('Unable to render MCP Gateway. Restart the application to recover.'),
+          ),
+    }).pipe(Layer.provide(runtimeLayer)),
   ),
 );

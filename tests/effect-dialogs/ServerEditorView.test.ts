@@ -1,11 +1,14 @@
+import { MessageLog } from '@effect/ui';
 import { HtmlLocator, HtmlPlay } from '@effect/ui/html/testing';
 import { Locator, Story, TestHost } from '@effect/ui/testing';
 import { assert, describe, it } from '@effect/vitest';
 import { Effect, Redacted, Schema } from 'effect';
 
 import {
+  GenerateServerKey,
   ServerEditorEvent,
   ServerEditorMessage,
+  ServerEditorModel,
   ServerEditorProps,
   ServerEditorView,
 } from '@mcp-gateway/mainview/effect-dialogs/ServerEditorView';
@@ -15,6 +18,7 @@ import {
   emptyEditor,
   hasInvalidKeyValueRows,
   keyValueRowsToRecord,
+  recordToKeyValueRows,
   type ServerEditorState,
 } from '@mcp-gateway/mainview/effect-dialogs/server-editor-logic';
 import { translator } from '@mcp-gateway/shared/i18n';
@@ -54,6 +58,16 @@ describe('ServerEditorView', () => {
     const msgEncoded = JSON.stringify(
       Schema.encodeSync(ServerEditorMessage)(ServerEditorMessage.ChangedEditor({ editor })),
     );
+    const genKeyEncoded = JSON.stringify(
+      Schema.encodeSync(ServerEditorMessage)(
+        ServerEditorMessage.GeneratedKey({ token: Redacted.make(tokenSecret) }),
+      ),
+    );
+    const genKeyWireRedacted = JSON.stringify(
+      Schema.encodeUnknownSync(
+        MessageLog.redactSchema(ServerEditorMessage) as Schema.Codec<unknown>,
+      )(ServerEditorMessage.GeneratedKey({ token: Redacted.make(tokenSecret) })),
+    );
     const eventEncoded = JSON.stringify(
       Schema.encodeSync(ServerEditorEvent)(ServerEditorEvent.ChangedEditor({ editor })),
     );
@@ -64,9 +78,13 @@ describe('ServerEditorView', () => {
       assert.notInclude(encoded, headerSecret);
       assert.include(encoded, '<redacted>');
     }
+    assert.notInclude(genKeyEncoded, tokenSecret);
+    assert.include(genKeyEncoded, '<redacted>');
+    assert.notInclude(genKeyWireRedacted, tokenSecret);
+    assert.include(genKeyWireRedacted, '"~redacted":true');
   });
 
-  it('handles Bear preset, Generate Key, reveal toggle, and submit/close events', () => {
+  it('handles Bear preset, Generate Key, deterministic row IDs, reveal toggle, and submit/close events', () => {
     const story = Story.start(ServerEditorView, makeProps());
     assert.isFalse(story.model.showKey);
 
@@ -81,18 +99,42 @@ describe('ServerEditorView', () => {
       assert.fail('expected ChangedEditor event from Bear preset');
     }
 
-    story.send(ServerEditorMessage.ClickedGenerateKey());
+    const generated = Redacted.make('e'.repeat(64));
+    story
+      .send(ServerEditorMessage.ClickedGenerateKey())
+      .expectExact(GenerateServerKey.make())
+      .resolve(GenerateServerKey, ServerEditorMessage.GeneratedKey({ token: generated }));
     const genEvent = story.current.emitted[0];
     if (genEvent?._tag === 'ChangedEditor') {
       assert.isNotNull(genEvent.editor.token);
       assert.isNull(genEvent.editor.tokenRef);
       if (genEvent.editor.token) {
-        assert.isAtLeast(Redacted.value(genEvent.editor.token).length, 32);
+        assert.strictEqual(Redacted.value(genEvent.editor.token), 'e'.repeat(64));
       }
       story.emitted(genEvent);
     } else {
       assert.fail('expected ChangedEditor event from Generate Key');
     }
+
+    // Repeated runs produce identical deterministic row IDs
+    const rowsA = recordToKeyValueRows({ A: '1', B: '2' });
+    const rowsB = recordToKeyValueRows({ A: '1', B: '2' });
+    assert.deepStrictEqual(
+      rowsA.map((r) => r.id),
+      ['kv-1', 'kv-2'],
+    );
+    assert.deepStrictEqual(
+      rowsB.map((r) => r.id),
+      ['kv-1', 'kv-2'],
+    );
+    story.send(ServerEditorMessage.AddedKeyValueRow({ field: 'env' }));
+    story.emitted(ServerEditorEvent.ChangedEditor({ editor: story.model.editor }));
+    story.send(ServerEditorMessage.AddedKeyValueRow({ field: 'env' }));
+    story.emitted(ServerEditorEvent.ChangedEditor({ editor: story.model.editor }));
+    assert.deepStrictEqual(
+      story.model.editor.env.map((r) => r.id),
+      ['kv-1', 'kv-2'],
+    );
 
     story.send(ServerEditorMessage.ToggledShowKey());
     assert.isTrue(story.model.showKey);
@@ -187,4 +229,76 @@ describe('ServerEditorView', () => {
       yield* play.expect(HtmlLocator.role('button', { name: t('editor.apply') })).toBeDisabled();
     }).pipe(Effect.provide(TestHost.layer())),
   );
+
+  it('boundedly explores transport switches, row edits, preset click, and auth toggles with deterministic IDs and redaction', () => {
+    const envSecret = 'editor-env-secret-must-not-leak-12345';
+    const tokenSecret = 'editor-token-secret-must-not-leak-67890';
+    const generatedSecret = 'editor-generated-secret-must-not-leak-abcde';
+    const encodeModel = Schema.encodeUnknownSync(
+      MessageLog.redactSchema(ServerEditorModel) as Schema.Codec<unknown>,
+    );
+    const encodeEvent = Schema.encodeUnknownSync(
+      MessageLog.redactSchema(ServerEditorEvent) as Schema.Codec<unknown>,
+    );
+
+    const explored = Story.explore(
+      ServerEditorView,
+      makeProps({
+        editor: {
+          ...emptyEditor(),
+          env: [createKeyValueRow('API_KEY', '', true, 'kv-1')],
+        },
+      }),
+      {
+        messages: [
+          ServerEditorMessage.ChangedTransport({ transport: 'http' }),
+          ServerEditorMessage.ChangedTransport({ transport: 'stdio' }),
+          ServerEditorMessage.AddedArg(),
+          ServerEditorMessage.AddedKeyValueRow({ field: 'env' }),
+          ServerEditorMessage.AddedKeyValueRow({ field: 'headers' }),
+          ServerEditorMessage.UpdatedKeyValueRowValue({
+            field: 'env',
+            id: 'kv-1',
+            value: Redacted.make(envSecret),
+          }),
+          ServerEditorMessage.ClickedBearPreset(),
+          ServerEditorMessage.ChangedAuthMode({ mode: 'custom' }),
+          ServerEditorMessage.ChangedAuthMode({ mode: 'global' }),
+          ServerEditorMessage.ChangedToken({ token: Redacted.make(tokenSecret) }),
+          ServerEditorMessage.ClickedGenerateKey(),
+        ],
+        commands: [
+          [
+            GenerateServerKey,
+            {
+              success: () => [
+                ServerEditorMessage.GeneratedKey({ token: Redacted.make(generatedSecret) }),
+              ],
+            },
+          ],
+        ],
+        depth: 2,
+        invariant: ({ model, emitted }) => {
+          for (const rows of [model.editor.env, model.editor.headers]) {
+            const ids = rows.map((row) => row.id);
+            assert.strictEqual(new Set(ids).size, ids.length);
+            for (const id of ids) {
+              assert.match(id, /^kv-\d+$/);
+            }
+          }
+          const serialized = JSON.stringify(encodeModel(model));
+          assert.notInclude(serialized, envSecret);
+          assert.notInclude(serialized, tokenSecret);
+          assert.notInclude(serialized, generatedSecret);
+          for (const event of emitted) {
+            const serializedEvent = JSON.stringify(encodeEvent(event));
+            assert.notInclude(serializedEvent, envSecret);
+            assert.notInclude(serializedEvent, tokenSecret);
+            assert.notInclude(serializedEvent, generatedSecret);
+          }
+        },
+      },
+    );
+    assert.isAbove(explored.states, 10);
+  });
 });

@@ -1,21 +1,32 @@
 import { Mount, type View } from '@effect/ui';
 import type { Html } from '@effect/ui/html';
-import { Effect, Stream } from 'effect';
+import { Effect, Schema, Stream } from 'effect';
 
 import { iconX } from '@mcp-gateway/mainview/effect-ui/icons';
 import { buttonClasses } from '@mcp-gateway/mainview/effect-ui/primitives';
 
+const isFocusableOutsideDialog = (
+  element: Element | null,
+  dialog: HTMLDialogElement,
+): element is HTMLElement =>
+  element instanceof HTMLElement &&
+  element !== document.body &&
+  element !== document.documentElement &&
+  element.isConnected &&
+  !dialog.contains(element) &&
+  !element.matches(':disabled');
+
 /**
  * Captures the focused element when a modal `<dialog>` mounts (before `showModal()`
- * moves focus inside) and restores focus to it (or to `[data-fallback-focus]`) when
- * the modal unmounts, matching the prior React Modal. The modal presentation itself
- * (`showModal()` / `close()` / `cancel`) is handled natively by `@effect/ui`'s
- * `h.dialog.modal(true)`.
+ * moves focus inside) and restores focus to an explicit `restoreFocusSelector`,
+ * to the captured opener, or to `[data-fallback-focus]` when the modal unmounts.
+ * The modal presentation itself (`showModal()` / `close()` / `cancel`) is handled
+ * natively by `@effect/ui`'s `h.dialog.modal(true)`.
  */
 export const RestoreDialogFocus = Mount.makeStream(
   'mcp-gateway/ui/RestoreDialogFocus',
-  { beforeCommit: true },
-  (dialog: HTMLDialogElement) =>
+  { beforeCommit: true, args: { restoreFocusSelector: Schema.NullOr(Schema.String) } },
+  (dialog: HTMLDialogElement, { restoreFocusSelector }) =>
     Stream.callback<never>((_queue) =>
       Effect.acquireRelease(
         Effect.sync(() => (typeof document === 'undefined' ? null : document.activeElement)),
@@ -27,18 +38,18 @@ export const RestoreDialogFocus = Mount.makeStream(
               (el) => el !== dialog,
             );
             if (hasOtherOpenDialog) return;
-            if (
-              opener instanceof HTMLElement &&
-              opener !== document.body &&
-              opener !== document.documentElement &&
-              opener.isConnected &&
-              !dialog.contains(opener) &&
-              !opener.matches(':disabled')
-            ) {
-              opener.focus();
-            } else {
-              document.querySelector<HTMLElement>('[data-fallback-focus]')?.focus();
+            if (restoreFocusSelector !== null) {
+              const explicit = document.querySelector<HTMLElement>(restoreFocusSelector);
+              if (isFocusableOutsideDialog(explicit, dialog)) {
+                explicit.focus();
+                return;
+              }
             }
+            if (isFocusableOutsideDialog(opener, dialog)) {
+              opener.focus();
+              return;
+            }
+            document.querySelector<HTMLElement>('[data-fallback-focus]')?.focus();
           }),
       ).pipe(Effect.asVoid),
     ),
@@ -51,6 +62,7 @@ export const renderModal = <M, C extends View.Children<M>>(
     readonly title: string;
     readonly closeLabel: string;
     readonly busy?: boolean;
+    readonly restoreFocusSelector?: string;
     readonly onClose: M;
     readonly body: C;
   },
@@ -59,7 +71,7 @@ export const renderModal = <M, C extends View.Children<M>>(
   let dialog = h.dialog
     .modal(true)
     .attr('aria-labelledby', options.titleId)
-    .onMount(RestoreDialogFocus());
+    .onMount(RestoreDialogFocus({ restoreFocusSelector: options.restoreFocusSelector ?? null }));
   if (!busy) {
     dialog = dialog.on('cancel', () => options.onClose);
   }

@@ -1,6 +1,14 @@
 import type { View } from '@effect/ui';
+import { Schema } from 'effect';
 
-import { type Locale, type MessageKey, messageTemplate } from '@mcp-gateway/shared/i18n';
+import {
+  CATALOG_LOCALES,
+  type Locale,
+  type MessageKey,
+  messageTemplate,
+} from '@mcp-gateway/shared/i18n';
+
+export const LocaleSchema = Schema.Literals(CATALOG_LOCALES);
 
 const TEMPLATE_PART = /(\{\w+\})/;
 

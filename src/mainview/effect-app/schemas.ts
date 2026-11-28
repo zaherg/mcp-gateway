@@ -4,6 +4,7 @@ import {
   DocumentSchema,
   ServerEditorStateSchema,
 } from '@mcp-gateway/mainview/effect-dialogs/server-editor-logic';
+import { LocaleSchema } from '@mcp-gateway/mainview/effect-ui';
 import type { AppSnapshot, UpdateStatus } from '@mcp-gateway/shared/rpc';
 import type { GatewayErrorCode } from '@mcp-gateway/shared/types';
 
@@ -120,8 +121,8 @@ export type UpdateStatusValue = typeof UpdateStatusSchema.Type;
 
 export const LanguageStateSchema = Schema.Struct({
   preference: Schema.String,
-  locale: Schema.String,
-  available: Schema.Array(Schema.String),
+  locale: LocaleSchema,
+  available: Schema.Array(LocaleSchema),
 });
 
 export const AppearancePreferenceSchema = Schema.Literals(['system', 'light', 'dark']);
@@ -174,7 +175,7 @@ export const ImportOutcomeSchema = Schema.Struct({
 });
 
 export const AppModel = Schema.Struct({
-  locale: Schema.String,
+  locale: LocaleSchema,
   title: Schema.String,
   snapshot: Schema.NullOr(AppSnapshotRedactedSchema),
   doc: Schema.NullOr(DocumentSchema),
@@ -185,6 +186,7 @@ export const AppModel = Schema.Struct({
   busy: Schema.Boolean,
   updateBusy: Schema.Boolean,
   activeModal: ActiveModalSchema,
+  serverEditorOpenSeq: Schema.Number,
   editorError: Schema.NullOr(Schema.String),
   keyMigrationStatus: KeyMigrationStatusSchema,
   lastImport: Schema.NullOr(ImportOutcomeSchema),

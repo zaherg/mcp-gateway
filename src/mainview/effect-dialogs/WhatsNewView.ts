@@ -2,9 +2,9 @@ import { UiSchema } from '@effect/ui';
 import { Html } from '@effect/ui/html';
 import { Schema } from 'effect';
 
-import { buttonClasses, renderModal } from '@mcp-gateway/mainview/effect-ui';
+import { buttonClasses, LocaleSchema, renderModal } from '@mcp-gateway/mainview/effect-ui';
 import { changelogBlocks, changelogSection } from '@mcp-gateway/shared/changelog';
-import { type Locale, translator } from '@mcp-gateway/shared/i18n';
+import { translator } from '@mcp-gateway/shared/i18n';
 import bundledChangelog from '../../../CHANGELOG.md?raw';
 
 const INLINE = /(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\([^)]+\))/;
@@ -19,7 +19,7 @@ const renderInline = <M>(h: Html.H<M>, text: string) =>
   });
 
 export const WhatsNewProps = Schema.Struct({
-  locale: Schema.String,
+  locale: LocaleSchema,
   version: Schema.String,
   changelogText: Schema.optional(Schema.String),
 });
@@ -46,7 +46,7 @@ export const WhatsNewView = Html.component({
     Closed: ($) => $.emit(WhatsNewEvent.Closed()),
   },
   view: (h) => {
-    const t = translator(h.props.locale as Locale);
+    const t = translator(h.props.locale);
     const source = h.props.changelogText ?? bundledChangelog;
     const section = changelogSection(source, h.props.version);
     if (!section) return h.text('');
@@ -59,14 +59,20 @@ export const WhatsNewView = Html.component({
         h.div
           .class('whats-new')
           .children(
-            ...changelogBlocks(section).map((block) =>
+            ...changelogBlocks(section).map((block, blockIndex) =>
               block.kind === 'list'
-                ? h.ul.children(
-                    ...block.items.map((item) => h.li.children(...renderInline(h, item))),
-                  )
+                ? h.ul
+                    .key(`block-${blockIndex}`)
+                    .children(
+                      ...block.items.map((item, itemIndex) =>
+                        h.li
+                          .key(`block-${blockIndex}-item-${itemIndex}`)
+                          .children(...renderInline(h, item)),
+                      ),
+                    )
                 : block.kind === 'heading'
-                  ? h.h3.children(block.text)
-                  : h.p.children(...renderInline(h, block.text)),
+                  ? h.h3.key(`block-${blockIndex}`).children(block.text)
+                  : h.p.key(`block-${blockIndex}`).children(...renderInline(h, block.text)),
             ),
           ),
         h.div.class('dialog-actions').children(

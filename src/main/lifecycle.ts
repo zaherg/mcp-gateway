@@ -172,3 +172,66 @@ export class InteractiveQuitGate {
       });
   }
 }
+
+export const WINDOW_REVEAL_DELAY_MS = 50;
+export const WINDOW_REVEAL_FALLBACK_MS = 1_500;
+
+export interface WindowRevealTimers<T = ReturnType<typeof setTimeout>> {
+  readonly setTimeout: (callback: () => void, ms: number) => T;
+  readonly clearTimeout: (handle: T) => void;
+}
+
+/** Coordinates delayed reveal of a hidden window until its first snapshot settles or fallback expires. */
+export class WindowRevealCoordinator<T = ReturnType<typeof setTimeout>> {
+  private ready = false;
+  private visible = false;
+  private disposed = false;
+  private timer: T | undefined;
+
+  constructor(
+    private readonly reveal: () => void,
+    private readonly timers: WindowRevealTimers<T> = {
+      setTimeout: (callback, ms) => globalThis.setTimeout(callback, ms) as T,
+      clearTimeout: (handle) => globalThis.clearTimeout(handle as ReturnType<typeof setTimeout>),
+    },
+    private readonly delayMs = WINDOW_REVEAL_DELAY_MS,
+    private readonly fallbackMs = WINDOW_REVEAL_FALLBACK_MS,
+  ) {
+    this.timer = this.timers.setTimeout(() => this.revealNow(), this.fallbackMs);
+  }
+
+  isReady() {
+    return this.ready;
+  }
+
+  isVisible() {
+    return this.visible;
+  }
+
+  onSnapshotSettled() {
+    if (this.disposed || this.ready) return;
+    this.ready = true;
+    if (this.visible) return;
+    this.clearTimer();
+    this.timer = this.timers.setTimeout(() => this.revealNow(), this.delayMs);
+  }
+
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.clearTimer();
+  }
+
+  private clearTimer() {
+    if (this.timer === undefined) return;
+    this.timers.clearTimeout(this.timer);
+    this.timer = undefined;
+  }
+
+  private revealNow() {
+    this.timer = undefined;
+    if (this.disposed || this.visible) return;
+    this.visible = true;
+    this.reveal();
+  }
+}

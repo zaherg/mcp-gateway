@@ -1,6 +1,6 @@
-import { Subscription, UiSchema } from '@effect/ui';
+import { Command, Subscription, UiSchema } from '@effect/ui';
 import { Html } from '@effect/ui/html';
-import { Redacted, Schema, Stream } from 'effect';
+import { Effect, Redacted, Schema, Stream } from 'effect';
 
 import { ImportOutcomeSchema } from '@mcp-gateway/mainview/effect-app/schemas';
 import {
@@ -16,13 +16,14 @@ import { GatewayMutation } from '@mcp-gateway/mainview/effect-settings/services'
 import {
   buttonClasses,
   INPUT_CLASSES,
-  iconChevronsUpDown,
   iconEye,
   iconEyeOff,
   LABEL_CLASSES,
+  LocaleSchema,
   renderAlert,
+  renderField,
+  renderNativeSelect,
   renderToggleRow,
-  SELECT_CLASSES,
   SELECT_OPTION_CLASSES,
 } from '@mcp-gateway/mainview/effect-ui';
 import { generateToken } from '@mcp-gateway/mainview/lib/token';
@@ -68,7 +69,7 @@ export const SavedGatewayConfigSchema = Schema.Struct({
 });
 
 export const SettingsProps = Schema.Struct({
-  locale: Schema.String,
+  locale: LocaleSchema,
   filename: Schema.String,
   hasSnapshot: Schema.Boolean,
   dirty: Schema.Boolean,
@@ -80,7 +81,7 @@ export const SettingsProps = Schema.Struct({
   revision: Schema.NullOr(Schema.String),
   appearance: Schema.String,
   languagePreference: Schema.String,
-  availableLanguages: Schema.Array(Schema.String),
+  availableLanguages: Schema.Array(LocaleSchema),
   login: LoginStatusSchema,
   retryLogin: Schema.Boolean,
   interfaces: Schema.Array(InterfaceChoiceSchema),
@@ -117,11 +118,19 @@ export const SettingsMessage = UiSchema.TaggedEnum({
   CommittedToken: {},
   ClickedToggleShowToken: {},
   ClickedGenerateToken: {},
+  GeneratedToken: { token: Schema.Redacted(Schema.String) },
   ClickedOpenKeyMigration: {},
   ClickedRevealConfig: {},
   ClickedOpenConfigInEditor: {},
   ClickedImportExternalServers: {},
 });
+
+export const GenerateSettingsToken = Command.make(
+  'mcp-gateway/settings/GenerateSettingsToken',
+  {},
+  () =>
+    Effect.sync(() => SettingsMessage.GeneratedToken({ token: Redacted.make(generateToken()) })),
+);
 
 export const SettingsEvent = UiSchema.TaggedEnum({
   DismissedError: {},
@@ -143,7 +152,7 @@ const NETWORK_LABELS: Record<NetworkKind, MessageKey> = {
   tunnel: 'settings.networkKind.tunnel',
 };
 
-const resolveTranslator = (locale: string) => translator(locale as Locale);
+const resolveTranslator = (locale: Locale) => translator(locale);
 
 const toPlainSavedConfig = (
   saved: typeof SavedGatewayConfigSchema.Type | null,
@@ -242,7 +251,7 @@ export const SettingsView = Html.component({
       return preference ? $.emit(SettingsEvent.ChangedAppearance({ preference })) : $.model;
     },
     ChangedLanguage: ($, { value }) => {
-      const preference = parseLanguagePreference(value, $.props.availableLanguages as Locale[]);
+      const preference = parseLanguagePreference(value, $.props.availableLanguages);
       return preference ? $.emit(SettingsEvent.ChangedLanguage({ preference })) : $.model;
     },
     ChangedHost: ($, { value }) => $.evolve({ hostInput: value }),
@@ -309,7 +318,10 @@ export const SettingsView = Html.component({
       $.emit(SettingsEvent.ToggledShowToken({ show: !$.props.showToken })),
     ClickedGenerateToken: ($) => {
       if (!$.props.savedConfig || $.props.configurationLocked) return $.model;
-      const token = Redacted.make(generateToken());
+      return $.run(GenerateSettingsToken.make());
+    },
+    GeneratedToken: ($, { token }) => {
+      if (!$.props.savedConfig || $.props.configurationLocked) return $.model;
       return $.evolve({ tokenInput: token }).emit(
         SettingsEvent.CommittedGatewayMutation({
           mutation: GatewayMutation.ReplaceTokenWithLiteral({ token }),
@@ -427,103 +439,71 @@ export const SettingsView = Html.component({
                 disabled: locked,
                 onToggle: (checked) => SettingsMessage.ToggledKeepAwake({ checked }),
               }),
-              h.div.class('field-row').children(
-                h.div
-                  .class('field-row-copy')
-                  .children(
-                    h.label
-                      .attr('data-slot', 'label')
-                      .attr('for', 'settings-appearance')
-                      .attr('id', 'settings-appearance-label')
-                      .class(LABEL_CLASSES)
-                      .children(t('shell.appearanceLabel')),
-                    h.small
-                      .attr('id', 'settings-appearance-help')
-                      .children(t('shell.appearanceHelp')),
-                  ),
-                h.div
-                  .class(
-                    'group/native-select relative w-fit max-w-56 shrink-0 has-[select:disabled]:opacity-50',
-                  )
-                  .attr('data-slot', 'native-select-wrapper')
-                  .attr('data-size', 'md')
-                  .children(
-                    h.select
-                      .attr('id', 'settings-appearance')
-                      .attr('aria-describedby', 'settings-appearance-help')
-                      .attr('data-slot', 'native-select')
-                      .attr('data-size', 'md')
-                      .class(SELECT_CLASSES)
-                      .disabled(locked || busy)
-                      .value(h.props.appearance)
-                      .on('change', ({ value }) => SettingsMessage.ChangedAppearance({ value }))
-                      .children(
-                        h.option
-                          .attr('data-slot', 'native-select-option')
-                          .attr('value', 'system')
-                          .class(SELECT_OPTION_CLASSES)
-                          .children(t('shell.appearanceSystem')),
-                        h.option
-                          .attr('data-slot', 'native-select-option')
-                          .attr('value', 'light')
-                          .class(SELECT_OPTION_CLASSES)
-                          .children(t('shell.appearanceLight')),
-                        h.option
-                          .attr('data-slot', 'native-select-option')
-                          .attr('value', 'dark')
-                          .class(SELECT_OPTION_CLASSES)
-                          .children(t('shell.appearanceDark')),
-                      ),
-                    iconChevronsUpDown(h),
-                  ),
-              ),
-              h.div.class('field-row').children(
-                h.div
-                  .class('field-row-copy')
-                  .children(
-                    h.label
-                      .attr('data-slot', 'label')
-                      .attr('for', 'settings-language')
-                      .attr('id', 'settings-language-label')
-                      .class(LABEL_CLASSES)
-                      .children(t('shell.languageLabel')),
-                    h.small.attr('id', 'settings-language-help').children(t('shell.languageHelp')),
-                  ),
-                h.div
-                  .class(
-                    'group/native-select relative w-fit max-w-56 shrink-0 has-[select:disabled]:opacity-50',
-                  )
-                  .attr('data-slot', 'native-select-wrapper')
-                  .attr('data-size', 'md')
-                  .children(
-                    h.select
-                      .attr('id', 'settings-language')
-                      .attr('aria-describedby', 'settings-language-help')
-                      .attr('data-slot', 'native-select')
-                      .attr('data-size', 'md')
-                      .class(SELECT_CLASSES)
-                      .disabled(locked || busy)
-                      .value(h.props.languagePreference)
-                      .on('change', ({ value }) => SettingsMessage.ChangedLanguage({ value }))
-                      .children(
-                        h.option
-                          .attr('data-slot', 'native-select-option')
-                          .attr('value', 'system')
-                          .class(SELECT_OPTION_CLASSES)
-                          .children(t('shell.languageSystem')),
-                        ...h.props.availableLanguages.map((locale) =>
-                          h.option
-                            .key(locale)
-                            .attr('data-slot', 'native-select-option')
-                            .attr('value', locale)
-                            .attr('lang', localeTag(locale as Locale))
-                            .class(SELECT_OPTION_CLASSES)
-                            .children(languageName(locale as Locale)),
-                        ),
-                      ),
-                    iconChevronsUpDown(h),
-                  ),
-              ),
+              renderField(h, {
+                id: 'settings-appearance',
+                label: t('shell.appearanceLabel'),
+                help: t('shell.appearanceHelp'),
+                layout: 'row',
+                control: renderNativeSelect(h, {
+                  id: 'settings-appearance',
+                  value: h.props.appearance,
+                  disabled: locked || busy,
+                  ariaDescribedBy: 'settings-appearance-help',
+                  size: 'md',
+                  width: 'fit',
+                  wrapperClass: 'max-w-56 shrink-0',
+                  onChange: (value) => SettingsMessage.ChangedAppearance({ value }),
+                  options: [
+                    h.option
+                      .attr('data-slot', 'native-select-option')
+                      .attr('value', 'system')
+                      .class(SELECT_OPTION_CLASSES)
+                      .children(t('shell.appearanceSystem')),
+                    h.option
+                      .attr('data-slot', 'native-select-option')
+                      .attr('value', 'light')
+                      .class(SELECT_OPTION_CLASSES)
+                      .children(t('shell.appearanceLight')),
+                    h.option
+                      .attr('data-slot', 'native-select-option')
+                      .attr('value', 'dark')
+                      .class(SELECT_OPTION_CLASSES)
+                      .children(t('shell.appearanceDark')),
+                  ],
+                }),
+              }),
+              renderField(h, {
+                id: 'settings-language',
+                label: t('shell.languageLabel'),
+                help: t('shell.languageHelp'),
+                layout: 'row',
+                control: renderNativeSelect(h, {
+                  id: 'settings-language',
+                  value: h.props.languagePreference,
+                  disabled: locked || busy,
+                  ariaDescribedBy: 'settings-language-help',
+                  size: 'md',
+                  width: 'fit',
+                  wrapperClass: 'max-w-56 shrink-0',
+                  onChange: (value) => SettingsMessage.ChangedLanguage({ value }),
+                  options: [
+                    h.option
+                      .attr('data-slot', 'native-select-option')
+                      .attr('value', 'system')
+                      .class(SELECT_OPTION_CLASSES)
+                      .children(t('shell.languageSystem')),
+                    ...h.props.availableLanguages.map((locale) =>
+                      h.option
+                        .key(locale)
+                        .attr('data-slot', 'native-select-option')
+                        .attr('value', locale)
+                        .attr('lang', localeTag(locale))
+                        .class(SELECT_OPTION_CLASSES)
+                        .children(languageName(locale)),
+                    ),
+                  ],
+                }),
+              }),
             ),
             h.div.class('settings-group').children(
               h.h3.children('Network'),
@@ -622,9 +602,8 @@ export const SettingsView = Html.component({
             h.div.class('settings-group').children(
               h.h3.children('Security'),
               h.div.class('field').children(
-                h.label
+                (saved.tokenRef === null ? h.label.attr('for', 'settings-token') : h.label)
                   .attr('data-slot', 'label')
-                  .attr('for', 'settings-token')
                   .attr('id', 'settings-token-label')
                   .class(LABEL_CLASSES)
                   .children(t('settings.token')),

@@ -4,7 +4,14 @@ import { join } from 'node:path';
 
 import { GatewayError } from '@mcp-gateway/core/errors';
 import { openKeychain } from '@mcp-gateway/main/keychain';
-import { InteractiveQuitGate, QuitCoordinator } from '@mcp-gateway/main/lifecycle';
+import {
+  InteractiveQuitGate,
+  QuitCoordinator,
+  WINDOW_REVEAL_DELAY_MS,
+  WINDOW_REVEAL_FALLBACK_MS,
+  WindowRevealCoordinator,
+  type WindowRevealTimers,
+} from '@mcp-gateway/main/lifecycle';
 import {
   configurationDirectory,
   installedIdentifier,
@@ -683,5 +690,157 @@ describe('openKeychain', () => {
       'ConfigIO',
       'A key could not be stored in Keychain.',
     );
+  });
+});
+
+describe('WindowRevealCoordinator', () => {
+  const createFakeTimers = () => {
+    let nextId = 1;
+    let now = 0;
+    const active = new Map<number, { dueAt: number; ms: number; callback: () => void }>();
+    const scheduledDelays: number[] = [];
+    const clearedIds: number[] = [];
+
+    const timers: WindowRevealTimers<number> = {
+      setTimeout: (callback, ms) => {
+        const id = nextId++;
+        scheduledDelays.push(ms);
+        active.set(id, { dueAt: now + ms, ms, callback });
+        return id;
+      },
+      clearTimeout: (handle) => {
+        if (active.delete(handle)) clearedIds.push(handle);
+      },
+    };
+
+    const advanceBy = (ms: number) => {
+      now += ms;
+      while (true) {
+        let nextDue: [number, { dueAt: number; callback: () => void }] | undefined;
+        for (const entry of active.entries()) {
+          if (entry[1].dueAt <= now && (!nextDue || entry[1].dueAt < nextDue[1].dueAt)) {
+            nextDue = entry;
+          }
+        }
+        if (!nextDue) break;
+        active.delete(nextDue[0]);
+        nextDue[1].callback();
+      }
+    };
+
+    return { timers, active, scheduledDelays, clearedIds, advanceBy };
+  };
+
+  test('starts hidden, suppresses reopen guard until revealed, and forwards once visible', () => {
+    const fake = createFakeTimers();
+    let revealCalls = 0;
+    let restoreCalls = 0;
+    const coordinator = new WindowRevealCoordinator(() => {
+      revealCalls++;
+    }, fake.timers);
+
+    const openWindowGuard = () => {
+      if (coordinator.isVisible()) restoreCalls++;
+    };
+
+    expect(coordinator.isReady()).toBe(false);
+    expect(coordinator.isVisible()).toBe(false);
+    expect(fake.scheduledDelays).toEqual([WINDOW_REVEAL_FALLBACK_MS]);
+
+    openWindowGuard();
+    expect(restoreCalls).toBe(0);
+
+    coordinator.onSnapshotSettled();
+    fake.advanceBy(WINDOW_REVEAL_DELAY_MS - 1);
+    openWindowGuard();
+    expect(revealCalls).toBe(0);
+    expect(restoreCalls).toBe(0);
+
+    fake.advanceBy(1);
+    expect(revealCalls).toBe(1);
+    expect(coordinator.isVisible()).toBe(true);
+
+    openWindowGuard();
+    expect(restoreCalls).toBe(1);
+  });
+
+  test('first onSnapshotSettled cancels fallback, reveals once after 50ms, and is idempotent', () => {
+    const fake = createFakeTimers();
+    let revealCalls = 0;
+    const coordinator = new WindowRevealCoordinator(() => {
+      revealCalls++;
+    }, fake.timers);
+
+    expect(fake.scheduledDelays).toEqual([WINDOW_REVEAL_FALLBACK_MS]);
+
+    coordinator.onSnapshotSettled();
+    expect(coordinator.isReady()).toBe(true);
+    expect(coordinator.isVisible()).toBe(false);
+    expect(fake.clearedIds).toEqual([1]);
+    expect(fake.scheduledDelays).toEqual([WINDOW_REVEAL_FALLBACK_MS, WINDOW_REVEAL_DELAY_MS]);
+
+    // Repeat calls must neither reschedule the timer nor double-reveal.
+    coordinator.onSnapshotSettled();
+    expect(fake.scheduledDelays).toEqual([WINDOW_REVEAL_FALLBACK_MS, WINDOW_REVEAL_DELAY_MS]);
+
+    fake.advanceBy(WINDOW_REVEAL_DELAY_MS);
+    expect(revealCalls).toBe(1);
+    expect(coordinator.isVisible()).toBe(true);
+
+    coordinator.onSnapshotSettled();
+    fake.advanceBy(WINDOW_REVEAL_FALLBACK_MS * 2);
+    expect(revealCalls).toBe(1);
+  });
+
+  test('fallback timer reveals once after 1500ms if snapshot never settles', () => {
+    const fake = createFakeTimers();
+    let revealCalls = 0;
+    const coordinator = new WindowRevealCoordinator(() => {
+      revealCalls++;
+    }, fake.timers);
+
+    fake.advanceBy(WINDOW_REVEAL_FALLBACK_MS - 1);
+    expect(revealCalls).toBe(0);
+    expect(coordinator.isVisible()).toBe(false);
+
+    fake.advanceBy(1);
+    expect(revealCalls).toBe(1);
+    expect(coordinator.isVisible()).toBe(true);
+    expect(coordinator.isReady()).toBe(false);
+
+    // Late snapshot settlement marks ready without revealing a second time.
+    coordinator.onSnapshotSettled();
+    expect(coordinator.isReady()).toBe(true);
+    fake.advanceBy(WINDOW_REVEAL_DELAY_MS * 2);
+    expect(revealCalls).toBe(1);
+  });
+
+  test('dispose cancels pending fallback or post-snapshot delay timers so reveal never fires after close', () => {
+    const fallbackFake = createFakeTimers();
+    let fallbackReveals = 0;
+    const beforeSnapshot = new WindowRevealCoordinator(() => {
+      fallbackReveals++;
+    }, fallbackFake.timers);
+
+    beforeSnapshot.dispose();
+    expect(fallbackFake.active.size).toBe(0);
+    beforeSnapshot.onSnapshotSettled();
+    fallbackFake.advanceBy(WINDOW_REVEAL_FALLBACK_MS * 2);
+    expect(fallbackReveals).toBe(0);
+    expect(beforeSnapshot.isVisible()).toBe(false);
+
+    const delayFake = createFakeTimers();
+    let delayReveals = 0;
+    const afterSnapshot = new WindowRevealCoordinator(() => {
+      delayReveals++;
+    }, delayFake.timers);
+
+    afterSnapshot.onSnapshotSettled();
+    expect(delayFake.active.size).toBe(1);
+    afterSnapshot.dispose();
+    expect(delayFake.active.size).toBe(0);
+    delayFake.advanceBy(WINDOW_REVEAL_FALLBACK_MS * 2);
+    expect(delayReveals).toBe(0);
+    expect(afterSnapshot.isVisible()).toBe(false);
   });
 });

@@ -1,7 +1,6 @@
 import { Context, Data, Effect, Layer } from 'effect';
 
 import { GatewayRpc } from '@mcp-gateway/mainview/effect-app/services';
-import type { AppClient } from '@mcp-gateway/shared/rpc';
 import { LOG_LIMITS, type LogPage, type LogQuery } from '@mcp-gateway/shared/types';
 
 export class LogRpcError extends Data.TaggedError('LogRpcError')<{
@@ -61,56 +60,6 @@ export class LogsRpc extends Context.Service<
       };
     }),
   );
-
-  static readonly fromAppClient = (client: AppClient) =>
-    Layer.succeed(LogsRpc, {
-      readLogs: (query) =>
-        Effect.tryPromise({
-          try: () => client.readLogs(query),
-          catch: () => new LogRpcError({ kind: 'bridge', message: 'readLogs bridge rejected' }),
-        }).pipe(
-          Effect.timeoutOrElse({
-            duration: `${LOG_LIMITS.requestTimeoutMs} millis`,
-            orElse: () =>
-              Effect.fail(
-                new LogRpcError({ kind: 'bridge', message: 'Local log request timed out.' }),
-              ),
-          }),
-          Effect.flatMap((result) =>
-            result.ok
-              ? Effect.succeed(result.value)
-              : Effect.fail(
-                  new LogRpcError({
-                    kind: 'rpc',
-                    message: `${result.error.code}: ${result.error.message}`,
-                  }),
-                ),
-          ),
-        ),
-      clearLogs: () =>
-        Effect.tryPromise({
-          try: () => client.clearLogs(),
-          catch: () => new LogRpcError({ kind: 'bridge', message: 'clearLogs bridge rejected' }),
-        }).pipe(
-          Effect.timeoutOrElse({
-            duration: `${LOG_LIMITS.requestTimeoutMs} millis`,
-            orElse: () =>
-              Effect.fail(
-                new LogRpcError({ kind: 'bridge', message: 'Local log request timed out.' }),
-              ),
-          }),
-          Effect.flatMap((result) =>
-            result.ok
-              ? Effect.succeed(result.value)
-              : Effect.fail(
-                  new LogRpcError({
-                    kind: 'rpc',
-                    message: `${result.error.code}: ${result.error.message}`,
-                  }),
-                ),
-          ),
-        ),
-    });
 }
 
 export class LogsDom extends Context.Service<
@@ -164,36 +113,4 @@ export class LogsDom extends Context.Service<
         catch: () => false,
       }).pipe(Effect.catch(() => Effect.succeed(false))),
   });
-
-  static readonly fromContainer = (container: HTMLElement) =>
-    Layer.succeed(LogsDom, {
-      focusSearchInput: () =>
-        Effect.sync(() => {
-          const input = container.querySelector<HTMLInputElement>('input[data-slot="input"]');
-          input?.focus();
-          input?.select();
-        }),
-      scrollToBottom: () =>
-        Effect.sync(() => {
-          const scroller = container.querySelector<HTMLElement>('.log-entries');
-          if (scroller) {
-            scroller.scrollTop = scroller.scrollHeight;
-          }
-        }),
-      isScrolledToBottom: () =>
-        Effect.sync(() => {
-          const scroller = container.querySelector<HTMLElement>('.log-entries');
-          if (!scroller) return true;
-          return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 16;
-        }),
-      copyText: (text) =>
-        Effect.tryPromise({
-          try: async () => {
-            if (typeof navigator === 'undefined' || !navigator.clipboard?.writeText) return false;
-            await navigator.clipboard.writeText(text);
-            return true;
-          },
-          catch: () => false,
-        }).pipe(Effect.catch(() => Effect.succeed(false))),
-    });
 }

@@ -7,11 +7,11 @@ import {
   KeyMigrationStatusSchema,
   type KeyMigrationValue,
 } from '@mcp-gateway/mainview/effect-app/schemas';
-import { buttonClasses, renderModal } from '@mcp-gateway/mainview/effect-ui';
-import { type Locale, type Translate, translator } from '@mcp-gateway/shared/i18n';
+import { buttonClasses, LocaleSchema, renderModal } from '@mcp-gateway/mainview/effect-ui';
+import { type Translate, translator } from '@mcp-gateway/shared/i18n';
 
 export const KeyMigrationProps = Schema.Struct({
-  locale: Schema.String,
+  locale: LocaleSchema,
   slots: KeyMigrationSchema,
   dirty: Schema.Boolean,
   busy: Schema.Boolean,
@@ -79,7 +79,7 @@ export const KeyMigrationView = Html.component({
     ClickedClose: ($) => $.emit(KeyMigrationEvent.RequestedClose()),
   },
   view: (h, model) => {
-    const t = translator(h.props.locale as Locale);
+    const t = translator(h.props.locale);
     const { slots, dirty, busy, status, error, filename } = h.props;
     const effectiveStep: 'what' | 'confirm' | 'done' | 'failed' =
       !model.dismissedResult && status === 'done'
@@ -113,11 +113,16 @@ export const KeyMigrationView = Html.component({
               h.h3.children(t('keys.list')),
               h.ul.children(
                 ...shown.map((name) =>
-                  h.li.children(
-                    h.span.children(name),
-                    ' ',
-                    h.code.class('masked-secret').attr('aria-hidden', 'true').children('••••••••'),
-                  ),
+                  h.li
+                    .key(name)
+                    .children(
+                      h.span.children(name),
+                      ' ',
+                      h.code
+                        .class('masked-secret')
+                        .attr('aria-hidden', 'true')
+                        .children('••••••••'),
+                    ),
                 ),
               ),
               h.div.class('dialog-actions').children(

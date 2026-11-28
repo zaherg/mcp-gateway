@@ -1,4 +1,4 @@
-export { richMessage } from '@mcp-gateway/mainview/effect-ui/i18n';
+export { LocaleSchema, richMessage } from '@mcp-gateway/mainview/effect-ui/i18n';
 export {
   iconActivity,
   iconAlertTriangle,
@@ -45,6 +45,7 @@ export {
   renderToggleRow,
   SELECT_CLASSES,
   SELECT_OPTION_CLASSES,
+  SELECT_WRAPPER_BASE_CLASSES,
   SELECT_WRAPPER_CLASSES,
   SWITCH_ROOT_CLASSES,
   SWITCH_THUMB_CLASSES,

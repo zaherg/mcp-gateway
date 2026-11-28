@@ -4,6 +4,7 @@ import { assert, describe, it } from '@effect/vitest';
 import { Redacted, Schema } from 'effect';
 
 import {
+  GenerateSettingsToken,
   SettingsEvent,
   SettingsMessage,
   SettingsModel,
@@ -133,23 +134,19 @@ describe('SettingsView Story tests', () => {
       .expectNone();
   });
 
-  it('generates a 64-char token and emits ReplaceTokenWithLiteral', () => {
+  it('dispatches GenerateSettingsToken command and emits ReplaceTokenWithLiteral deterministically', () => {
     const story = Story.start(SettingsView, defaultProps);
-    story.send(SettingsMessage.ClickedGenerateToken());
-    const emitted = story.current.emitted[0];
-    if (
-      emitted?._tag === 'CommittedGatewayMutation' &&
-      emitted.mutation._tag === 'ReplaceTokenWithLiteral'
-    ) {
-      assert.strictEqual(
-        Redacted.value(story.model.tokenInput),
-        Redacted.value(emitted.mutation.token),
+    const deterministicToken = Redacted.make('f'.repeat(64));
+    story
+      .send(SettingsMessage.ClickedGenerateToken())
+      .expectExact(GenerateSettingsToken.make())
+      .resolve(GenerateSettingsToken, SettingsMessage.GeneratedToken({ token: deterministicToken }))
+      .emitted(
+        SettingsEvent.CommittedGatewayMutation({
+          mutation: GatewayMutation.ReplaceTokenWithLiteral({ token: deterministicToken }),
+        }),
       );
-      assert.isAtLeast(Redacted.value(emitted.mutation.token).length, 32);
-      story.emitted(emitted);
-    } else {
-      assert.fail('expected ReplaceTokenWithLiteral event');
-    }
+    assert.strictEqual(Redacted.value(story.model.tokenInput), 'f'.repeat(64));
   });
 
   it('redacts token values across Props, Model, Messages, Events, and GatewayMutation wire frames', () => {
@@ -184,6 +181,10 @@ describe('SettingsView Story tests', () => {
       SettingsMessage,
       SettingsMessage.ChangedToken({ value: redactedSecret }),
     );
+    const encodedGeneratedMessage = encodeRedacted(
+      SettingsMessage,
+      SettingsMessage.GeneratedToken({ token: redactedSecret }),
+    );
     const encodedEvent = encodeRedacted(
       SettingsEvent,
       SettingsEvent.CommittedGatewayMutation({
@@ -199,11 +200,72 @@ describe('SettingsView Story tests', () => {
       encodedProps,
       encodedModel,
       encodedMessage,
+      encodedGeneratedMessage,
       encodedEvent,
       ...encodedMutations,
     ]) {
       assert.notInclude(payload, secret);
       assert.include(payload, '"~redacted":true');
     }
+  });
+
+  it('boundedly explores settings edits, commits, preferences, and resync while preserving token redaction', () => {
+    const savedSecret = 'b'.repeat(64);
+    const typedSecret = 'settings-typed-secret-never-leak-12345';
+    const generatedSecret = 'settings-generated-secret-never-leak-67890';
+    const encodeModel = Schema.encodeUnknownSync(
+      MessageLog.redactSchema(SettingsModel) as Schema.Codec<unknown>,
+    );
+    const encodeEvent = Schema.encodeUnknownSync(
+      MessageLog.redactSchema(SettingsEvent) as Schema.Codec<unknown>,
+    );
+
+    const explored = Story.explore(SettingsView, defaultProps, {
+      messages: [
+        SettingsMessage.ChangedHost({ value: '192.168.1.25' }),
+        SettingsMessage.CommittedHost(),
+        SettingsMessage.ChangedPort({ value: '9090' }),
+        SettingsMessage.CommittedPort(),
+        SettingsMessage.ChangedPeers({ value: '10.0.0.0/24' }),
+        SettingsMessage.CommittedPeers(),
+        SettingsMessage.ChangedToken({ value: Redacted.make(typedSecret) }),
+        SettingsMessage.CommittedToken(),
+        SettingsMessage.ClickedGenerateToken(),
+        SettingsMessage.ChangedAppearance({ value: 'dark' }),
+        SettingsMessage.ChangedLanguage({ value: 'fr_FR' }),
+        SettingsMessage.SyncedSavedConfig(),
+      ],
+      commands: [
+        [
+          GenerateSettingsToken,
+          {
+            success: () => [
+              SettingsMessage.GeneratedToken({ token: Redacted.make(generatedSecret) }),
+            ],
+          },
+        ],
+      ],
+      depth: 2,
+      invariant: ({ model, emitted }) => {
+        const serialized = JSON.stringify(encodeModel(model));
+        assert.notInclude(serialized, savedSecret);
+        assert.notInclude(serialized, typedSecret);
+        assert.notInclude(serialized, generatedSecret);
+        for (const event of emitted) {
+          const serializedEvent = JSON.stringify(encodeEvent(event));
+          assert.notInclude(serializedEvent, savedSecret);
+          assert.notInclude(serializedEvent, typedSecret);
+          assert.notInclude(serializedEvent, generatedSecret);
+        }
+      },
+      transition: ({ message, after }) => {
+        if (message._tag === 'SyncedSavedConfig') {
+          assert.strictEqual(after.hostInput, defaultProps.savedConfig?.host);
+          assert.strictEqual(after.portInput, String(defaultProps.savedConfig?.port));
+          assert.strictEqual(Redacted.value(after.tokenInput), savedSecret);
+        }
+      },
+    });
+    assert.isAbove(explored.states, 10);
   });
 });

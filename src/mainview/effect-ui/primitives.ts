@@ -42,11 +42,11 @@ export const buttonClasses = (
     : `${BUTTON_BASE} ${BUTTON_VARIANTS[variant]} ${BUTTON_SIZES[size]}`;
 
 export const ALERT_BASE =
-  "group/alert relative grid w-full gap-0.5 rounded-[10px] px-3 py-2.5 text-left text-mac-body has-[>svg]:grid-cols-[auto_1fr] has-[>svg]:gap-x-2.5 *:[svg]:row-span-2 *:[svg]:translate-y-px *:[svg:not([class*='size-'])]:size-4 mb-4 flex items-center gap-2.5 text-mac-label";
+  "group/alert relative mb-4 flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2.5 text-left text-mac-body text-mac-label *:[svg:not([class*='size-'])]:size-4";
 
 const ALERT_VARIANTS: Record<AlertKind, string> = {
   error:
-    'bg-mac-red/8 text-mac-red shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--mac-red)_30%,transparent)] *:[svg]:text-current',
+    'bg-mac-red/8 shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--mac-red)_30%,transparent)] *:[svg]:text-current',
   warning:
     'bg-mac-yellow/12 text-mac-label shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--mac-yellow)_35%,transparent)] *:[svg]:text-mac-orange',
   success:
@@ -72,8 +72,10 @@ export const LABEL_CLASSES = `${LABEL_BASE_CLASSES} font-semibold`;
 export const SELECT_CLASSES =
   'h-9 w-full min-w-0 cursor-default appearance-none rounded-lg bg-mac-control py-0 pr-7 pl-3 text-mac-body font-medium text-mac-label outline-none select-none focus-visible:mac-focus-ring active:bg-mac-control-pressed disabled:pointer-events-none aria-invalid:mac-focus-ring data-[size=md]:h-7 data-[size=md]:rounded-mac-control data-[size=sm]:h-5 data-[size=sm]:rounded-[5px] data-[size=sm]:pl-2.5 data-[size=sm]:text-mac-subheadline';
 
-export const SELECT_WRAPPER_CLASSES =
-  'group/native-select relative w-full has-[select:disabled]:opacity-50';
+export const SELECT_WRAPPER_BASE_CLASSES =
+  'group/native-select relative has-[select:disabled]:opacity-50';
+
+export const SELECT_WRAPPER_CLASSES = `${SELECT_WRAPPER_BASE_CLASSES} w-full`;
 
 export const SELECT_OPTION_CLASSES = 'bg-[Canvas] text-[CanvasText]';
 
@@ -129,12 +131,17 @@ export const renderNativeSelect = <M, C extends View.Children<M>>(
     readonly ariaLabel?: string;
     readonly ariaDescribedBy?: string;
     readonly size?: 'sm' | 'md' | 'default';
+    readonly width?: 'full' | 'fit';
     readonly wrapperClass?: string;
     readonly onChange: (value: string) => M;
     readonly options: C;
   },
 ) => {
   const size = options.size ?? 'default';
+  const widthClass = options.width === 'fit' ? 'w-fit' : 'w-full';
+  const wrapperClasses = options.wrapperClass
+    ? `${SELECT_WRAPPER_BASE_CLASSES} ${widthClass} ${options.wrapperClass}`
+    : `${SELECT_WRAPPER_BASE_CLASSES} ${widthClass}`;
   let select = h.select
     .attr('data-slot', 'native-select')
     .attr('data-size', size)
@@ -147,11 +154,7 @@ export const renderNativeSelect = <M, C extends View.Children<M>>(
   if (options.ariaDescribedBy) select = select.attr('aria-describedby', options.ariaDescribedBy);
 
   return h.div
-    .class(
-      options.wrapperClass
-        ? `${SELECT_WRAPPER_CLASSES} ${options.wrapperClass}`
-        : SELECT_WRAPPER_CLASSES,
-    )
+    .class(wrapperClasses)
     .attr('data-slot', 'native-select-wrapper')
     .attr('data-size', size)
     .children(select.children(options.options), iconChevronsUpDown(h));
@@ -163,16 +166,19 @@ export const renderField = <M, R = never>(
     readonly id: string;
     readonly label: string;
     readonly help?: string;
+    readonly labelFor?: boolean;
     readonly layout?: 'stack' | 'row';
     readonly control: View.Input<M, R>;
   },
 ) => {
-  const labelNode = h.label
-    .attr('for', options.id)
+  let labelBuilder = h.label
     .attr('id', `${options.id}-label`)
     .attr('data-slot', 'label')
-    .class(LABEL_CLASSES)
-    .children(options.label);
+    .class(LABEL_CLASSES);
+  if (options.labelFor !== false) {
+    labelBuilder = labelBuilder.attr('for', options.id);
+  }
+  const labelNode = labelBuilder.children(options.label);
   const helpNode = options.help
     ? h.small.attr('id', `${options.id}-help`).children(options.help)
     : null;

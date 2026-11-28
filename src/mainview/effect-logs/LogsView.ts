@@ -15,11 +15,11 @@ import {
   INPUT_CLASSES,
   iconArrowDownToLine,
   iconCheck,
-  iconChevronsUpDown,
   iconCircleHelp,
   iconCopy,
+  LocaleSchema,
   renderAlert,
-  SELECT_CLASSES,
+  renderNativeSelect,
   SELECT_OPTION_CLASSES,
 } from '@mcp-gateway/mainview/effect-ui';
 import { type Locale, translator } from '@mcp-gateway/shared/i18n';
@@ -50,7 +50,7 @@ export const PollPhaseSchema = Schema.Literals(['polling', 'clearing']);
 
 export const LogsProps = Schema.Struct({
   servers: Schema.Array(Schema.String),
-  locale: Schema.String,
+  locale: LocaleSchema,
 });
 
 export const LogsModel = Schema.Struct({
@@ -213,7 +213,7 @@ export const LogsCommandLayers = Layer.mergeAll(
   CheckScrollBottom.layer,
 );
 
-const resolveTranslator = (locale: string) => translator(locale as Locale);
+const resolveTranslator = (locale: Locale) => translator(locale);
 
 const initialModel = (): typeof LogsModel.Type => ({
   entries: [...EMPTY_LOG_BUFFER.entries],
@@ -255,7 +255,7 @@ export const LogsView = Html.component({
         page,
       );
       const nextStep = $.evolve({
-        entries: [...nextBuffer.entries],
+        entries: nextBuffer.entries,
         cursor: nextBuffer.cursor,
         bufferGeneration: nextBuffer.bufferGeneration,
         gap: nextBuffer.gap,
@@ -356,60 +356,43 @@ export const LogsView = Html.component({
       .attr('aria-label', t('logs.title'))
       .children(
         h.div.class('log-toolbar').children(
-          h.div
-            .class('group/native-select relative w-fit shrink-0')
-            .attr('data-slot', 'native-select-wrapper')
-            .attr('data-size', 'default')
-            .children(
-              h.select
-                .class(SELECT_CLASSES)
-                .attr('data-slot', 'native-select')
-                .attr('data-size', 'default')
-                .attr('aria-label', t('logs.level'))
-                .value(model.level)
-                .on('change', ({ value }) => LogsMessage.ChangedLevel({ level: value }))
-                .children(
-                  h.option
-                    .attr('value', '')
-                    .class(SELECT_OPTION_CLASSES)
-                    .children(t('logs.allLevels')),
-                  ...LOG_LEVELS.map((value) =>
-                    h.option
-                      .key(value)
-                      .attr('value', value)
-                      .class(SELECT_OPTION_CLASSES)
-                      .children(value),
-                  ),
-                ),
-              iconChevronsUpDown(h),
-            ),
-          h.div
-            .class('group/native-select relative w-fit max-w-44 shrink-0')
-            .attr('data-slot', 'native-select-wrapper')
-            .attr('data-size', 'default')
-            .children(
-              h.select
-                .class(SELECT_CLASSES)
-                .attr('data-slot', 'native-select')
-                .attr('data-size', 'default')
-                .attr('aria-label', t('logs.server'))
-                .value(model.server)
-                .on('change', ({ value }) => LogsMessage.ChangedServer({ server: value }))
-                .children(
-                  h.option
-                    .attr('value', '')
-                    .class(SELECT_OPTION_CLASSES)
-                    .children(t('logs.allServers')),
-                  ...serverOptions.map((value) =>
-                    h.option
-                      .key(value)
-                      .attr('value', value)
-                      .class(SELECT_OPTION_CLASSES)
-                      .children(value),
-                  ),
-                ),
-              iconChevronsUpDown(h),
-            ),
+          renderNativeSelect(h, {
+            value: model.level,
+            ariaLabel: t('logs.level'),
+            width: 'fit',
+            wrapperClass: 'shrink-0',
+            onChange: (level) => LogsMessage.ChangedLevel({ level }),
+            options: [
+              h.option.attr('value', '').class(SELECT_OPTION_CLASSES).children(t('logs.allLevels')),
+              ...LOG_LEVELS.map((value) =>
+                h.option
+                  .key(value)
+                  .attr('value', value)
+                  .class(SELECT_OPTION_CLASSES)
+                  .children(value),
+              ),
+            ],
+          }),
+          renderNativeSelect(h, {
+            value: model.server,
+            ariaLabel: t('logs.server'),
+            width: 'fit',
+            wrapperClass: 'max-w-44 shrink-0',
+            onChange: (server) => LogsMessage.ChangedServer({ server }),
+            options: [
+              h.option
+                .attr('value', '')
+                .class(SELECT_OPTION_CLASSES)
+                .children(t('logs.allServers')),
+              ...serverOptions.map((value) =>
+                h.option
+                  .key(value)
+                  .attr('value', value)
+                  .class(SELECT_OPTION_CLASSES)
+                  .children(value),
+              ),
+            ],
+          }),
           h.div.class('min-w-28 flex-1').children(
             h.input
               .class(INPUT_CLASSES)

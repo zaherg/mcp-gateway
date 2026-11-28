@@ -19,7 +19,7 @@ import {
   editConfigDocument,
   SAFE_NAME,
 } from '@mcp-gateway/shared/config-document';
-import type { Translate } from '@mcp-gateway/shared/i18n';
+import type { Locale, Translate } from '@mcp-gateway/shared/i18n';
 import type { ConfigFile } from '@mcp-gateway/shared/types';
 
 export interface Rename {
@@ -46,7 +46,10 @@ export interface DerivedAppState {
   readonly updatesTriggerDisabled: boolean;
 }
 
-export const initialAppModel = (locale = 'en_US', title = 'MCP Gateway'): AppModelValue => ({
+export const initialAppModel = (
+  locale: Locale = 'en_US',
+  title = 'MCP Gateway',
+): AppModelValue => ({
   locale,
   title,
   snapshot: null,
@@ -58,6 +61,7 @@ export const initialAppModel = (locale = 'en_US', title = 'MCP Gateway'): AppMod
   busy: false,
   updateBusy: false,
   activeModal: null,
+  serverEditorOpenSeq: 0,
   editorError: null,
   keyMigrationStatus: 'idle',
   lastImport: null,
@@ -197,66 +201,71 @@ export const computeDerivedState = (
 export const resolveUpdatesRequest = (
   model: AppModelValue,
   changelogText: string,
-): { readonly model: AppModelValue; readonly focusUpdatesTrigger: boolean } => {
+): AppModelValue => {
   const derived = computeDerivedState(model, changelogText);
   if (derived.updateRestarting) {
     const nextModal = model.activeModal?.kind === 'updates' ? null : model.activeModal;
     if (nextModal === model.activeModal && !model.updatesRequested) {
-      return { model, focusUpdatesTrigger: false };
+      return model;
     }
-    return {
-      model: { ...model, activeModal: nextModal, updatesRequested: false },
-      focusUpdatesTrigger: false,
-    };
+    return { ...model, activeModal: nextModal, updatesRequested: false };
   }
   if (!model.updatesRequested || !derived.updateState) {
-    return { model, focusUpdatesTrigger: false };
+    return model;
   }
   if (!derived.updateState.supported) {
     const nextModal = model.activeModal?.kind === 'updates' ? null : model.activeModal;
-    return {
-      model: { ...model, activeModal: nextModal, updatesRequested: false },
-      focusUpdatesTrigger: false,
-    };
+    return { ...model, activeModal: nextModal, updatesRequested: false };
   }
   if (derived.updatesOpen) {
-    return {
-      model: { ...model, updatesRequested: false },
-      focusUpdatesTrigger: false,
-    };
+    return { ...model, updatesRequested: false };
   }
   if (derived.updatesTriggerDisabled) {
-    return { model, focusUpdatesTrigger: false };
+    return model;
   }
   return {
-    model: {
-      ...model,
-      updatesRequested: false,
-      activeModal: { kind: 'updates' },
-    },
-    focusUpdatesTrigger: true,
+    ...model,
+    updatesRequested: false,
+    activeModal: { kind: 'updates' },
   };
 };
+
+export type CommitPayloadResult =
+  | {
+      readonly ok: true;
+      readonly text: Redacted.Redacted<string>;
+      readonly expectedRevision: string;
+    }
+  | { readonly ok: false; readonly error: string }
+  | null;
 
 export const buildCommitPayload = (
   model: AppModelValue,
   nextConfig: ConfigFile,
   rename?: Rename,
-): { readonly text: Redacted.Redacted<string>; readonly expectedRevision: string } | null => {
+): CommitPayloadResult => {
   if (!model.doc) return null;
   const gateway = model.snapshot?.gateway;
   const format: ConfigFormat = gateway?.configFormat ?? 'json';
   const baseText = gateway ? Redacted.value(gateway.configText) : Redacted.value(model.doc.text);
-  const nextText = editConfigDocument(
-    baseText,
-    nextConfig,
-    format,
-    rename ? { path: ['mcpServers'], ...rename } : undefined,
-  );
-  return {
-    text: Redacted.make(nextText),
-    expectedRevision: gateway?.revision ?? model.doc.revision,
-  };
+  try {
+    const nextText = editConfigDocument(
+      baseText,
+      nextConfig,
+      format,
+      rename ? { path: ['mcpServers'], ...rename } : undefined,
+    );
+    return {
+      ok: true,
+      text: Redacted.make(nextText),
+      expectedRevision: gateway?.revision ?? model.doc.revision,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 };
 
 export type ServerApplyPlan =

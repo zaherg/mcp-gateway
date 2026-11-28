@@ -120,6 +120,29 @@ describe('OverviewView Story tests', () => {
     assert.strictEqual(story.model.test?.message, t('overview.testUnavailable'));
   });
 
+  it('drops an already-outdated TestServer completion immediately when gateway stops in flight', () => {
+    const story = Story.start(OverviewView, defaultProps);
+    story
+      .send(OverviewMessage.ClickedTestServer({ name: 'bear' }))
+      .expectExact(TestServer.make({ name: 'bear', expectedRevision: 'rev-1' }));
+
+    // Gateway stops while TestServer is still in flight.
+    story.props({ ...defaultProps, running: false });
+    story.resolve(
+      TestServer,
+      OverviewMessage.TestServerCompleted({
+        name: 'bear',
+        revision: 'rev-1',
+        outcome: TestServerOutcome.Passed({ protocolVersion: '2025-11-25' }),
+      }),
+    );
+    assert.isNull(story.model.test);
+
+    // Restarting on the same revision must not resurface a stale banner.
+    story.props({ ...defaultProps, running: true });
+    assert.isNull(story.model.test);
+  });
+
   it('tracks copied client config badge and expires only matching server name', () => {
     const story = Story.start(OverviewView, defaultProps);
 

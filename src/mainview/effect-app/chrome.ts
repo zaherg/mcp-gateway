@@ -92,14 +92,14 @@ export const renderSidebarUpdates = <M>(
   options: {
     readonly updateState: UpdateStatusValue | undefined;
     readonly disabled: boolean;
-    readonly locale: string;
+    readonly locale: Locale;
     readonly onOpen: M;
     readonly onRestart?: M;
   },
 ) => {
   const { updateState, disabled, locale, onOpen, onRestart } = options;
   if (!updateState?.supported) return null;
-  const t = translator(locale as Locale);
+  const t = translator(locale);
   const { title, detail, ariaLabel, announcement } = describeUpdate(updateState, t);
   const isReady = updateState.phase === 'ready';
   const useRestart = isReady && onRestart !== undefined;
@@ -134,13 +134,13 @@ export const renderGatewayToggle = <M>(
     readonly gateway: GatewaySnapshotRedacted | undefined;
     readonly dirty: boolean;
     readonly configurationLocked: boolean;
-    readonly locale: string;
+    readonly locale: Locale;
     readonly onStart: M;
     readonly onStop: M;
   },
 ) => {
   const { gateway, dirty, configurationLocked, locale, onStart, onStop } = options;
-  const t = translator(locale as Locale);
+  const t = translator(locale);
   const running = gateway?.running ?? false;
   // An unreadable stored key is retried by Start, for example after unlocking Keychain.
   const blocked =
@@ -183,7 +183,7 @@ export const renderConfigBlockerBar = <M>(
     readonly configError: VisibleErrorValue | null | undefined;
     readonly stale: boolean;
     readonly disabled?: boolean;
-    readonly locale: string;
+    readonly locale: Locale;
     readonly onOpenRawConfig: M;
     readonly onReloadFromDisk: M;
   },
@@ -197,7 +197,7 @@ export const renderConfigBlockerBar = <M>(
     onReloadFromDisk,
   } = options;
   if (!configError && !stale) return null;
-  const t = translator(locale as Locale);
+  const t = translator(locale);
   const isConfigError = Boolean(configError);
   const message =
     configError !== null && configError !== undefined
@@ -246,7 +246,7 @@ export const renderShell = <M, R1 = never, R2 = never, R3 = never, R4 = never>(
     readonly tab: Tab;
     readonly title: string;
     readonly snapshot: AppSnapshotRedacted | null;
-    readonly locale: string;
+    readonly locale: Locale;
     readonly sidebarUpdates: View.Input<M, R1>;
     readonly gatewayToggle: View.Input<M, R2>;
     readonly children: View.Input<M, R3>;
@@ -265,7 +265,7 @@ export const renderShell = <M, R1 = never, R2 = never, R3 = never, R4 = never>(
     dialogs,
     onSelectTab,
   } = options;
-  const t = translator(locale as Locale);
+  const t = translator(locale);
   const [networkTitle, networkDetail] = networkNotice(snapshot);
   const headingTitle =
     tab === 'overview'

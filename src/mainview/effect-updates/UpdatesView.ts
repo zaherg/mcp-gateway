@@ -9,10 +9,11 @@ import {
 import {
   buttonClasses,
   iconCircleHelp,
+  LocaleSchema,
   renderAlert,
   renderToggleRow,
 } from '@mcp-gateway/mainview/effect-ui';
-import { type Locale, type Translate, translator } from '@mcp-gateway/shared/i18n';
+import { type Translate, translator } from '@mcp-gateway/shared/i18n';
 
 // The clock format follows the macOS region, not the interface language, as it did before.
 export const updateCheckedLabel = (value: string | null, t: Translate): string => {
@@ -56,7 +57,7 @@ export const updateStatusText = (update: UpdateStatusValue, t: Translate): strin
 };
 
 export const UpdatesProps = Schema.Struct({
-  locale: Schema.String,
+  locale: LocaleSchema,
   updateState: UpdateStatusSchema,
   busy: Schema.Boolean,
   updateBusy: Schema.Boolean,
@@ -64,9 +65,7 @@ export const UpdatesProps = Schema.Struct({
   error: Schema.NullOr(Schema.String),
 });
 
-export const UpdatesModel = Schema.Struct({
-  autoChecked: Schema.Boolean,
-});
+export const UpdatesModel = Schema.Struct({});
 
 export const UpdatesMessage = UiSchema.TaggedEnum({
   DismissedError: {},
@@ -92,7 +91,7 @@ export const UpdatesView = Html.component({
 }).make({
   init: ($) => {
     const shouldAutoCheck = $.props.updateState.supported && $.props.updateState.phase === 'idle';
-    const step = $.set({ autoChecked: shouldAutoCheck });
+    const step = $.set({});
     return shouldAutoCheck ? step.emit(UpdatesEvent.RequestedCheck()) : step;
   },
   update: {
@@ -107,7 +106,7 @@ export const UpdatesView = Html.component({
   },
   view: (h) => {
     const { updateState, busy, updateBusy, configurationLocked, error } = h.props;
-    const t = translator(h.props.locale as Locale);
+    const t = translator(h.props.locale);
     const updateReady = updateState.phase === 'ready';
     const updateAvailable =
       updateState.phase === 'available' || Boolean(updateState.availableVersion);

@@ -15,7 +15,10 @@ export default defineConfig({
   plugins: [
     tailwindcss(),
     // Dev-only Effect UI DevTools MCP server, non-blocking overlay attach, and HMR state preservation.
-    DevToolsVite.plugin({ dispatch: true, overlay: { position: 'BottomRight' } }),
+    DevToolsVite.plugin({
+      dispatch: process.env.EFFECT_UI_DEVTOOLS_DISPATCH === '1',
+      overlay: { position: 'BottomRight' },
+    }),
     {
       // Vite nonces its refresh preamble and injected styles; packaged CSP is unchanged.
       name: 'development-csp',

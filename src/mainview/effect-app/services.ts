@@ -91,11 +91,16 @@ export interface GatewayRpcShape {
   readonly setUnsavedRawConfigChecker: (checker: () => boolean) => Effect.Effect<void>;
 }
 
-const wrapCall = <T, U = T>(
+function wrapCall<T>(call: () => Promise<AppResult<T>>): Effect.Effect<RpcOutcome<T>>;
+function wrapCall<T, U>(
   call: () => Promise<AppResult<T>>,
-  mapValue: (value: T) => U = (value) => value as unknown as U,
-): Effect.Effect<RpcOutcome<U>> =>
-  Effect.tryPromise({
+  mapValue: (value: T) => U,
+): Effect.Effect<RpcOutcome<U>>;
+function wrapCall<T, U>(
+  call: () => Promise<AppResult<T>>,
+  mapValue?: (value: T) => U,
+): Effect.Effect<RpcOutcome<T | U>> {
+  return Effect.tryPromise({
     try: call,
     catch: () => ({
       kind: 'bridge' as const,
@@ -104,9 +109,9 @@ const wrapCall = <T, U = T>(
     }),
   }).pipe(
     Effect.match({
-      onSuccess: (result): RpcOutcome<U> =>
+      onSuccess: (result): RpcOutcome<T | U> =>
         result.ok
-          ? { ok: true, value: mapValue(result.value) }
+          ? { ok: true, value: mapValue ? mapValue(result.value) : result.value }
           : {
               ok: false,
               error: {
@@ -115,28 +120,36 @@ const wrapCall = <T, U = T>(
                 message: result.error.message,
               },
             },
-      onFailure: (error): RpcOutcome<U> => ({ ok: false, error }),
+      onFailure: (error): RpcOutcome<T | U> => ({ ok: false, error }),
     }),
   );
+}
 
-const streamFromSubscribe = <A, B = A>(
+function streamFromSubscribe<A>(
   subscribe: ((listener: (value: A) => void) => () => void) | undefined,
-  mapValue: (value: A) => B = (value) => value as unknown as B,
-): Stream.Stream<B> => {
+): Stream.Stream<A>;
+function streamFromSubscribe<A, B>(
+  subscribe: ((listener: (value: A) => void) => () => void) | undefined,
+  mapValue: (value: A) => B,
+): Stream.Stream<B>;
+function streamFromSubscribe<A, B>(
+  subscribe: ((listener: (value: A) => void) => () => void) | undefined,
+  mapValue?: (value: A) => B,
+): Stream.Stream<A | B> {
   if (!subscribe) return Stream.never;
-  return Stream.callback<B>(
+  return Stream.callback<A | B>(
     Effect.fnUntraced(function* (queue) {
       yield* Effect.acquireRelease(
         Effect.sync(() =>
           subscribe((value) => {
-            Queue.offerUnsafe(queue, mapValue(value));
+            Queue.offerUnsafe(queue, mapValue ? mapValue(value) : value);
           }),
         ),
         (unsubscribe) => Effect.sync(() => unsubscribe()),
       );
     }),
   );
-};
+}
 
 export class GatewayRpc extends Context.Service<GatewayRpc, GatewayRpcShape>()(
   'mcp-gateway/GatewayRpc',
@@ -264,7 +277,6 @@ export interface WindowEnvShape {
   readonly syncAppearance: (preference: AppearancePreference) => Effect.Effect<void>;
   readonly subscribeColorScheme: Stream.Stream<'light' | 'dark'>;
   readonly scrollMainTop: () => Effect.Effect<void>;
-  readonly focusUpdatesTrigger: () => Effect.Effect<void>;
 }
 
 const resolveSystemScheme = (): 'light' | 'dark' => {
@@ -322,11 +334,6 @@ export class WindowEnv extends Context.Service<WindowEnv, WindowEnvShape>()(
         const main = document.querySelector<HTMLElement>('main[data-tab]');
         if (main) main.scrollTop = 0;
       }),
-    focusUpdatesTrigger: () =>
-      Effect.sync(() => {
-        if (typeof document === 'undefined') return;
-        document.querySelector<HTMLElement>('[data-sidebar-updates-trigger]')?.focus();
-      }),
   });
 
   static readonly test = (overrides: Partial<WindowEnvShape> = {}) =>
@@ -337,7 +344,6 @@ export class WindowEnv extends Context.Service<WindowEnv, WindowEnvShape>()(
       syncAppearance: () => Effect.void,
       subscribeColorScheme: Stream.never,
       scrollMainTop: () => Effect.void,
-      focusUpdatesTrigger: () => Effect.void,
       ...overrides,
     });
 }

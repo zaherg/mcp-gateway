@@ -54,7 +54,13 @@ import {
   applyGatewayMutation,
   GatewayMutation,
 } from '@mcp-gateway/mainview/effect-settings/services';
-import { iconActivity, renderModal } from '@mcp-gateway/mainview/effect-ui';
+import {
+  alertClasses,
+  buttonClasses,
+  iconActivity,
+  LocaleSchema,
+  renderModal,
+} from '@mcp-gateway/mainview/effect-ui';
 import { UpdatesView } from '@mcp-gateway/mainview/effect-updates/UpdatesView';
 import {
   CATALOG_LOCALES,
@@ -104,7 +110,7 @@ export const UpdateOpActionSchema = UiSchema.TaggedEnum({
 export const DiscardPurposeSchema = Schema.Literals(['discardRaw', 'reloadMenu', 'updateRestart']);
 
 export const AppMessage = UiSchema.TaggedEnum({
-  Bootstrapped: { locale: Schema.String, title: Schema.String },
+  Bootstrapped: { locale: LocaleSchema, title: Schema.String },
   InitialSnapshotLoaded: {
     startedGeneration: Schema.Number,
     startedEditSeq: Schema.Number,
@@ -529,19 +535,17 @@ export class SyncWindowDom extends Command.Service<SyncWindowDom>()(
       langTag: Schema.NullOr(Schema.String),
       appearance: Schema.NullOr(AppearancePreferenceSchema),
       scrollTop: Schema.Boolean,
-      focusUpdatesTrigger: Schema.Boolean,
     },
   },
 ) {
   static readonly layer = this.toLayer(
     Effect.gen(function* () {
       const env = yield* WindowEnv;
-      return ({ langTag, appearance, scrollTop, focusUpdatesTrigger }) =>
+      return ({ langTag, appearance, scrollTop }) =>
         Effect.gen(function* () {
           if (langTag !== null) yield* env.syncLang(langTag);
           if (appearance !== null) yield* env.syncAppearance(appearance);
           if (scrollTop) yield* env.scrollMainTop();
-          if (focusUpdatesTrigger) yield* env.focusUpdatesTrigger();
         }).pipe(Effect.as(Component.noop));
     }),
   );
@@ -570,33 +574,34 @@ export const AppLiveLayers = Layer.mergeAll(
   ),
 );
 
-const resolveTranslator = (locale: string) => translator(locale as Locale);
+const resolveTranslator = (locale: Locale) => translator(locale);
 
 const finishTransition = (
   prev: AppModelValue,
   nextModel: AppModelValue,
   options: { readonly scrollTop?: boolean } = {},
 ) => {
-  const { model: resolved, focusUpdatesTrigger } = resolveUpdatesRequest(nextModel, changelog);
-  const commands: Array<Command.Command<typeof AppMessage.Type, never>> = [];
+  const resolved = resolveUpdatesRequest(nextModel, changelog);
+  const commands: Array<
+    Command.Command<typeof AppMessage.Type | Component.Noop, SyncUnsavedChecker | SyncWindowDom>
+  > = [];
   const prevDirty = prev.doc?.dirty ?? false;
   const nextDirty = resolved.doc?.dirty ?? false;
   if (prevDirty !== nextDirty) {
-    commands.push(SyncUnsavedChecker.make({ dirty: nextDirty }) as never);
+    commands.push(SyncUnsavedChecker.make({ dirty: nextDirty }));
   }
-  const langTag = prev.locale !== resolved.locale ? localeTag(resolved.locale as Locale) : null;
+  const langTag = prev.locale !== resolved.locale ? localeTag(resolved.locale) : null;
   const prevAppearance = prev.snapshot?.appearance ?? 'system';
   const nextAppearance = resolved.snapshot?.appearance ?? 'system';
   const appearance = prevAppearance !== nextAppearance ? nextAppearance : null;
   const scrollTop = Boolean(options.scrollTop);
-  if (langTag !== null || appearance !== null || scrollTop || focusUpdatesTrigger) {
+  if (langTag !== null || appearance !== null || scrollTop) {
     commands.push(
       SyncWindowDom.make({
         langTag,
         appearance,
         scrollTop,
-        focusUpdatesTrigger,
-      }) as never,
+      }),
     );
   }
   return { model: resolved, commands };
@@ -722,7 +727,6 @@ export const AppView = Html.component({
           langTag: null,
           appearance: 'system',
           scrollTop: false,
-          focusUpdatesTrigger: false,
         }),
       ),
     MenuCommandReceived: ($, { command }) => {
@@ -765,6 +769,7 @@ export const AppView = Html.component({
           const nextBase: AppModelValue = {
             ...$.model,
             tab: 'overview',
+            serverEditorOpenSeq: $.model.serverEditorOpenSeq + 1,
             editorError: null,
             activeModal: { kind: 'serverEditor', editor: emptyEditor() },
           };
@@ -891,7 +896,9 @@ export const AppView = Html.component({
         return $.run(ReloadSnapshotFromMenu.make());
       }
       // purpose === 'updateRestart'
-      if (derived.updateRestarting || $.model.snapshot?.update.phase !== 'ready') return $.model;
+      if ($.model.busy || derived.updateRestarting || $.model.snapshot?.update.phase !== 'ready') {
+        return $.model;
+      }
       const nextBase: AppModelValue = {
         ...$.model,
         activeModal: $.model.activeModal?.kind === 'updates' ? null : $.model.activeModal,
@@ -919,11 +926,12 @@ export const AppView = Html.component({
     DeleteServerConfirmed: ($, { name, ok, confirmed }) => {
       if (!ok || !confirmed) return $.model;
       const derived = computeDerivedState($.model, changelog);
-      if (derived.configurationLocked || !derived.config) return $.model;
+      if ($.model.busy || derived.configurationLocked || !derived.config) return $.model;
       const servers = { ...derived.config.mcpServers };
       delete servers[name];
       const payload = buildCommitPayload($.model, { ...derived.config, mcpServers: servers });
       if (!payload) return $.model;
+      if (!payload.ok) return $.evolve({ error: payload.error });
       const { model, commands } = launchGatewayOp(
         $.model,
         $.model,
@@ -977,12 +985,12 @@ export const AppView = Html.component({
     },
     RequestedDiscardRawConfig: ($) => {
       const derived = computeDerivedState($.model, changelog);
-      if (derived.configurationLocked || !derived.gateway) return $.model;
+      if ($.model.busy || derived.configurationLocked || !derived.gateway) return $.model;
       return $.run(ConfirmDiscard.make({ purpose: 'discardRaw' }));
     },
     RequestedSaveRawConfig: ($) => {
       const derived = computeDerivedState($.model, changelog);
-      if (derived.configurationLocked || !$.model.doc) return $.model;
+      if ($.model.busy || derived.configurationLocked || !$.model.doc) return $.model;
       const { model, commands } = launchGatewayOp(
         $.model,
         $.model,
@@ -1012,22 +1020,25 @@ export const AppView = Html.component({
     DismissedEditorError: ($) => $.evolve({ editorError: null }),
     ReportedError: ($, { message }) => $.evolve({ error: message }),
     RequestedStartGateway: ($) => {
+      if ($.model.busy) return $.model;
       const { model, commands } = launchGatewayOp($.model, $.model, GatewayOpActionSchema.Start());
       return $.set(model).run(...commands);
     },
     RequestedStopGateway: ($) => {
+      if ($.model.busy) return $.model;
       const { model, commands } = launchGatewayOp($.model, $.model, GatewayOpActionSchema.Stop());
       return $.set(model).run(...commands);
     },
     CommittedGatewayMutation: ($, { mutation }) => {
       const derived = computeDerivedState($.model, changelog);
-      if (derived.configurationLocked || !derived.config) return $.model;
+      if ($.model.busy || derived.configurationLocked || !derived.config) return $.model;
       const nextConfig = {
         ...derived.config,
         gateway: applyGatewayMutation(derived.config.gateway, mutation),
       };
       const payload = buildCommitPayload($.model, nextConfig);
       if (!payload) return $.model;
+      if (!payload.ok) return $.evolve({ error: payload.error });
       const { model, commands } = launchGatewayOp(
         $.model,
         $.model,
@@ -1053,6 +1064,7 @@ export const AppView = Html.component({
       }
       const { model, commands } = finishTransition($.model, {
         ...$.model,
+        serverEditorOpenSeq: $.model.serverEditorOpenSeq + 1,
         editorError: null,
         activeModal: { kind: 'serverEditor', editor: nextEditor },
       });
@@ -1068,6 +1080,7 @@ export const AppView = Html.component({
     SubmittedServerEditor: ($) => {
       const derived = computeDerivedState($.model, changelog);
       if (
+        $.model.busy ||
         derived.configurationLocked ||
         !derived.config ||
         $.model.activeModal?.kind !== 'serverEditor'
@@ -1081,6 +1094,7 @@ export const AppView = Html.component({
       }
       const payload = buildCommitPayload($.model, plan.nextConfig, plan.rename);
       if (!payload) return $.model;
+      if (!payload.ok) return $.evolve({ editorError: payload.error });
       const { model, commands } = launchGatewayOp(
         $.model,
         $.model,
@@ -1172,7 +1186,9 @@ export const AppView = Html.component({
     },
     RequestedUpdateRestart: ($) => {
       const derived = computeDerivedState($.model, changelog);
-      if (derived.updateRestarting || $.model.snapshot?.update.phase !== 'ready') return $.model;
+      if ($.model.busy || derived.updateRestarting || $.model.snapshot?.update.phase !== 'ready') {
+        return $.model;
+      }
       if ($.model.doc?.dirty) {
         return $.run(ConfirmDiscard.make({ purpose: 'updateRestart' }));
       }
@@ -1196,7 +1212,13 @@ export const AppView = Html.component({
     },
     ToggledServer: ($, { name, disabled }) => {
       const derived = computeDerivedState($.model, changelog);
-      if (derived.configurationLocked || !derived.config || !$.model.doc || derived.dirty) {
+      if (
+        $.model.busy ||
+        derived.configurationLocked ||
+        !derived.config ||
+        !$.model.doc ||
+        derived.dirty
+      ) {
         return $.model;
       }
       const server = derived.config.mcpServers[name];
@@ -1210,6 +1232,7 @@ export const AppView = Html.component({
       };
       const payload = buildCommitPayload($.model, nextConfig);
       if (!payload) return $.model;
+      if (!payload.ok) return $.evolve({ error: payload.error });
       const { model, commands } = launchGatewayOp(
         $.model,
         $.model,
@@ -1224,7 +1247,7 @@ export const AppView = Html.component({
     },
     RequestedDeleteServer: ($, { name }) => {
       const derived = computeDerivedState($.model, changelog);
-      if (derived.configurationLocked || !derived.config) return $.model;
+      if ($.model.busy || derived.configurationLocked || !derived.config) return $.model;
       return $.run(ConfirmDeleteServer.make({ name }));
     },
     ChangedLanguage: ($, { preference }) => {
@@ -1323,7 +1346,7 @@ export const AppView = Html.component({
       switch (model.activeModal?.kind) {
         case 'serverEditor':
           return ServerEditorView(h, {
-            key: 'server-editor',
+            key: `server-editor-${model.serverEditorOpenSeq}`,
             props: {
               locale: model.locale,
               editor: model.activeModal.editor,
@@ -1365,6 +1388,7 @@ export const AppView = Html.component({
                 title: t('common.updates'),
                 closeLabel: t('common.closeDialog'),
                 busy: model.busy || model.updateBusy,
+                restoreFocusSelector: '[data-sidebar-updates-trigger]',
                 onClose: AppMessage.ClosedModal(),
                 body: [
                   UpdatesView(h, {
@@ -1616,4 +1640,43 @@ export const AppView = Html.component({
       ],
     });
   },
+});
+
+const AppRootModel = Schema.Struct({
+  attempt: Schema.Number,
+});
+
+const AppRootMessage = UiSchema.TaggedEnum({
+  Reload: {},
+});
+
+export const AppRoot = Html.component({
+  name: 'AppRoot',
+  props: AppProps,
+  model: AppRootModel,
+  message: AppRootMessage,
+}).make({
+  init: ($) => $.set({ attempt: 0 }),
+  update: {
+    Reload: ($) => $.evolve({ attempt: $.model.attempt + 1 }),
+  },
+  view: (h, model) =>
+    AppView(h, {
+      key: `app-${model.attempt}`,
+      props: {},
+      fallback: () =>
+        h.main.class('flex min-h-screen items-center justify-center p-6').children(
+          h.div
+            .attr('role', 'alert')
+            .class(alertClasses('error', 'max-w-md flex-col items-start gap-3'))
+            .children(
+              h.p.class('font-medium').children('Something went wrong rendering MCP Gateway.'),
+              h.button
+                .attr('type', 'button')
+                .class(buttonClasses('secondary', 'lg'))
+                .on('click', () => AppRootMessage.Reload())
+                .children('Retry'),
+            ),
+        ),
+    }),
 });

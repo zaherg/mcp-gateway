@@ -10,6 +10,7 @@ import {
   createKeyValueRow,
   formConfig,
   keyValueRowsToRecord,
+  nextKeyValueRowId,
   recordToKeyValueRows,
 } from '@mcp-gateway/mainview/effect-dialogs/server-editor-logic';
 import { jsonEditing } from '@mcp-gateway/mainview/lib/json-editing';
@@ -74,13 +75,13 @@ describe('jsonEditing', () => {
 });
 
 describe('ServerEditor key-value row helpers', () => {
-  test('createKeyValueRow assigns unique row IDs and defaults key, value, and secret', () => {
+  test('createKeyValueRow and nextKeyValueRowId produce deterministic row IDs and defaults', () => {
     const first = createKeyValueRow();
-    const second = createKeyValueRow();
+    const second = createKeyValueRow('', '', false, nextKeyValueRowId([first]));
 
-    expect(first.id).toMatch(/^kv-\d+$/);
-    expect(second.id).toMatch(/^kv-\d+$/);
-    expect(first.id).not.toBe(second.id);
+    expect(first.id).toBe('kv-1');
+    expect(second.id).toBe('kv-2');
+    expect(nextKeyValueRowId([first, second])).toBe('kv-3');
     expect(first.key).toBe('');
     expect(Redacted.value(first.value)).toBe('');
     expect(first.secret).toBe(false);

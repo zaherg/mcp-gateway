@@ -4,6 +4,7 @@ import { Redacted, Schema } from 'effect';
 import {
   applyIncomingSnapshot,
   applyOperationSuccess,
+  buildCommitPayload,
   computeDerivedState,
   initialAppModel,
   planServerApply,
@@ -19,6 +20,10 @@ import {
   emptyEditor,
   ServerEditorStateSchema,
 } from '@mcp-gateway/mainview/effect-dialogs/server-editor-logic';
+import {
+  applyGatewayMutation,
+  GatewayMutation,
+} from '@mcp-gateway/mainview/effect-settings/services';
 import { translator } from '@mcp-gateway/shared/i18n';
 import type { AppSnapshot } from '@mcp-gateway/shared/rpc';
 import type { ConfigFile } from '@mcp-gateway/shared/types';
@@ -204,15 +209,13 @@ describe('effect-app logic', () => {
 
     // Requesting updates while whatsNew is open defers opening
     const deferred = resolveUpdatesRequest({ ...model, updatesRequested: true }, changelog);
-    assert.isNull(deferred.model.activeModal);
-    assert.isTrue(deferred.model.updatesRequested);
-    assert.isFalse(deferred.focusUpdatesTrigger);
+    assert.isNull(deferred.activeModal);
+    assert.isTrue(deferred.updatesRequested);
 
-    // Closing whatsNew opens the deferred updates modal and requests trigger focus
-    const opened = resolveUpdatesRequest({ ...deferred.model, whatsNewClosed: true }, changelog);
-    assert.deepStrictEqual(opened.model.activeModal, { kind: 'updates' });
-    assert.isFalse(opened.model.updatesRequested);
-    assert.isTrue(opened.focusUpdatesTrigger);
+    // Closing whatsNew opens the deferred updates modal
+    const opened = resolveUpdatesRequest({ ...deferred, whatsNewClosed: true }, changelog);
+    assert.deepStrictEqual(opened.activeModal, { kind: 'updates' });
+    assert.isFalse(opened.updatesRequested);
 
     // InvalidConfig hides form config when doc is clean
     const invalidSnap = makeSnapshot({
@@ -266,6 +269,90 @@ describe('effect-app logic', () => {
       assert.deepStrictEqual(validRename.rename, { from: 'bear', to: 'bear-v2' });
       assert.isUndefined(validRename.nextConfig.mcpServers.bear);
       assert.isDefined(validRename.nextConfig.mcpServers['bear-v2']);
+    }
+  });
+
+  it('returns { ok: false, error } from buildCommitPayload instead of throwing on invalid on-disk JSON or missing rename source', () => {
+    const validDraftConfig: ConfigFile = {
+      gateway: { host: '127.0.0.1', port: 8787, token: SECRET_SENTINEL },
+      mcpServers: {
+        draftOnly: { command: '/usr/bin/draft' },
+      },
+    };
+
+    // Case 1: Invalid JSON syntax on disk while doc holds a valid unsaved draft
+    const invalidDiskSnap = makeSnapshot({
+      configText: '{ invalid json',
+      configError: { occurrenceId: 'err-syntax', code: 'InvalidConfig', message: 'Syntax error' },
+    });
+    const dirtyModel = {
+      ...applyIncomingSnapshot(initialAppModel(), invalidDiskSnap),
+      doc: {
+        text: Redacted.make(JSON.stringify(validDraftConfig)),
+        revision: 'rev-1',
+        dirty: true,
+      },
+    };
+    const invalidResult = buildCommitPayload(dirtyModel, validDraftConfig);
+    assert.isNotNull(invalidResult);
+    assert.isFalse(invalidResult?.ok);
+    if (invalidResult && !invalidResult.ok) {
+      assert.isTrue(invalidResult.error.length > 0);
+    }
+
+    // Case 2: Valid on-disk JSON without the draft-only server being renamed
+    const cleanDiskSnap = makeSnapshot({ configError: null });
+    const renameModel = {
+      ...applyIncomingSnapshot(initialAppModel(), cleanDiskSnap),
+      doc: {
+        text: Redacted.make(JSON.stringify(validDraftConfig)),
+        revision: 'rev-1',
+        dirty: true,
+      },
+    };
+    const missingRenameResult = buildCommitPayload(
+      renameModel,
+      {
+        ...validDraftConfig,
+        mcpServers: { renamedDraft: { command: '/usr/bin/draft' } },
+      },
+      { from: 'draftOnly', to: 'renamedDraft' },
+    );
+    assert.isNotNull(missingRenameResult);
+    assert.isFalse(missingRenameResult?.ok);
+    if (missingRenameResult && !missingRenameResult.ok) {
+      assert.isTrue(missingRenameResult.error.length > 0);
+    }
+  });
+
+  it('allows buildCommitPayload to repair KeyUnavailable when on-disk JSON is syntactically valid', () => {
+    const keyUnavailSnap = makeSnapshot({
+      configText: JSON.stringify({
+        gateway: { host: '127.0.0.1', port: 8787, tokenRef: 'keychain:missing' },
+        mcpServers: {},
+      }),
+      configError: { occurrenceId: 'err-key', code: 'KeyUnavailable', message: 'Key missing' },
+    });
+    const model = applyIncomingSnapshot(initialAppModel(), keyUnavailSnap);
+    const derived = computeDerivedState(model, '');
+    assert.isNotNull(derived.config);
+    if (!derived.config) return;
+
+    const repairedToken = 'r'.repeat(32);
+    const nextConfig: ConfigFile = {
+      ...derived.config,
+      gateway: applyGatewayMutation(
+        derived.config.gateway,
+        GatewayMutation.ReplaceTokenWithLiteral({ token: Redacted.make(repairedToken) }),
+      ),
+    };
+    const result = buildCommitPayload(model, nextConfig);
+    assert.isNotNull(result);
+    assert.isTrue(result?.ok);
+    if (result?.ok) {
+      const parsed = JSON.parse(Redacted.value(result.text)) as ConfigFile;
+      assert.strictEqual(parsed.gateway.token, repairedToken);
+      assert.isUndefined(parsed.gateway.tokenRef);
     }
   });
 });

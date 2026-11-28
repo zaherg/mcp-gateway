@@ -19,7 +19,11 @@ import { AppearanceStore } from '@mcp-gateway/main/appearance';
 import { KeyReminderStore } from '@mcp-gateway/main/key-reminder';
 import { openKeychain } from '@mcp-gateway/main/keychain';
 import { LanguageStore } from '@mcp-gateway/main/language';
-import { InteractiveQuitGate, QuitCoordinator } from '@mcp-gateway/main/lifecycle';
+import {
+  InteractiveQuitGate,
+  QuitCoordinator,
+  WindowRevealCoordinator,
+} from '@mcp-gateway/main/lifecycle';
 import {
   configurationDirectory,
   installedIdentifier,
@@ -40,8 +44,6 @@ import { appNameFor, TEST_IDENTIFIER } from '@mcp-gateway/shared/identity';
 import type { AppRPC, MenuCommand } from '@mcp-gateway/shared/rpc';
 
 const MIN_WINDOW_SIZE = { width: 1120, height: 820 } as const;
-const WINDOW_REVEAL_DELAY_MS = 50;
-const WINDOW_REVEAL_FALLBACK_MS = 1_500;
 const MENU_COMMANDS: ReadonlySet<MenuCommand> = new Set([
   'tab:overview',
   'tab:logs',
@@ -138,8 +140,7 @@ const desktopState: {
   window: BrowserWindow | undefined;
   rpc: WindowRPC | undefined;
   pendingMenuCommand: MenuCommand | undefined;
-  windowReady: boolean;
-  windowVisible: boolean;
+  windowReveal: WindowRevealCoordinator | undefined;
   menuState: string;
   lastSnapshotKey: string;
   trayRunning: boolean;
@@ -150,8 +151,7 @@ const desktopState: {
   window: undefined,
   rpc: undefined,
   pendingMenuCommand: undefined,
-  windowReady: false,
-  windowVisible: false,
+  windowReveal: undefined,
   menuState: '',
   lastSnapshotKey: '',
   trayRunning: false,
@@ -182,7 +182,7 @@ const gatewayBaseEndpoint = () => {
 };
 
 const pushSnapshot = () => {
-  if (!desktopState.window || !desktopState.windowReady || !desktopState.rpc) return;
+  if (!desktopState.window || !desktopState.windowReveal?.isReady() || !desktopState.rpc) return;
   try {
     desktopState.rpc.send.snapshotChanged(service.currentSnapshot());
   } catch (error) {
@@ -193,7 +193,7 @@ const pushSnapshot = () => {
 const sendMenuCommand = (command: MenuCommand) => {
   desktopState.pendingMenuCommand = command;
   openWindow();
-  if (desktopState.windowReady && desktopState.rpc) {
+  if (desktopState.windowReveal?.isReady() && desktopState.rpc) {
     desktopState.pendingMenuCommand = undefined;
     try {
       desktopState.rpc.send.menuCommand({ command });
@@ -353,24 +353,12 @@ const wrapHandler = <Args extends unknown[], Res>(
 
 const openWindow = () => {
   if (desktopState.window) {
-    if (desktopState.windowVisible) restoreWindow(desktopState.window);
+    if (desktopState.windowReveal?.isVisible()) restoreWindow(desktopState.window);
     return;
   }
   Utils.setDockIconVisible(true);
-  let ready = false;
-  let revealTimer: ReturnType<typeof setTimeout> | undefined;
   let created: BrowserWindow<WindowRPC> | undefined;
-  const clearRevealTimer = () => {
-    if (!revealTimer) return;
-    clearTimeout(revealTimer);
-    revealTimer = undefined;
-  };
-  const revealWindow = () => {
-    clearRevealTimer();
-    if (!created || desktopState.window !== created || desktopState.windowVisible) return;
-    desktopState.windowVisible = true;
-    restoreWindow(created);
-  };
+  let reveal: WindowRevealCoordinator | undefined;
   const rpc = BrowserView.defineRPC<AppRPC>({
     handlers: {
       requests: {
@@ -391,12 +379,7 @@ const openWindow = () => {
         updatesRestart: wrapHandler(service.handlers.updatesRestart),
         snapshot: async (input) => {
           const result = await service.handlers.snapshot(input);
-          if (!ready) {
-            ready = true;
-            desktopState.windowReady = true;
-            clearRevealTimer();
-            revealTimer = setTimeout(revealWindow, WINDOW_REVEAL_DELAY_MS);
-          }
+          reveal?.onSnapshotSettled();
           if (desktopState.pendingMenuCommand) {
             const command = desktopState.pendingMenuCommand;
             desktopState.pendingMenuCommand = undefined;
@@ -430,19 +413,21 @@ const openWindow = () => {
     navigationRules: JSON.stringify(['^*', viewUrl]),
   });
   desktopState.window = created;
-  revealTimer = setTimeout(revealWindow, WINDOW_REVEAL_FALLBACK_MS);
+  reveal = new WindowRevealCoordinator(() => {
+    if (created && desktopState.window === created) restoreWindow(created);
+  });
+  desktopState.windowReveal = reveal;
   try {
     setMinimumWindowSize(created, MIN_WINDOW_SIZE.width, MIN_WINDOW_SIZE.height);
   } catch (error) {
     controller.recordLocalError(error);
   }
   created.on('close', () => {
-    clearRevealTimer();
+    reveal?.dispose();
     if (desktopState.window === created) {
       desktopState.window = undefined;
       desktopState.rpc = undefined;
-      desktopState.windowReady = false;
-      desktopState.windowVisible = false;
+      desktopState.windowReveal = undefined;
       desktopState.hasUnsavedRawConfig = undefined;
       Utils.setDockIconVisible(false);
     }
@@ -554,7 +539,7 @@ const service = new AppService(
 const interactiveQuit = new InteractiveQuitGate(
   quit,
   () =>
-    desktopState.window && desktopState.windowReady && desktopState.hasUnsavedRawConfig
+    desktopState.window && desktopState.windowReveal?.isReady() && desktopState.hasUnsavedRawConfig
       ? desktopState.hasUnsavedRawConfig()
       : undefined,
   async () => {

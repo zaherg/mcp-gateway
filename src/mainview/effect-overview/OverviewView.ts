@@ -25,6 +25,7 @@ import {
   iconServer,
   iconTrash,
   iconX,
+  LocaleSchema,
   renderAlert,
   SWITCH_ROOT_CLASSES,
   SWITCH_THUMB_CLASSES,
@@ -58,7 +59,7 @@ export const OperationalErrorSchema = Schema.Struct({
 });
 
 export const OverviewProps = Schema.Struct({
-  locale: Schema.String,
+  locale: LocaleSchema,
   hasConfig: Schema.Boolean,
   dirty: Schema.Boolean,
   running: Schema.Boolean,
@@ -187,10 +188,10 @@ export class TestServer extends Command.Service<TestServer>()('mcp-gateway/overv
 
 export const OverviewCommandLayers = Layer.mergeAll(CopyClientConfig.layer, TestServer.layer);
 
-const resolveTranslator = (locale: string) => translator(locale as Locale);
+const resolveTranslator = (locale: Locale) => translator(locale);
 
 const resolveTestOutcome = (
-  locale: string,
+  locale: Locale,
   name: string,
   revision: string,
   outcome: TestServerOutcomeValue,
@@ -291,10 +292,12 @@ export const OverviewView = Html.component({
         test: { name, revision, state: 'testing' as const, message: t('overview.testing') },
       }).run(TestServer.make({ name, expectedRevision: revision }));
     },
-    TestServerCompleted: ($, { name, revision, outcome }) =>
-      $.evolve({
-        test: resolveTestOutcome($.props.locale, name, revision, outcome),
-      }),
+    TestServerCompleted: ($, { name, revision, outcome }) => {
+      const nextTest = resolveTestOutcome($.props.locale, name, revision, outcome);
+      return $.evolve({
+        test: isTestOutdated(nextTest, $.props.running, $.props.servers) ? null : nextTest,
+      });
+    },
     ClearedOutdatedTest: ($) =>
       isTestOutdated($.model.test, $.props.running, $.props.servers)
         ? $.evolve({ test: null })

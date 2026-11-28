@@ -45,21 +45,18 @@ describe('UpdatesView', () => {
       UpdatesView,
       makeProps({ updateState: makeUpdate({ phase: 'idle' }) }),
     );
-    assert.isTrue(idleStory.model.autoChecked);
     idleStory.emitted(UpdatesEvent.RequestedCheck());
 
     const readyStory = Story.start(
       UpdatesView,
       makeProps({ updateState: makeUpdate({ phase: 'ready', availableVersion: '1.1.0' }) }),
     );
-    assert.isFalse(readyStory.model.autoChecked);
     assert.deepStrictEqual(readyStory.current.emitted, []);
 
     const unsupportedStory = Story.start(
       UpdatesView,
       makeProps({ updateState: makeUpdate({ supported: false, phase: 'idle' }) }),
     );
-    assert.isFalse(unsupportedStory.model.autoChecked);
     assert.deepStrictEqual(unsupportedStory.current.emitted, []);
   });
 
@@ -102,4 +99,39 @@ describe('UpdatesView', () => {
       );
     }).pipe(Effect.provide(TestHost.layer())),
   );
+
+  it('boundedly explores check, install, restart, and automatic update transitions across phases', () => {
+    for (const phase of ['idle', 'available', 'ready'] as const) {
+      const explored = Story.explore(
+        UpdatesView,
+        makeProps({
+          updateState: makeUpdate({
+            phase,
+            availableVersion: phase === 'idle' ? null : '2.0.0',
+          }),
+        }),
+        {
+          messages: [
+            UpdatesMessage.ClickedCheck(),
+            UpdatesMessage.ClickedInstallOrRelaunch(),
+            UpdatesMessage.ToggledAutomatic({ automatic: false }),
+            UpdatesMessage.ToggledAutomatic({ automatic: true }),
+            UpdatesMessage.DismissedError(),
+          ],
+          depth: 2,
+          invariant: ({ emitted }) => {
+            for (const event of emitted) {
+              if (phase === 'ready') {
+                assert.notStrictEqual(event._tag, 'RequestedInstall');
+              } else {
+                assert.notStrictEqual(event._tag, 'RequestedRestart');
+              }
+            }
+          },
+        },
+      );
+      assert.isTrue(explored.closed);
+      assert.isAtLeast(explored.states, 1);
+    }
+  });
 });

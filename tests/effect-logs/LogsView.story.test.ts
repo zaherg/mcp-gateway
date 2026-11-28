@@ -15,7 +15,7 @@ import {
 import { translator } from '@mcp-gateway/shared/i18n';
 import type { LogEntry, LogPage } from '@mcp-gateway/shared/types';
 
-const defaultProps = { servers: ['bear', 'remote'], locale: 'en_US' };
+const defaultProps = { servers: ['bear', 'remote'], locale: 'en_US' as const };
 const t = translator('en_US');
 
 const sampleEntry: LogEntry = {
@@ -63,6 +63,20 @@ describe('LogsView Story tests', () => {
     assert.strictEqual(story.model.readError, null);
     assert.strictEqual(story.model.entries.length, 1);
     assert.strictEqual(story.model.cursor, 1);
+
+    // Empty poll on the same generation preserves entries array reference identity.
+    const prevEntries = story.model.entries;
+    story
+      .resolve(SchedulePollWait, LogsMessage.PollTicked())
+      .expectExact(ReadLogsPage.make({ after: 1 }))
+      .resolve(
+        ReadLogsPage,
+        LogsMessage.PollSucceeded({
+          page: { entries: [], cursor: 1, generation: 1, gap: false, hasMore: false },
+        }),
+      )
+      .expectExact(SchedulePollWait.make({ delayMs: 2000 }));
+    assert.isTrue(Object.is(prevEntries, story.model.entries));
   });
 
   it('interrupts polling on Clear, keeps entries on failure, and resets on success', () => {

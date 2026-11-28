@@ -44,8 +44,6 @@ export const DocumentSchema = Schema.Struct({
 
 export type DocumentRedacted = typeof DocumentSchema.Type;
 
-let rowSequence = 0;
-
 export const isDefaultSecretRow = (key: string, value: string): boolean => {
   if (!key && !value) return false;
   if (/\$\{[^}]+\}/.test(value)) return false;
@@ -59,16 +57,31 @@ export const createKeyValueRow = (
   key = '',
   value = '',
   secret = isDefaultSecretRow(key, value),
+  id = 'kv-1',
 ): KeyValueRow => ({
-  id: `kv-${++rowSequence}`,
+  id,
   key,
   value: Redacted.make(value),
   secret,
 });
 
+export const nextKeyValueRowId = (rows: readonly KeyValueRow[]): string => {
+  let max = 0;
+  for (const row of rows) {
+    const match = /^kv-(\d+)$/.exec(row.id);
+    if (match) {
+      const suffix = Number(match[1]);
+      if (suffix > max) max = suffix;
+    }
+  }
+  return `kv-${max + 1}`;
+};
+
 export const recordToKeyValueRows = (record: Record<string, string> | undefined): KeyValueRow[] => {
   if (!record) return [];
-  return Object.entries(record).map(([key, value]) => createKeyValueRow(key, value));
+  return Object.entries(record).map(([key, value], index) =>
+    createKeyValueRow(key, value, isDefaultSecretRow(key, value), `kv-${index + 1}`),
+  );
 };
 
 const FORBIDDEN_MAP_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
@@ -121,13 +134,6 @@ const stringMap = (value: unknown): value is Record<string, string> =>
   isRecord(value) &&
   !Object.hasOwn(value, '__proto__') &&
   Object.values(value).every((item) => typeof item === 'string');
-
-/** Parses an editor JSON field that must hold an object of string values. */
-export const parseStringMap = (text: string, message: string): Record<string, string> => {
-  const value: unknown = JSON.parse(text || '{}');
-  if (!stringMap(value)) throw new Error(message);
-  return value;
-};
 
 const isBackend = (value: unknown): value is StdioServerConfig | HttpServerConfig => {
   if (

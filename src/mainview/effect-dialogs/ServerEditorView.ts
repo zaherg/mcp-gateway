@@ -1,12 +1,13 @@
-import { UiSchema } from '@effect/ui';
+import { Command, UiSchema } from '@effect/ui';
 import { Html } from '@effect/ui/html';
-import { Redacted, Schema } from 'effect';
+import { Effect, Redacted, Schema } from 'effect';
 
 import {
   bearPreset,
   createKeyValueRow,
   hasInvalidKeyValueRows,
   type KeyValueRow,
+  nextKeyValueRowId,
   rowsToEnvPreview,
   type ServerEditorState,
   ServerEditorStateSchema,
@@ -19,6 +20,7 @@ import {
   iconMinus,
   iconPlus,
   inputClasses,
+  LocaleSchema,
   renderAlert,
   renderCheckboxRow,
   renderField,
@@ -28,10 +30,10 @@ import {
 } from '@mcp-gateway/mainview/effect-ui';
 import { generateToken } from '@mcp-gateway/mainview/lib/token';
 import { SAFE_NAME, sensitiveEnvOverrides } from '@mcp-gateway/shared/config-document';
-import { type Locale, translator } from '@mcp-gateway/shared/i18n';
+import { translator } from '@mcp-gateway/shared/i18n';
 
 export const ServerEditorProps = Schema.Struct({
-  locale: Schema.String,
+  locale: LocaleSchema,
   editor: ServerEditorStateSchema,
   existingNames: Schema.Array(Schema.String),
   editorError: Schema.NullOr(Schema.String),
@@ -76,9 +78,14 @@ export const ServerEditorMessage = UiSchema.TaggedEnum({
   DismissedError: {},
   ClickedBearPreset: {},
   ClickedGenerateKey: {},
+  GeneratedKey: { token: Schema.Redacted(Schema.String) },
   Submitted: {},
   Closed: {},
 });
+
+export const GenerateServerKey = Command.make('mcp-gateway/dialogs/GenerateServerKey', {}, () =>
+  Effect.sync(() => ServerEditorMessage.GeneratedKey({ token: Redacted.make(generateToken()) })),
+);
 
 export const ServerEditorEvent = UiSchema.TaggedEnum({
   ChangedEditor: { editor: ServerEditorStateSchema },
@@ -285,7 +292,10 @@ export const ServerEditorView = Html.component({
       return $.evolve({ editor }).emit(ServerEditorEvent.ChangedEditor({ editor }));
     },
     AddedKeyValueRow: ($, { field }) => {
-      const editor = updateRows($.model.editor, field, (rows) => [...rows, createKeyValueRow()]);
+      const editor = updateRows($.model.editor, field, (rows) => [
+        ...rows,
+        createKeyValueRow('', '', false, nextKeyValueRowId(rows)),
+      ]);
       return $.evolve({ editor }).emit(ServerEditorEvent.ChangedEditor({ editor }));
     },
     UpdatedKeyValueRowKey: ($, { field, id, key }) => {
@@ -338,11 +348,11 @@ export const ServerEditorView = Html.component({
       const editor = patchEditor($.model.editor, bearPreset($.model.editor.name));
       return $.evolve({ editor }).emit(ServerEditorEvent.ChangedEditor({ editor }));
     },
-    ClickedGenerateKey: ($) => {
-      const editor = patchEditor($.model.editor, {
-        token: Redacted.make(generateToken()),
-        tokenRef: null,
-      });
+    ClickedGenerateKey: ($) =>
+      $.props.configurationLocked ? $.model : $.run(GenerateServerKey.make()),
+    GeneratedKey: ($, { token }) => {
+      if ($.props.configurationLocked) return $.model;
+      const editor = patchEditor($.model.editor, { token, tokenRef: null });
       return $.evolve({ editor }).emit(ServerEditorEvent.ChangedEditor({ editor }));
     },
     Submitted: ($) => $.emit(ServerEditorEvent.Submitted()),
@@ -351,7 +361,7 @@ export const ServerEditorView = Html.component({
   view: (h, model) => {
     const { existingNames, editorError, configurationLocked } = h.props;
     const editor = model.editor;
-    const t = translator(h.props.locale as Locale);
+    const t = translator(h.props.locale);
     const trimmedName = editor.name.trim();
     const isDuplicateName =
       trimmedName.length > 0 &&
@@ -457,12 +467,14 @@ export const ServerEditorView = Html.component({
                   renderField(h, {
                     id: 'server-editor-args',
                     label: t('editor.args'),
+                    labelFor: false,
                     control: renderArgsList(h, editor.args, configurationLocked),
                   }),
                   h.div.class('form-grid').children(
                     renderField(h, {
                       id: 'server-editor-env',
                       label: t('editor.env'),
+                      labelFor: false,
                       control: renderKeyValueTable(h, 'env', editor.env, configurationLocked),
                     }),
                     renderField(h, {
@@ -530,6 +542,7 @@ export const ServerEditorView = Html.component({
                   renderField(h, {
                     id: 'server-editor-headers',
                     label: t('editor.headers'),
+                    labelFor: false,
                     // biome-ignore lint/suspicious/noTemplateCurlyInString: a literal environment reference.
                     help: t('editor.headersHelp', { example: '${API_TOKEN}' }),
                     control: renderKeyValueTable(h, 'headers', editor.headers, configurationLocked),
@@ -572,6 +585,7 @@ export const ServerEditorView = Html.component({
               ? renderField(h, {
                   id: 'server-editor-key-stored',
                   label: t('editor.key'),
+                  labelFor: false,
                   help: t('editor.keyHelp'),
                   control: h.p.class('m-0 text-[13px]').children(t('keys.stored')),
                 })
