@@ -489,7 +489,8 @@ export const LogsView = Html.component({
               .attr('placeholder', `${t('logs.search')} (⌘F)`)
               .attr('maxlength', String(LOG_LIMITS.queryTextCharacters))
               .value(model.text)
-              .on('input', ({ value }) => LogsMessage.ChangedSearch({ text: value })),
+              .on('input', ({ value }) => LogsMessage.ChangedSearch({ text: value }))
+              .on('change', ({ value }) => LogsMessage.ChangedSearch({ text: value })),
           ),
           h.button
             .attr('type', 'button')

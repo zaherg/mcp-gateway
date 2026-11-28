@@ -1764,54 +1764,71 @@ describe('Views: Overview, Settings, Updates, Logs', () => {
       const searchInput = view.getByLabelText(t('logs.search')) as HTMLInputElement;
       expect(document.activeElement === searchInput).toBe(false);
       fireEvent.keyDown(window, { key: 'f', metaKey: true });
-      expect(document.activeElement === searchInput).toBe(true);
+      await waitFor(() => {
+        expect(document.activeElement === searchInput).toBe(true);
+      });
 
       // Filter by level.
       const levelSelect = view.getByLabelText(t('logs.level')) as HTMLSelectElement;
       fireEvent.change(levelSelect, { target: { value: 'error' } });
-      expect(view.container.querySelectorAll('.log-row')).toHaveLength(1);
+      await waitFor(() => {
+        expect(view.container.querySelectorAll('.log-row')).toHaveLength(1);
+      });
       expect(view.getByText(/Connection timeout/)).toBeTruthy();
       fireEvent.change(levelSelect, { target: { value: '' } });
+      await waitFor(() => {
+        expect(view.container.querySelectorAll('.log-row')).toHaveLength(3);
+      });
 
       // Filter by server.
       const serverSelect = view.getByLabelText(t('logs.server')) as HTMLSelectElement;
       fireEvent.change(serverSelect, { target: { value: 'bear' } });
-      expect(view.container.querySelectorAll('.log-row')).toHaveLength(1);
+      await waitFor(() => {
+        expect(view.container.querySelectorAll('.log-row')).toHaveLength(1);
+      });
       expect(view.getByText('Mounted bear stdio backend')).toBeTruthy();
       fireEvent.change(serverSelect, { target: { value: '' } });
+      await waitFor(() => {
+        expect(view.container.querySelectorAll('.log-row')).toHaveLength(3);
+      });
 
       // Filter by search text (case-insensitive) and verify no-matches state.
       setInputValue(searchInput, 'LISTENER');
-      expect(view.container.querySelectorAll('.log-row')).toHaveLength(1);
+      await waitFor(() => {
+        expect(view.container.querySelectorAll('.log-row')).toHaveLength(1);
+      });
       expect(view.getByText('Gateway listener retrying bind')).toBeTruthy();
 
       setInputValue(searchInput, 'does-not-exist');
-      expect(view.getByText(t('logs.noMatches'))).toBeTruthy();
+      await waitFor(() => {
+        expect(view.getByText(t('logs.noMatches'))).toBeTruthy();
+      });
       setInputValue(searchInput, '');
+      await waitFor(() => {
+        expect(view.container.querySelectorAll('.log-row')).toHaveLength(3);
+      });
 
       // Failed clearLogs (`{ ok: false }` and bridge rejection) displays error alert and re-reads rows.
-      await act(async () => {
-        fireEvent.click(view.getByRole('button', { name: t('logs.clear') }));
+      fireEvent.click(view.getByRole('button', { name: t('logs.clear') }));
+      await waitFor(() => {
+        expect(clearCalls).toBe(1);
+        expect(view.getByRole('alert').textContent).toContain('ClearDenied: Log ring locked');
       });
-      expect(clearCalls).toBe(1);
-      expect(view.getByRole('alert').textContent).toContain('ClearDenied: Log ring locked');
       expect(view.container.querySelectorAll('.log-row')).toHaveLength(3);
 
       clearMode = 'throw';
-      await act(async () => {
-        fireEvent.click(view.getByRole('button', { name: t('logs.clear') }));
+      fireEvent.click(view.getByRole('button', { name: t('logs.clear') }));
+      await waitFor(() => {
+        expect(clearCalls).toBe(2);
+        expect(view.getByRole('alert').textContent).toContain(t('logs.clearFailed'));
       });
-      expect(clearCalls).toBe(2);
-      expect(view.getByRole('alert').textContent).toContain(t('logs.clearFailed'));
       expect(view.container.querySelectorAll('.log-row')).toHaveLength(3);
 
       // Clear logs succeeds and resets to empty state.
       clearMode = 'ok';
-      await act(async () => {
-        fireEvent.click(view.getByRole('button', { name: t('logs.clear') }));
-      });
-      expect(clearCalls).toBe(3);
+      fireEvent.click(view.getByRole('button', { name: t('logs.clear') }));
       await waitFor(() => {
+        expect(clearCalls).toBe(3);
         expect(view.getByText(t('logs.empty'))).toBeTruthy();
       });
 
