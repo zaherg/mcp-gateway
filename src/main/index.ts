@@ -40,6 +40,8 @@ import { appNameFor, TEST_IDENTIFIER } from '@mcp-gateway/shared/identity';
 import type { AppRPC, MenuCommand } from '@mcp-gateway/shared/rpc';
 
 const MIN_WINDOW_SIZE = { width: 1120, height: 820 } as const;
+const WINDOW_REVEAL_DELAY_MS = 50;
+const WINDOW_REVEAL_FALLBACK_MS = 1_500;
 const MENU_COMMANDS: ReadonlySet<MenuCommand> = new Set([
   'tab:overview',
   'tab:logs',
@@ -137,6 +139,7 @@ const desktopState: {
   rpc: WindowRPC | undefined;
   pendingMenuCommand: MenuCommand | undefined;
   windowReady: boolean;
+  windowVisible: boolean;
   menuState: string;
   lastSnapshotKey: string;
   trayRunning: boolean;
@@ -148,6 +151,7 @@ const desktopState: {
   rpc: undefined,
   pendingMenuCommand: undefined,
   windowReady: false,
+  windowVisible: false,
   menuState: '',
   lastSnapshotKey: '',
   trayRunning: false,
@@ -349,11 +353,24 @@ const wrapHandler = <Args extends unknown[], Res>(
 
 const openWindow = () => {
   if (desktopState.window) {
-    restoreWindow(desktopState.window);
+    if (desktopState.windowVisible) restoreWindow(desktopState.window);
     return;
   }
   Utils.setDockIconVisible(true);
   let ready = false;
+  let revealTimer: ReturnType<typeof setTimeout> | undefined;
+  let created: BrowserWindow<WindowRPC> | undefined;
+  const clearRevealTimer = () => {
+    if (!revealTimer) return;
+    clearTimeout(revealTimer);
+    revealTimer = undefined;
+  };
+  const revealWindow = () => {
+    clearRevealTimer();
+    if (!created || desktopState.window !== created || desktopState.windowVisible) return;
+    desktopState.windowVisible = true;
+    restoreWindow(created);
+  };
   const rpc = BrowserView.defineRPC<AppRPC>({
     handlers: {
       requests: {
@@ -377,6 +394,8 @@ const openWindow = () => {
           if (!ready) {
             ready = true;
             desktopState.windowReady = true;
+            clearRevealTimer();
+            revealTimer = setTimeout(revealWindow, WINDOW_REVEAL_DELAY_MS);
           }
           if (desktopState.pendingMenuCommand) {
             const command = desktopState.pendingMenuCommand;
@@ -398,28 +417,32 @@ const openWindow = () => {
   desktopState.rpc = rpc;
   desktopState.hasUnsavedRawConfig = () =>
     rpc.request.hasUnsavedRawConfig(undefined, { maxRequestTime: 1_500 });
-  const created = new BrowserWindow({
+  created = new BrowserWindow({
     title: appName,
     url: viewUrl,
     rpc,
     frame: MIN_WINDOW_SIZE,
     titleBarStyle: 'hiddenInset',
     renderer: 'native',
+    hidden: true,
     allowedProtocols: { views: true, appData: false },
     // Pinned native matcher uses last-match-wins; unmatched URLs otherwise default allow.
     navigationRules: JSON.stringify(['^*', viewUrl]),
   });
   desktopState.window = created;
+  revealTimer = setTimeout(revealWindow, WINDOW_REVEAL_FALLBACK_MS);
   try {
     setMinimumWindowSize(created, MIN_WINDOW_SIZE.width, MIN_WINDOW_SIZE.height);
   } catch (error) {
     controller.recordLocalError(error);
   }
   created.on('close', () => {
+    clearRevealTimer();
     if (desktopState.window === created) {
       desktopState.window = undefined;
       desktopState.rpc = undefined;
       desktopState.windowReady = false;
+      desktopState.windowVisible = false;
       desktopState.hasUnsavedRawConfig = undefined;
       Utils.setDockIconVisible(false);
     }
@@ -798,7 +821,5 @@ if (background) {
     updateMenu();
   }
 } else {
-  const showReleaseNotes = whatsNew.pending !== null;
   openWindow();
-  if (showReleaseNotes && desktopState.window) restoreWindow(desktopState.window);
 }
