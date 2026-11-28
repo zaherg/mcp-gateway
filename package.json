@@ -36,6 +36,7 @@
         "@codemirror/legacy-modes": "^6.5.5",
         "@codemirror/state": "^6.7.6",
         "@codemirror/view": "^6.44.0",
+        "@effect/platform-node": "^4.1.7",
         "@effect/ui": "https://pkg.pr.new/Effect-TS/ui/@effect/ui@82a1750",
         "@effect/ui-devtools": "https://pkg.pr.new/Effect-TS/ui/@effect/ui-devtools@82a1750",
         "@effect/ui-kit": "https://pkg.pr.new/Effect-TS/ui/@effect/ui-kit@82a1750",

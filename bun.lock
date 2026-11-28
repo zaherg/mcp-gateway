@@ -18,6 +18,7 @@
         "@codemirror/legacy-modes": "^6.5.5",
         "@codemirror/state": "^6.7.6",
         "@codemirror/view": "^6.44.0",
+        "@effect/platform-node": "^4.1.7",
         "@effect/ui": "https://pkg.pr.new/Effect-TS/ui/@effect/ui@82a1750",
         "@effect/ui-devtools": "https://pkg.pr.new/Effect-TS/ui/@effect/ui-devtools@82a1750",
         "@effect/ui-kit": "https://pkg.pr.new/Effect-TS/ui/@effect/ui-kit@82a1750",
@@ -92,6 +93,10 @@
 
     "@codemirror/view": ["@codemirror/view@6.44.0", "", { "dependencies": { "@codemirror/state": "^6.7.0", "crelt": "^1.0.6", "style-mod": "^4.1.0", "w3c-keyname": "^2.2.4" } }, "sha512-kAUekx35l9u64jW/NzdO054l80lz+ri+Z5ZFS+dMpMrCbG5pFiTz58twWcWghzBEInWno0SPaURNSCnHHvipnQ=="],
 
+    "@effect/platform-node": ["@effect/platform-node@4.1.7", "", { "dependencies": { "@effect/platform-node-shared": "4.1.7", "undici": "^8.13.1" }, "peerDependencies": { "effect": "^4.1.7", "redis": ">=5.1.0 <7.0.0" } }, "sha512-+hWmfkd5QtfeDKdCnyf+Vs/XK6lnNCfwXWMXWb6YOAyhAQC6qBvHNR5Tx6Lkk8l33eL8xAalHexXF64jL8ABiQ=="],
+
+    "@effect/platform-node-shared": ["@effect/platform-node-shared@4.1.7", "", { "dependencies": { "@types/ws": "^8.18.2", "ws": "^8.23.0" }, "peerDependencies": { "effect": "^4.1.7" } }, "sha512-EDnlB5zL6EW0ahVAeQAUtpuMHc/0yruMLKBsX3nC4Zn3PuG4McWv2A6Rvdk2OUSFM/OFTCclt3sKWNCvk3pEUw=="],
+
     "@effect/ui": ["@effect/ui@https://pkg.pr.new/Effect-TS/ui/@effect/ui@82a1750", { "peerDependencies": { "effect": "^4.1.4" } }, "sha512-FA0ysjy5BJwy2I68Zt+00MSG2jmzD/5NhM8XRXEe+oEhZwyky10xwK5ti+0VY7At0wcsn3i+VZxSC1WNjzg7SA=="],
 
     "@effect/ui-devtools": ["@effect/ui-devtools@https://pkg.pr.new/Effect-TS/ui/@effect/ui-devtools@82a1750", { "peerDependencies": { "@effect/platform-node": "^4.1.4", "@effect/ui": "^0.0.0", "@effect/ui-kit": "^0.0.0", "effect": "^4.1.4" }, "optionalPeers": ["@effect/platform-node"], "bin": { "effect-ui-devtools": "./dist/node/internal/bin.js" } }, "sha512-z8sH3EqzSnagr8yJXXnDRNzVM0gbTyXVodpYYXjX7woYzPhNekQKt1STuykkc/izWqrgvzkmrGhFm26x5ApZZg=="],
@@ -143,6 +148,16 @@
     "@napi-rs/wasm-runtime": ["@napi-rs/wasm-runtime@1.2.6", "", { "dependencies": { "@tybys/wasm-util": "^0.10.3" }, "peerDependencies": { "@emnapi/core": "^1.7.1 || 2.0.0-beta.2", "@emnapi/runtime": "^1.7.1 || 2.0.0-beta.2" } }, "sha512-mRyDmEw9/fCDXCGfL1sbgIw/GUK0PVxRW4YwgPN61F3LQ+fSyoBFarJVzgGyhF6kRzEQZ0FejDqm4WLXSeqQmw=="],
 
     "@oxc-project/types": ["@oxc-project/types@0.156.0", "", {}, "sha512-1Duyg48TdJNdyhEB8Xn1L36bT9Pv6GUtlKjHxOys8xkaF/rQq3XJE+bAurSK/AgIz5mGFsb77cn9Pb20+WCScw=="],
+
+    "@redis/bloom": ["@redis/bloom@6.4.0", "", { "peerDependencies": { "@redis/client": "^6.4.0" } }, "sha512-haBv1OKeJoKxoAxwKEHPDKdoZaLIuWAKNr4VFRF2C3Rjjn7Ese5fijEW6295rMBIyddZfuIOcvH1aZ/yKzy8vQ=="],
+
+    "@redis/client": ["@redis/client@6.4.0", "", { "peerDependencies": { "@node-rs/xxhash": "^1.1.0", "@opentelemetry/api": ">=1 <2" }, "optionalPeers": ["@node-rs/xxhash", "@opentelemetry/api"] }, "sha512-XEFSX0W1BUVFwtWC41vk5P/U5CqvacBWypFbmYHdF1gJeIYWWmEzsM2R5mPb+65SdODFQk7xuuMPFP6s1t9nhw=="],
+
+    "@redis/json": ["@redis/json@6.4.0", "", { "peerDependencies": { "@redis/client": "^6.4.0" } }, "sha512-Dtxn3c2u5H5r3MA6kMrFI6iSOo4BIwibwkep94BMBD5ba1Eik1UYIwInX9lZ10RdUT4+BD7ZS9lAoORBvXUEYg=="],
+
+    "@redis/search": ["@redis/search@6.4.0", "", { "peerDependencies": { "@redis/client": "^6.4.0" } }, "sha512-B4L2OD5BMwbOYewQ9KGJfukLUkRQz1gc91TEOxz76KLeJsLbHB0XXa7sKMNoB3JURPWvhuY0PE04fHQVYZPZKg=="],
+
+    "@redis/time-series": ["@redis/time-series@6.4.0", "", { "peerDependencies": { "@redis/client": "^6.4.0" } }, "sha512-5QpeIlX/r0h0//JfJ8h4/Il9i0SGHhnOkdcocOhFDp0pb8VgVCEkxeCkUx8IR3g3rlq+uiPIf4NCueveHS9Vbw=="],
 
     "@rolldown/binding-android-arm-eabi": ["@rolldown/binding-android-arm-eabi@1.2.19", "", { "os": "android", "cpu": "arm" }, "sha512-e+Ebe0WT+9tbXmNKPIiC8YrWAHYwug3m6i4p3rZGGulfZri1jtI4HslT+OZnFf/OIHowWF71DTlHwXBP2SiA7A=="],
 
@@ -558,6 +573,8 @@
 
     "react-is": ["react-is@17.0.2", "", {}, "sha512-w2GsyukL62IJnlaff/nRegPQR94C/XXamvMWmSHRJ4y7Ts/4ocGRmTHvOs8PSE6pB3dWOrD/nueuU5sduBsQ4w=="],
 
+    "redis": ["redis@6.4.0", "", { "dependencies": { "@redis/bloom": "6.4.0", "@redis/client": "6.4.0", "@redis/json": "6.4.0", "@redis/search": "6.4.0", "@redis/time-series": "6.4.0" } }, "sha512-8Xk9zRovBNDzIO3xRi036QFgijIZKeIPjQJ5VhgxV8nxkxDP5GlE5se71G1I4TnUTojbCtmfKzXpioxlDhHJvg=="],
+
     "require-from-string": ["require-from-string@2.0.2", "", {}, "sha512-Xf0nWe6RseziFMu+Ap9biiUbmplq6S9/p+7w7YXP/JBHhrUDDUhwa+vANyubuqfZWTveU//DYVGsDG7RKL/vEw=="],
 
     "reselect": ["reselect@5.3.0", "", {}, "sha512-XGoLeRAVzUTcJ1qkxPQhDJyIZ5d6zzZD9nT7AEZOaaU9UbWclhycElmhO+VD5bFeLuzhPBaOV2oXC8uG35ZSpg=="],
@@ -619,6 +636,8 @@
     "type-is": ["type-is@2.1.0", "", { "dependencies": { "content-type": "^2.0.0", "media-typer": "^1.1.0", "mime-types": "^3.0.0" } }, "sha512-faYHw0anBbc/kWF3zFTEnxSFOAGUX9GFbOBthvDdLsIlEoWOFOtS0zgCiQYwIskL9iGXZL3kAXD8OoZ4GmMATA=="],
 
     "typescript": ["typescript@7.0.2", "", { "optionalDependencies": { "@typescript/typescript-aix-ppc64": "7.0.2", "@typescript/typescript-darwin-arm64": "7.0.2", "@typescript/typescript-darwin-x64": "7.0.2", "@typescript/typescript-freebsd-arm64": "7.0.2", "@typescript/typescript-freebsd-x64": "7.0.2", "@typescript/typescript-linux-arm": "7.0.2", "@typescript/typescript-linux-arm64": "7.0.2", "@typescript/typescript-linux-loong64": "7.0.2", "@typescript/typescript-linux-mips64el": "7.0.2", "@typescript/typescript-linux-ppc64": "7.0.2", "@typescript/typescript-linux-riscv64": "7.0.2", "@typescript/typescript-linux-s390x": "7.0.2", "@typescript/typescript-linux-x64": "7.0.2", "@typescript/typescript-netbsd-arm64": "7.0.2", "@typescript/typescript-netbsd-x64": "7.0.2", "@typescript/typescript-openbsd-arm64": "7.0.2", "@typescript/typescript-openbsd-x64": "7.0.2", "@typescript/typescript-sunos-x64": "7.0.2", "@typescript/typescript-win32-arm64": "7.0.2", "@typescript/typescript-win32-x64": "7.0.2" }, "bin": { "tsc": "bin/tsc" } }, "sha512-8FYau96o3NKOhbjKi/qNvG/W5jhzxkbdm5sj9AbZ/5T5sWqn3hJgLfGx27sRKZWTvyzCP8dLRBTf5tBTSRVUNA=="],
+
+    "undici": ["undici@8.14.0", "", {}, "sha512-MqM6wqORYo0jb1WFUwFKZTFWFz6VeBMPj9op5Hq+RvlrQjISQCyLEfx5+/iqOLWC/LL1HliJ5t0NP1BgYpXeVQ=="],
 
     "undici-types": ["undici-types@8.9.0", "", {}, "sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg=="],
 

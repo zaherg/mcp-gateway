@@ -1,6 +1,7 @@
 import type { Renderer } from '@effect/ui';
 import { BrowserHost } from '@effect/ui/html';
-import { Effect, Exit, Layer, Scope } from 'effect';
+import { DevTools } from '@effect/ui-devtools';
+import { Effect, Exit, Fiber, Layer, Scope } from 'effect';
 import { useEffect, useRef } from 'react';
 
 import {
@@ -37,21 +38,42 @@ export const Logs = ({ client, servers }: LogsProps) => {
     if (!container) return;
 
     const scope = Scope.makeUnsafe();
-    const layers = LogsCommandLayers.pipe(
+    const useDevTools = import.meta.env.DEV && !('Bun' in globalThis);
+    const commandLayers = LogsCommandLayers.pipe(
       Layer.provide(
         Layer.mergeAll(LogsRpc.fromAppClient(client), LogsDom.fromContainer(container)),
       ),
     );
+    const layers =
+      import.meta.env.DEV && !('Bun' in globalThis)
+        ? Layer.mergeAll(commandLayers, DevTools.layer({ position: 'BottomRight' }))
+        : commandLayers;
 
-    const root = Effect.runSync(
-      Effect.gen(function* () {
-        const context = yield* Layer.buildWithScope(layers, scope);
-        return yield* BrowserHost.mountEffect(LogsView, latestPropsRef.current, container, {
-          head: false,
-        }).pipe(Effect.provideContext(context), Effect.provideService(Scope.Scope, scope));
-      }),
-    );
-    rootRef.current = root;
+    const mountProgram = Effect.gen(function* () {
+      const context = yield* Layer.buildWithScope(layers, scope);
+      return yield* BrowserHost.mountEffect(LogsView, latestPropsRef.current, container, {
+        head: false,
+      }).pipe(Effect.provideContext(context), Effect.provideService(Scope.Scope, scope));
+    });
+
+    let disposed = false;
+    let mountFiber: Fiber.Fiber<LogsRoot> | null = null;
+
+    if (useDevTools) {
+      mountFiber = Effect.runFork(
+        mountProgram.pipe(
+          Effect.tap((root) =>
+            Effect.sync(() => {
+              if (disposed) return;
+              rootRef.current = root;
+              root.setProps(latestPropsRef.current);
+            }),
+          ),
+        ),
+      );
+    } else {
+      rootRef.current = Effect.runSync(mountProgram);
+    }
 
     // Forward direct `window` keydown dispatches (such as DOM tests targeting `window`)
     // without duplicating events that already originate inside `document`.
@@ -62,15 +84,19 @@ export const Logs = ({ client, servers }: LogsProps) => {
         event.key.toLowerCase() === 'f'
       ) {
         event.preventDefault();
-        root.send(LogsMessage.PressedFindShortcut());
+        rootRef.current?.send(LogsMessage.PressedFindShortcut());
       }
     };
     window.addEventListener('keydown', onWindowKeyDown);
 
     return () => {
+      disposed = true;
       window.removeEventListener('keydown', onWindowKeyDown);
       rootRef.current = null;
-      Effect.runFork(Scope.close(scope, Exit.void));
+      const closeScope = Scope.close(scope, Exit.void);
+      Effect.runFork(
+        mountFiber ? Fiber.interrupt(mountFiber).pipe(Effect.andThen(closeScope)) : closeScope,
+      );
     };
   }, [client]);
 

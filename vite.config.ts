@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { resolve } from 'node:path';
 
+import { DevToolsVite } from '@effect/ui-devtools/node';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
@@ -15,6 +16,8 @@ export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
+    // Dev-only Effect UI DevTools MCP server + HMR state preservation; overlay is mounted by Logs.tsx.
+    DevToolsVite.plugin({ dispatch: true, overlay: false }),
     {
       // Vite nonces its refresh preamble and injected styles; packaged CSP is unchanged.
       name: 'development-csp',
@@ -29,7 +32,7 @@ export default defineConfig({
             throw new Error('The development CSP transform must match the renderer policy.');
           return html.replace(
             policy,
-            `script-src 'self' 'nonce-${nonce}'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws://127.0.0.1:*;`,
+            `script-src 'self' 'nonce-${nonce}'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws://127.0.0.1:*; frame-src 'self';`,
           );
         },
       },
