@@ -105,9 +105,20 @@ Tested directly against `MCP Gateway-dev.app` running under `bun run dev` (`Cmd+
 3. **Secret redaction caught and fixed live with `Schema.Redacted`.** Initially, calling `get_state` on `/SettingsView` exposed literal `model.tokenInput` and `props.savedConfig.token` in plaintext over local MCP (`127.0.0.1:4774/mcp`) because both fields used plain `Schema.String`. Wrapping all token fields across `SettingsProps`, `SettingsModel`, `SettingsMessage`, and `GatewayMutation` in `Schema.Redacted(Schema.String)` fixed the leak: live `get_state` on `MCP Gateway-dev.app` now returns `{ "~redacted": true }` for both `model.tokenInput` and `props.savedConfig.token`, and `tests/effect-settings/SettingsView.story.test.ts` guards wire redaction with `MessageLog.redactSchema`.
 4. **Live Logs inspection and clean `Settings <-> Logs` session handoff.** Switching `Settings` (`Cmd+3`) -> `Logs` (`Cmd+2`) -> `Settings` (`Cmd+3`) cleanly disconnected every previous Effect UI session (`connected: false`), kept exactly `1` connected session at a time, and showed `/LogsView` running `1` `SchedulePollWait` timer with `cursor: 10`, `readError: null`, `clearError: null`, and live `bear` session traffic.
 
-### Overview live inspection status
+### Verified live in the running macOS Electrobun dev app (Overview CRUD + full 3-tab handoff)
 
-`MCP Gateway-dev.app` was not running during the Overview migration pass; `OverviewView` carries no secret fields in Props or Model (only server names, transports, targets, statuses, live errors, and listener address) and wires the same dev-only `DevTools.layer({ position: 'BottomRight' })` mount pattern verified on `LogsView` and `SettingsView`.
+Tested directly against `MCP Gateway-dev.app` running under `bun run dev` (Vite `127.0.0.1:5173` + DevTools server `127.0.0.1:4774`).
+
+1. **Visual rendering and zero-secret state on `/OverviewView`.** Overview rendered `Servers 2`, the `Gateway running 192.168.68.130:8765` pill, teal `Add server` CTA, both live server rows (`bear` and `Herd`) with green LEDs, `@effect/ui-kit` `Switch` toggles, all four action icons, and the bottom-right DevTools launcher (`[UI] 0`). Live `get_state` confirmed no secret or bearer token fields exist in `OverviewProps` or `OverviewModel`.
+2. **Live server test (`bear`).** Dispatching `ClickedTestServer({ name: "bear" })` ran the real gateway probe against `bearcli`, settled to `{ state: "passed", message: "Server answered through the gateway (MCP 2025-06-18)." }`, and rendered the green checkmark badge in the `bear` row.
+3. **Full server Add -> Edit -> Test (fail) -> Toggle -> Copy -> Delete lifecycle.**
+   - **Add:** `ClickedAddServer` opened `ServerEditor`, submitted temporary server `spike-test-srv`, mounted `/mcp/spike-test-srv` (`Servers 3`), and hid `bear`'s prior-revision test badge.
+   - **Edit:** `ClickedEditServer({ name: "spike-test-srv" })` opened the pre-populated edit dialog, switched transport from `STDIO` to `HTTP` (`http://127.0.0.1:19998/mcp`), and updated the row live.
+   - **Test (failure):** `ClickedTestServer({ name: "spike-test-srv" })` settled to `state: "failed"` and rendered the red `X` badge.
+   - **Toggle + outdated test invalidation:** `ToggledServer({ name: "spike-test-srv", enabled: false })` slid the `@effect/ui-kit` `Switch` to OFF, dimmed the test button, set `status: "disabled"`, and `ClearedOutdatedTest` cleared `model.test` to `null`. Toggling back ON restored `status: "mounted"`.
+   - **Copy client config + 1500ms expiry:** `ClickedCopyClientConfig({ name: "spike-test-srv" })` set `model.copiedServer: "spike-test-srv"` and `ExpireCopiedBadge` reset it to `null` after `1500ms`.
+   - **Delete:** `ClickedDeleteServer({ name: "spike-test-srv" })` opened the native macOS confirmation dialog; clicking `Delete server` removed `spike-test-srv` and restored `Servers 2` (`bear`, `Herd`).
+4. **Full 3-tab session handoff (`Overview -> Settings -> Logs -> Overview`).** Switching via `Cmd+3` -> `Cmd+2` -> `Cmd+1` disconnected every previous session (`connected: false, controllable: false`) and kept exactly `1` connected session active at all times. `/SettingsView` confirmed `{ "~redacted": true }` on both `model.tokenInput` and `props.savedConfig.token`, and `/LogsView` showed `pollPhase: "polling"`, `cursor: 8`, `readError: null`, and the live `bear` handshake and `spike-test-srv` failure entries.
 
 ## Practical takeaway for `develop`
 
