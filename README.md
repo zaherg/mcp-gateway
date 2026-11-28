@@ -6,6 +6,12 @@ It shares local stdio MCP servers and remote Streamable HTTP MCP servers with ot
 > [!NOTE]
 > There will be no more changes for the next few weeks/months as I have everything I need from the project. So unless there is something broken I don't think anything will change any soon.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/overview-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/overview-light.png">
+  <img alt="MCP Gateway Overview showing configured servers and running gateway status" src="docs/images/overview-dark.png">
+</picture>
+
 ## Platform support
 
 The app runs on Apple silicon Macs (arm64) with macOS 14.0 or newer.
@@ -29,6 +35,12 @@ If an existing configuration contains plaintext keys, **Settings â†’ Security â†
 
 Each server gets its own endpoint, such as `http://192.168.1.120:8765/mcp/bear`.
 [Getting started](docs/getting-started.md) walks through the same steps with the fields to fill in.
+
+## Screenshots
+
+| Settings | Diagnostic logs |
+| --- | --- |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/settings-dark.png"><source media="(prefers-color-scheme: light)" srcset="docs/images/settings-light.png"><img alt="MCP Gateway Settings showing General, Appearance, Language and Network preferences" src="docs/images/settings-dark.png"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/logs-dark.png"><source media="(prefers-color-scheme: light)" srcset="docs/images/logs-light.png"><img alt="MCP Gateway Diagnostic logs with filters, Follow Tail switch and Clear logs icon" src="docs/images/logs-dark.png"></picture> |
 
 ## Documentation
 
