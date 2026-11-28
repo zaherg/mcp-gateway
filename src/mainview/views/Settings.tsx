@@ -17,7 +17,7 @@ import {
   type MessageKey,
   parseLanguagePreference,
 } from '@mcp-gateway/shared/i18n';
-import { needsLoginRetry } from '@mcp-gateway/shared/rpc';
+import { needsLoginRetry, parseAppearancePreference } from '@mcp-gateway/shared/rpc';
 import type { ConfigFile, NetworkKind } from '@mcp-gateway/shared/types';
 
 const NETWORK_LABELS: Record<NetworkKind, MessageKey> = {
@@ -48,7 +48,9 @@ export const Settings = () => {
     dirty,
     busy,
     error,
+    operationalError,
     clearError,
+    dismissOperationalError,
     configurationLocked,
     commitConfig,
     showToken,
@@ -56,6 +58,7 @@ export const Settings = () => {
     filename,
     openKeyMigration,
     changeLanguage,
+    changeAppearance,
     revealConfig,
     openConfigInEditor,
     importExternalServers,
@@ -71,7 +74,6 @@ export const Settings = () => {
   );
   const [peersText, setPeersText] = useState(config?.gateway.allowedPeers?.join(', ') ?? '');
   const [tokenInput, setTokenInput] = useState(config?.gateway.token ?? '');
-  const [dismissedOpErrorId, setDismissedOpErrorId] = useState<string | null>(null);
   const [importStatus, setImportStatus] = useState<string | null>(null);
 
   const revision = gateway?.revision;
@@ -131,18 +133,12 @@ export const Settings = () => {
       !gateway?.configError &&
       needsLoginRetry(snapshot.login, config.gateway.launchAtLogin ?? false),
   );
-  const operationalError =
-    gateway?.operationalError &&
-    gateway.operationalError.occurrenceId !== dismissedOpErrorId &&
-    !error
-      ? gateway.operationalError
-      : null;
 
   return (
     <section className="panel settings-panel">
       {error && <Alert onDismiss={clearError}>{error}</Alert>}
       {operationalError && (
-        <Alert onDismiss={() => setDismissedOpErrorId(operationalError.occurrenceId)}>
+        <Alert onDismiss={dismissOperationalError}>
           {operationalError.code}: {operationalError.message}
         </Alert>
       )}
@@ -164,31 +160,31 @@ export const Settings = () => {
               onChange={(value) => setGateway({ launchAtLogin: value })}
             />
             <div className="login-status">
-              <p className="login-state">
-                <span
-                  className={`led ${snapshot.login.supported && snapshot.login.enabled ? 'on' : ''}`}
-                />
-                {!snapshot.login.supported
-                  ? t('settings.loginItemUnsupported')
-                  : snapshot.login.enabled
-                    ? t('settings.loginItemEnabled')
-                    : t('settings.loginItemDisabled')}
-              </p>
-              {snapshot.login.error && <p className="inline-error">{snapshot.login.error}</p>}
+              <div className="min-w-0 flex-1">
+                <p className="login-state">
+                  <span
+                    className={`led ${snapshot.login.supported && snapshot.login.enabled ? 'on' : ''}`}
+                  />
+                  {!snapshot.login.supported
+                    ? t('settings.loginItemUnsupported')
+                    : snapshot.login.enabled
+                      ? t('settings.loginItemEnabled')
+                      : t('settings.loginItemDisabled')}
+                </p>
+                {snapshot.login.error && <p className="inline-error">{snapshot.login.error}</p>}
+                <small>{t('settings.loginItemNote')}</small>
+              </div>
               {retryLogin && (
-                <div className="mt-1">
-                  <Button
-                    size="lg"
-                    disabled={configurationLocked}
-                    onClick={() =>
-                      setGateway({ launchAtLogin: config.gateway.launchAtLogin ?? false })
-                    }
-                  >
-                    {t('draft.retryLogin')}
-                  </Button>
-                </div>
+                <Button
+                  size="lg"
+                  disabled={configurationLocked}
+                  onClick={() =>
+                    setGateway({ launchAtLogin: config.gateway.launchAtLogin ?? false })
+                  }
+                >
+                  {t('draft.retryLogin')}
+                </Button>
               )}
-              <small>{t('settings.loginItemNote')}</small>
             </div>
             <Toggle
               label={t('settings.autoStart')}
@@ -204,8 +200,28 @@ export const Settings = () => {
               checked={config.gateway.keepAwake ?? false}
               onChange={(value) => setGateway({ keepAwake: value || undefined })}
             />
-            <Field label={t('shell.languageLabel')} help={t('shell.languageHelp')}>
+            <Field label={t('shell.appearanceLabel')} help={t('shell.appearanceHelp')} layout="row">
               <NativeSelect
+                size="md"
+                className="w-fit max-w-56 shrink-0"
+                value={snapshot.appearance}
+                disabled={configurationLocked || busy}
+                onChange={(event) => {
+                  const preference = parseAppearancePreference(event.target.value);
+                  if (preference) changeAppearance(preference);
+                }}
+              >
+                <NativeSelectOption value="system">
+                  {t('shell.appearanceSystem')}
+                </NativeSelectOption>
+                <NativeSelectOption value="light">{t('shell.appearanceLight')}</NativeSelectOption>
+                <NativeSelectOption value="dark">{t('shell.appearanceDark')}</NativeSelectOption>
+              </NativeSelect>
+            </Field>
+            <Field label={t('shell.languageLabel')} help={t('shell.languageHelp')} layout="row">
+              <NativeSelect
+                size="md"
+                className="w-fit max-w-56 shrink-0"
                 value={snapshot.language.preference}
                 disabled={configurationLocked || busy}
                 onChange={(event) => {

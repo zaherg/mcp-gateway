@@ -13,6 +13,7 @@ import {
 import { join } from 'node:path';
 
 import { GatewayError } from '@mcp-gateway/core/errors';
+import { AppearanceStore } from '@mcp-gateway/main/appearance';
 import { KeyReminderStore } from '@mcp-gateway/main/key-reminder';
 import { LanguageStore } from '@mcp-gateway/main/language';
 import { readPrivateJson, writePrivateJsonAtomic } from '@mcp-gateway/main/preferences-store';
@@ -407,5 +408,61 @@ describe('LanguageStore', () => {
     expect(store.state.preference).toBe('fr_FR');
     expect(store.state.locale).toBe('fr_FR');
     expect(store.translate('language.name')).toBe('Français (France)');
+  });
+});
+
+describe('AppearanceStore', () => {
+  test('defaults to system when appearance.json is missing', async () => {
+    const dir = await makeTempDir();
+    const store = await AppearanceStore.open(dir);
+    expect(store.preference).toBe('system');
+  });
+
+  test('set() persists appearance.json with 0o600 mode and reloads', async () => {
+    const dir = await makeTempDir();
+    const store = await AppearanceStore.open(dir);
+
+    await store.set('light');
+    expect(store.preference).toBe('light');
+
+    const filePath = join(dir, 'appearance.json');
+    const fileStat = await stat(filePath);
+    expect(fileStat.mode & 0o777).toBe(0o600);
+    expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
+      schema_version: 1,
+      appearance: 'light',
+    });
+
+    const reopened = await AppearanceStore.open(dir);
+    expect(reopened.preference).toBe('light');
+
+    await reopened.set('dark');
+    expect(reopened.preference).toBe('dark');
+  });
+
+  test('falls back safely to system when appearance.json has an invalid value', async () => {
+    const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const dir = await makeTempDir();
+      await writePrivateJsonAtomic(join(dir, 'appearance.json'), { appearance: 'sepia' });
+      const store = await AppearanceStore.open(dir);
+      expect(store.preference).toBe('system');
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  test('atomic write-before-state-update leaves current preference unchanged when save fails', async () => {
+    const dir = await makeTempDir();
+    const store = await AppearanceStore.open(dir);
+    await store.set('light');
+
+    const filePath = join(dir, 'appearance.json');
+    await rm(filePath);
+    await mkdir(filePath, { mode: 0o700 });
+
+    await expect(store.set('dark')).rejects.toThrow();
+    expect(store.preference).toBe('light');
   });
 });

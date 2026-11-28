@@ -1,4 +1,5 @@
 @import 'tailwindcss';
+@custom-variant dark (&:where([data-appearance='dark'], [data-appearance='dark'] *));
 :root {
   color-scheme: light dark;
   --font-macos:
@@ -60,42 +61,44 @@
   -webkit-font-smoothing: antialiased;
   font-size: 14px;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --mac-blue: #0091ff;
-    --mac-red: #ff4245;
-    --mac-orange: #ff9230;
-    --mac-yellow: #ffd600;
-    --mac-green: #30d158;
-    --mac-indigo: #6d7cff;
-    --mac-accent: #14857e;
-    --mac-selection: #0059d1;
-    --mac-selection-unfocused: rgb(255 255 255 / 0.18);
-    --mac-link: #419cff;
-    --mac-label: rgb(255 255 255 / 0.85);
-    --mac-label-secondary: rgb(255 255 255 / 0.62);
-    --mac-label-tertiary: rgb(255 255 255 / 0.25);
-    --mac-fill-primary: rgb(255 255 255 / 0.1);
-    --mac-fill-secondary: rgb(255 255 255 / 0.08);
-    --mac-fill-tertiary: rgb(255 255 255 / 0.05);
-    --mac-fill-quaternary: rgb(255 255 255 / 0.03);
-    --mac-control: rgb(255 255 255 / 0.08);
-    --mac-control-pressed: rgb(255 255 255 / 0.16);
-    --mac-control-disabled: rgb(255 255 255 / 0.04);
-    --mac-field: #1e1e1e;
-    --mac-field-border: rgb(255 255 255 / 0.04);
-    --mac-window: #1e1f20;
-    --mac-content: #1e2023;
-    --mac-separator: rgb(255 255 255 / 0.05);
-    --mac-grid: rgb(255 255 255 / 0.1);
-    --mac-border: rgb(255 255 255 / 0.1);
-    --mac-sidebar: rgb(41 44 50 / 0.9);
-    --mac-sidebar-selection: rgb(255 255 255 / 0.12);
-    --mac-titlebar: #232528;
-    --mac-shadow-window: 0 0 0 1px rgb(0 0 0 / 0.92), 0 18px 54px rgb(0 0 0 / 0.57);
-    --led-off: rgb(255 255 255 / 0.24);
-    --mac-red-ink: #ff6961;
-  }
+:root[data-appearance='light'] {
+  color-scheme: light;
+}
+:root[data-appearance='dark'] {
+  color-scheme: dark;
+  --mac-blue: #0091ff;
+  --mac-red: #ff4245;
+  --mac-orange: #ff9230;
+  --mac-yellow: #ffd600;
+  --mac-green: #30d158;
+  --mac-indigo: #6d7cff;
+  --mac-accent: #14857e;
+  --mac-selection: #0059d1;
+  --mac-selection-unfocused: rgb(255 255 255 / 0.18);
+  --mac-link: #419cff;
+  --mac-label: rgb(255 255 255 / 0.85);
+  --mac-label-secondary: rgb(255 255 255 / 0.62);
+  --mac-label-tertiary: rgb(255 255 255 / 0.25);
+  --mac-fill-primary: rgb(255 255 255 / 0.1);
+  --mac-fill-secondary: rgb(255 255 255 / 0.08);
+  --mac-fill-tertiary: rgb(255 255 255 / 0.05);
+  --mac-fill-quaternary: rgb(255 255 255 / 0.03);
+  --mac-control: rgb(255 255 255 / 0.08);
+  --mac-control-pressed: rgb(255 255 255 / 0.16);
+  --mac-control-disabled: rgb(255 255 255 / 0.04);
+  --mac-field: #1e1e1e;
+  --mac-field-border: rgb(255 255 255 / 0.04);
+  --mac-window: #1e1f20;
+  --mac-content: #1e2023;
+  --mac-separator: rgb(255 255 255 / 0.05);
+  --mac-grid: rgb(255 255 255 / 0.1);
+  --mac-border: rgb(255 255 255 / 0.1);
+  --mac-sidebar: rgb(41 44 50 / 0.9);
+  --mac-sidebar-selection: rgb(255 255 255 / 0.12);
+  --mac-titlebar: #232528;
+  --mac-shadow-window: 0 0 0 1px rgb(0 0 0 / 0.92), 0 18px 54px rgb(0 0 0 / 0.57);
+  --led-off: rgb(255 255 255 / 0.24);
+  --mac-red-ink: #ff6961;
 }
 [data-slot='window'][data-inactive] {
   --mac-accent: rgb(0 0 0 / 0.14);
@@ -104,14 +107,12 @@
   --mac-sidebar-selection: rgb(0 0 0 / 0.04);
   --mac-titlebar: #ffffff;
 }
-@media (prefers-color-scheme: dark) {
-  [data-slot='window'][data-inactive] {
-    --mac-accent: rgb(255 255 255 / 0.21);
-    --mac-content: #202226;
-    --mac-sidebar: #24272d;
-    --mac-sidebar-selection: rgb(255 255 255 / 0.065);
-    --mac-titlebar: #282a2d;
-  }
+:root[data-appearance='dark'] [data-slot='window'][data-inactive] {
+  --mac-accent: rgb(255 255 255 / 0.21);
+  --mac-content: #202226;
+  --mac-sidebar: #24272d;
+  --mac-sidebar-selection: rgb(255 255 255 / 0.065);
+  --mac-titlebar: #282a2d;
 }
 @theme inline {
   --font-sans: var(--font-macos);
@@ -456,6 +457,9 @@ main {
   display: grid;
   gap: 20px;
 }
+.workspace > [data-slot='alert'] {
+  margin-bottom: 0;
+}
 .section-heading {
   display: flex;
   gap: 16px;
@@ -555,7 +559,7 @@ main {
   display: flex;
   align-items: center;
   gap: 4px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: flex-end;
 }
 .server-row-detail {
@@ -764,6 +768,26 @@ main {
 .field small.raw-feedback-error {
   color: var(--mac-red-ink);
 }
+.field-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 12px 0;
+}
+.field-row:last-child {
+  padding-bottom: 0;
+}
+.field-row-copy {
+  min-width: 0;
+}
+.field-row small {
+  display: block;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--mac-label-secondary);
+  margin-top: 4px;
+}
 .kv-table,
 .args-list {
   display: flex;
@@ -806,6 +830,10 @@ main {
   margin-top: 2px;
 }
 .login-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
   padding: 0 0 12px;
   border-bottom: 1px solid var(--mac-separator);
 }
@@ -867,9 +895,6 @@ dialog::backdrop {
   color: var(--mac-label-secondary);
   line-height: 1.6;
   margin-bottom: 20px;
-}
-dialog [data-slot='alert'] {
-  margin-bottom: 16px;
 }
 .checkbox-row {
   display: flex;
@@ -1015,15 +1040,20 @@ dialog [data-slot='alert'] {
   flex-direction: column;
 }
 .log-row {
-  display: grid;
-  grid-template-columns: auto auto minmax(80px, 120px) 1fr auto;
-  align-items: baseline;
-  gap: 10px;
-  padding: 5px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 10px;
   border-bottom: 1px solid var(--mac-separator);
   font-family: var(--font-macos-mono);
   font-size: 11px;
   line-height: 1.5;
+}
+.log-row-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 .log-row:last-child {
   border-bottom: 0;
@@ -1057,6 +1087,7 @@ dialog [data-slot='alert'] {
   color: var(--mac-red-ink);
 }
 .log-source {
+  min-width: 0;
   color: var(--mac-label-secondary);
   overflow: hidden;
   text-overflow: ellipsis;

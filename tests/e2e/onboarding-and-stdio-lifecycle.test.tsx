@@ -226,7 +226,7 @@ describe('Full-stack E2E: onboarding & stdio server lifecycle', () => {
     await postRestartRes.text();
   }, 20_000);
 
-  test('E2E-04: editing stdio server (custom token + legacy protocol), toggling, restarting, and deleting while running', async () => {
+  test('E2E-04: editing stdio server (custom token + legacy protocol), toggling, and deleting while running', async () => {
     const port = await reserveLoopbackPort();
     const globalToken = 'g'.repeat(64);
     const initialConfigText = JSON.stringify(
@@ -379,29 +379,6 @@ describe('Full-stack E2E: onboarding & stdio server lifecycle', () => {
     });
     expect(remountedRes.status).toBe(200);
     await remountedRes.text();
-
-    // Restart alpha-stdio from Overview and wait for the backend restart to finish
-    fireEvent.click(view.getByRole('button', { name: 'Restart alpha-stdio' }));
-    await waitFor(
-      () => {
-        const restarted = app.controller
-          .readLogs({ after: 0 })
-          .entries.some((entry) => entry.text === 'A backend endpoint was restarted.');
-        const toggleButton = view.getByRole('button', {
-          name: 'Stop gateway',
-        }) as HTMLButtonElement;
-        expect(restarted && !toggleButton.disabled).toBe(true);
-      },
-      { timeout: 10_000 },
-    );
-    const postRestartRes = await postModernJsonRpc(endpointUrl, serverHeaders, {
-      jsonrpc: '2.0',
-      id: 14,
-      method: 'tools/list',
-      params: { _meta: modernMeta() },
-    });
-    expect(postRestartRes.status).toBe(200);
-    await postRestartRes.text();
 
     // Delete alpha-stdio (confirmed via native dialog mock) -> removed from disk & 404
     fireEvent.click(view.getByRole('button', { name: 'Delete alpha-stdio' }));

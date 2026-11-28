@@ -99,6 +99,7 @@ export class GatewayIngress {
   ) {
     this.selected = selectInterface(config.gateway.host);
     this.allowedPeerRanges = compileAllowedPeers(config.gateway.allowedPeers);
+    if (config.gateway.token) this.logs.registerSecrets([config.gateway.token]);
     this.server = createServer(
       { maxHeaderSize: 16 * 1024, headersTimeout: 10_000, requestTimeout: REQUEST_DEADLINE_MS },
       (req, res) => this.handle(req, res),
@@ -320,14 +321,6 @@ export class GatewayIngress {
     if (this.closed) throw failure('Closed', 'The listener is closed.');
   }
 
-  async restart(name: string, control?: SelfProxyOptions) {
-    const server = this.config.mcpServers[name];
-    if (!Object.hasOwn(this.config.mcpServers, name) || !server || server.disabled)
-      throw failure('BackendFailure', 'Select an enabled configured server to restart.');
-    await this.remove(name);
-    await this.reconcile(this.config, control);
-  }
-
   async testServer(name: string) {
     const server = Object.hasOwn(this.config.mcpServers, name)
       ? this.config.mcpServers[name]
@@ -344,6 +337,8 @@ export class GatewayIngress {
         token: effectiveServerToken(this.config.gateway, server),
         server,
         stopped: check.stop.signal,
+        onDiagnostic: (level, values) =>
+          this.logs.append({ server: name, level, source: 'controller' }, values),
       });
     } finally {
       if (this.check === check) this.check = undefined;

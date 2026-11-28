@@ -4,7 +4,7 @@ import { MODERN_VERSION } from '@mcp-gateway/core/adapter';
 import { isDisallowedUpstreamUrl, isHttpServer } from '@mcp-gateway/core/config';
 import { failure } from '@mcp-gateway/core/errors';
 import { boundedBackendResponse } from '@mcp-gateway/core/limits';
-import type { HttpServerConfig, StdioServerConfig } from '@mcp-gateway/shared/types';
+import type { HttpServerConfig, LogLevel, StdioServerConfig } from '@mcp-gateway/shared/types';
 
 // Matches the gateway's own request deadline.
 const CHECK_MS = 30_000;
@@ -25,22 +25,59 @@ interface EndpointCheck {
   server: StdioServerConfig | HttpServerConfig;
   /** Aborted by Stop, quit or removal of this endpoint. */
   stopped: AbortSignal;
+  /** Optional sink for test diagnostics recorded in Logs. */
+  onDiagnostic?: (level: LogLevel, values: readonly unknown[]) => void;
 }
 
 /** What the handshake's first POST revealed; the SDK reports several causes with one error. */
 interface HandshakeReply {
   status: number | undefined;
+  contentType: string | undefined;
   code: number | undefined;
+  message: string | undefined;
 }
 
-const jsonRpcErrorCode = (text: string) => {
+const jsonRpcError = (text: string): { code?: number; message?: string } => {
   try {
-    const code = (JSON.parse(text) as { error?: { code?: unknown } } | null)?.error?.code;
-    return typeof code === 'number' ? code : undefined;
+    const error = (JSON.parse(text) as { error?: { code?: unknown; message?: unknown } } | null)
+      ?.error;
+    return {
+      code: typeof error?.code === 'number' ? error.code : undefined,
+      message: typeof error?.message === 'string' ? error.message : undefined,
+    };
   } catch {
     // The SDK reports malformed JSON itself.
-    return undefined;
+    return {};
   }
+};
+
+const errorDetail = (error: unknown): string => {
+  if (!(error instanceof Error)) return String(error);
+  const cause = error.cause instanceof Error ? error.cause.message : undefined;
+  return cause && !error.message.includes(cause) ? `${error.message} (${cause})` : error.message;
+};
+
+const diagnosticSummary = (error: unknown, reply: HandshakeReply, timedOut: boolean) => {
+  const details: string[] = [];
+  if (timedOut) details.push('timed out after 30s');
+  if (reply.status !== undefined) {
+    details.push(
+      reply.contentType && reply.contentType !== 'application/json'
+        ? `HTTP ${reply.status}, ${reply.contentType}`
+        : `HTTP ${reply.status}`,
+    );
+  }
+  const thrown = (error as { code?: unknown } | null)?.code;
+  const code = typeof thrown === 'number' ? thrown : reply.code;
+  if (code !== undefined) {
+    details.push(reply.message ? `JSON-RPC ${code}: ${reply.message}` : `JSON-RPC ${code}`);
+  } else if (reply.message) {
+    details.push(reply.message);
+  }
+  const prefix = details.length
+    ? `Server test failed (${details.join(', ')}):`
+    : 'Server test failed:';
+  return [prefix, errorDetail(error)] as const;
 };
 
 const commandAdvice = (server: StdioServerConfig) =>
@@ -87,7 +124,13 @@ const explainFailure = (
 };
 
 /** Sends the handshake a client would send, through the gateway's own route and policy. */
-export const checkEndpoint = async ({ url, token, server, stopped }: EndpointCheck) => {
+export const checkEndpoint = async ({
+  url,
+  token,
+  server,
+  stopped,
+  onDiagnostic,
+}: EndpointCheck) => {
   if (isDisallowedUpstreamUrl(url))
     throw failure(
       'NetworkPolicy',
@@ -108,7 +151,12 @@ export const checkEndpoint = async ({ url, token, server, stopped }: EndpointChe
   }
   const deadline = AbortSignal.timeout(CHECK_MS);
   const lifetime = AbortSignal.any([stopped, deadline]);
-  const reply: HandshakeReply = { status: undefined, code: undefined };
+  const reply: HandshakeReply = {
+    status: undefined,
+    contentType: undefined,
+    code: undefined,
+    message: undefined,
+  };
   const transport = new StreamableHTTPClientTransport(url, {
     requestInit: { headers: { Authorization: `Bearer ${token}` } },
     reconnectionOptions: {
@@ -135,12 +183,14 @@ export const checkEndpoint = async ({ url, token, server, stopped }: EndpointChe
       // Only the first POST, the handshake, explains a failure.
       if (init?.method !== 'POST' || reply.status !== undefined) return response;
       reply.status = response.status;
-      if (response.headers.get('content-type')?.split(';')[0]?.trim() !== 'application/json')
-        return response;
+      reply.contentType = response.headers.get('content-type')?.split(';')[0]?.trim() || undefined;
+      if (reply.contentType !== 'application/json') return response;
       // In 2026-07-28 mode the SDK reports every rejected discover the same way, so keep
       // the JSON-RPC code here. The body is read once and handed on unchanged.
       const text = await response.text();
-      reply.code = jsonRpcErrorCode(text);
+      const rpcError = jsonRpcError(text);
+      reply.code = rpcError.code;
+      reply.message = rpcError.message;
       return new Response(text, {
         status: response.status,
         headers: response.headers,
@@ -165,6 +215,9 @@ export const checkEndpoint = async ({ url, token, server, stopped }: EndpointChe
     passed = true;
     return { protocolVersion };
   } catch (error) {
+    if (!stopped.aborted) {
+      onDiagnostic?.('error', diagnosticSummary(error, reply, deadline.aborted));
+    }
     throw explainFailure(error, server, reply, {
       cancelled: stopped.aborted,
       timedOut: deadline.aborted,

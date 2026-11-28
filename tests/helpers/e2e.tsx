@@ -9,6 +9,7 @@ import { MODERN_VERSION } from '@mcp-gateway/core/adapter';
 import { McpGatewayController } from '@mcp-gateway/core/controller';
 import type { PreventIdleSleep } from '@mcp-gateway/core/ingress';
 import type { UpdateRuntime } from '@mcp-gateway/main/app-updater';
+import { AppearanceStore } from '@mcp-gateway/main/appearance';
 import { KeyReminderStore } from '@mcp-gateway/main/key-reminder';
 import { LanguageStore } from '@mcp-gateway/main/language';
 import { AppService, type LoginManager } from '@mcp-gateway/main/service';
@@ -275,6 +276,7 @@ export const bootFullStackApp = async (
   const existingInstall = options.existingInstall ?? false;
   const keyReminder = await KeyReminderStore.open(dataDirectory, existingInstall);
   const language = await LanguageStore.open(dataDirectory, 'en_US', [...CATALOG_LOCALES]);
+  const appearance = await AppearanceStore.open(dataDirectory);
   // Pass `false` so `<WhatsNew />` never covers `<Overview />` when `existingInstall` is used
   // to test the plaintext key reminder banner.
   const whatsNew = await WhatsNewStore.open(dataDirectory, '0.9.0', false);
@@ -329,6 +331,8 @@ export const bootFullStackApp = async (
       retireKeyReminder: () => keyReminder.retire(),
       language: () => language.state,
       setLanguage: (preference) => language.set(preference),
+      appearance: () => appearance.preference,
+      setAppearance: (preference) => appearance.set(preference),
     },
     updates,
   );
@@ -356,7 +360,6 @@ export const bootFullStackApp = async (
     quitStatus: () => handlers.quitStatus(),
     start: wrapHandler(() => handlers.start()),
     stop: wrapHandler(() => handlers.stop()),
-    restartServer: wrapHandler((params) => handlers.restartServer(params)),
     testServer: (params) => handlers.testServer(params),
     saveConfig: wrapHandler((params) => handlers.saveConfig(params)),
     migrateKeys: wrapHandler((params) => handlers.migrateKeys(params)),
@@ -376,6 +379,7 @@ export const bootFullStackApp = async (
     updatesInstall: wrapHandler(() => handlers.updatesInstall()),
     updatesSetAutomatic: wrapHandler((params) => handlers.updatesSetAutomatic(params)),
     setLanguage: wrapHandler((params) => handlers.setLanguage(params)),
+    setAppearance: wrapHandler((params) => handlers.setAppearance(params)),
     updatesRestart: wrapHandler(() => handlers.updatesRestart()),
     onSnapshotChanged: (listener) => {
       snapshotListeners.add(listener);

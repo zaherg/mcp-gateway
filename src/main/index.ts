@@ -15,6 +15,7 @@ import { parseConfig } from '@mcp-gateway/core/config';
 import { McpGatewayController } from '@mcp-gateway/core/controller';
 import { GatewayError } from '@mcp-gateway/core/errors';
 import { AppUpdater, resolveUpdateSupport } from '@mcp-gateway/main/app-updater';
+import { AppearanceStore } from '@mcp-gateway/main/appearance';
 import { KeyReminderStore } from '@mcp-gateway/main/key-reminder';
 import { openKeychain } from '@mcp-gateway/main/keychain';
 import { LanguageStore } from '@mcp-gateway/main/language';
@@ -113,6 +114,7 @@ const preferredLanguages = (() => {
 const language = await LanguageStore.open(dataDirectory, resolveLocale(preferredLanguages), [
   ...CATALOG_LOCALES,
 ]);
+const appearance = await AppearanceStore.open(dataDirectory);
 const support = await resolveUpdateSupport();
 const whatsNew = await WhatsNewStore.open(dataDirectory, support.installedVersion, existingInstall);
 const TRAY_SIZE = 18;
@@ -358,7 +360,6 @@ const openWindow = () => {
         ...service.handlers,
         start: wrapHandler(service.handlers.start),
         stop: wrapHandler(service.handlers.stop),
-        restartServer: wrapHandler(service.handlers.restartServer),
         saveConfig: wrapHandler(service.handlers.saveConfig),
         importExternalServers: wrapHandler(service.handlers.importExternalServers),
         migrateKeys: wrapHandler(service.handlers.migrateKeys),
@@ -369,6 +370,7 @@ const openWindow = () => {
         updatesInstall: wrapHandler(service.handlers.updatesInstall),
         updatesSetAutomatic: wrapHandler(service.handlers.updatesSetAutomatic),
         setLanguage: wrapHandler(service.handlers.setLanguage),
+        setAppearance: wrapHandler(service.handlers.setAppearance),
         updatesRestart: wrapHandler(service.handlers.updatesRestart),
         snapshot: async (input) => {
           const result = await service.handlers.snapshot(input);
@@ -516,6 +518,11 @@ const service = new AppService(
       // The tray key includes the locale, so the tray rebuilds; the app menu is rebuilt here.
       updateMenu();
       setApplicationMenu();
+      pushSnapshot();
+    },
+    appearance: () => appearance.preference,
+    setAppearance: async (preference) => {
+      await appearance.set(preference);
       pushSnapshot();
     },
   },

@@ -1002,7 +1002,7 @@ describe('Views: Overview, Settings, Updates, Logs', () => {
     );
   });
 
-  test('Overview renders server rows, health status badges, and triggers Add, Edit, Test, Restart, Toggle, and Delete', async () => {
+  test('Overview renders server rows, health status badges, and triggers Add, Edit, Test, Toggle, and Delete', async () => {
     const configText = makeConfigText({
       bear: { command: '/Applications/Bear.app/Contents/MacOS/bearcli', args: ['mcp-server'] },
       remote: { url: 'https://mcp.example.com/sse' },
@@ -1069,14 +1069,6 @@ describe('Views: Overview, Settings, Updates, Logs', () => {
       { name: 'bear', expectedRevision: DEFAULT_REVISION },
     ]);
     expect(bearRow.textContent).toContain(t('overview.testPassed', { version: '2025-11-25' }));
-
-    // Restart button triggers client.restartServer.
-    await act(async () => {
-      fireEvent.click(
-        within(bearRow).getByRole('button', { name: t('overview.restart', { name: 'bear' }) }),
-      );
-    });
-    expect(mockBundle.calls.restartServer).toEqual([{ name: 'bear' }]);
 
     // Edit button opens ServerEditor for that server, and Add Server opens a blank ServerEditor.
     fireEvent.click(within(bearRow).getByRole('button', { name: t('common.editServer') }));
@@ -1413,6 +1405,22 @@ describe('Views: Overview, Settings, Updates, Logs', () => {
     expect(view.getByRole('status').textContent).toContain(
       'Imported 2 servers from Claude Desktop / Cursor.',
     );
+
+    // Appearance selector invokes client.setAppearance and syncs document data-appearance.
+    const appearanceSelect = view.getByLabelText(t('shell.appearanceLabel')) as HTMLSelectElement;
+    await act(async () => {
+      fireEvent.change(appearanceSelect, { target: { value: 'light' } });
+    });
+    expect(mockBundle.calls.setAppearance).toEqual([{ preference: 'light' }]);
+    expect(document.documentElement.dataset.appearance).toBe('light');
+    await act(async () => {
+      fireEvent.change(appearanceSelect, { target: { value: 'dark' } });
+    });
+    expect(mockBundle.calls.setAppearance).toEqual([
+      { preference: 'light' },
+      { preference: 'dark' },
+    ]);
+    expect(document.documentElement.dataset.appearance).toBe('dark');
 
     // Language selector invokes client.setLanguage and updates localized headings.
     const languageSelect = view.getByLabelText(t('shell.languageLabel')) as HTMLSelectElement;
@@ -2109,6 +2117,39 @@ describe('App shell and modal arbitration (src/mainview/App.tsx)', () => {
 
     fireEvent.click(within(nav).getByRole('button', { name: t('shell.tab.overview') }));
     expect(view.container.querySelector('main')?.getAttribute('data-tab')).toBe('overview');
+  });
+
+  test('keeps a dismissed operationalError hidden across tab switches', async () => {
+    const mockBundle = createMockAppClient(
+      makeSnapshot({
+        gateway: {
+          operationalError: {
+            occurrenceId: 'op-tab-1',
+            code: 'ListenerFailure',
+            message: 'Port already in use',
+          },
+        },
+      }),
+    );
+
+    const view = renderWithI18n(<App client={mockBundle.client} />);
+    await waitFor(() => {
+      expect(view.getByRole('alert').textContent).toContain('Port already in use');
+    });
+
+    fireEvent.click(
+      within(view.getByRole('alert')).getByRole('button', { name: t('common.dismissError') }),
+    );
+    expect(view.queryByRole('alert')).toBeNull();
+
+    const nav = view.getByRole('navigation', { name: t('shell.mainNavigation') });
+    fireEvent.click(within(nav).getByRole('button', { name: t('shell.tab.settings') }));
+    expect(view.container.querySelector('main')?.getAttribute('data-tab')).toBe('settings');
+    expect(view.queryByRole('alert')).toBeNull();
+
+    fireEvent.click(within(nav).getByRole('button', { name: t('shell.tab.overview') }));
+    expect(view.container.querySelector('main')?.getAttribute('data-tab')).toBe('overview');
+    expect(view.queryByRole('alert')).toBeNull();
   });
 
   test('arbitrates single active modal across WhatsNew, ServerEditor, KeyMigration, and Updates', async () => {

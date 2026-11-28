@@ -3,6 +3,7 @@ import { fireEvent } from '@testing-library/react';
 import type { Locale } from '@mcp-gateway/shared/i18n';
 import type {
   AppClient,
+  AppearancePreference,
   AppResult,
   AppSnapshot,
   MenuCommand,
@@ -86,6 +87,7 @@ export type SnapshotOverrides = {
   whatsNew?: string | null;
   keyReminder?: boolean;
   language?: Partial<AppSnapshot['language']>;
+  appearance?: AppearancePreference;
   locale?: Locale;
   configPath?: string;
   configFormat?: 'json' | 'jsonc';
@@ -118,6 +120,7 @@ export const makeSnapshot = (overrides: SnapshotOverrides = {}): AppSnapshot => 
       available: ['en_US', 'fr_FR', 'de_DE', 'tr_TR'],
       ...overrides.language,
     },
+    appearance: overrides.appearance ?? 'system',
   };
 };
 
@@ -132,7 +135,6 @@ export interface MockClientBundle {
     saveConfig: Array<{ text: string; expectedRevision: string }>;
     confirmDeleteServer: Array<{ name: string }>;
     confirmDiscard: number;
-    restartServer: Array<{ name: string }>;
     testServer: Array<{ name: string; expectedRevision: string }>;
     migrateKeys: Array<{ gateway: boolean; servers: string[]; expectedRevision: string }>;
     validateConfig: Array<{ text: string }>;
@@ -142,6 +144,7 @@ export interface MockClientBundle {
     dismissKeyReminder: number;
     dismissWhatsNew: number;
     setLanguage: Array<{ preference: string }>;
+    setAppearance: Array<{ preference: AppearancePreference }>;
     updatesCheck: number;
     updatesDownload: number;
     updatesInstall: number;
@@ -164,7 +167,6 @@ export const createMockAppClient = (
     saveConfig: [],
     confirmDeleteServer: [],
     confirmDiscard: 0,
-    restartServer: [],
     testServer: [],
     migrateKeys: [],
     validateConfig: [],
@@ -174,6 +176,7 @@ export const createMockAppClient = (
     dismissKeyReminder: 0,
     dismissWhatsNew: 0,
     setLanguage: [],
+    setAppearance: [],
     updatesCheck: 0,
     updatesDownload: 0,
     updatesInstall: 0,
@@ -244,10 +247,6 @@ export const createMockAppClient = (
       };
       emitSnapshot(next);
       return { ok: true, value: next };
-    },
-    restartServer: async (params) => {
-      calls.restartServer.push(params);
-      return { ok: true, value: currentSnapshot };
     },
     testServer: async (params) => {
       calls.testServer.push(params);
@@ -341,6 +340,15 @@ export const createMockAppClient = (
           preference: params.preference,
           locale: nextLocale,
         },
+      };
+      emitSnapshot(next);
+      return { ok: true, value: next };
+    },
+    setAppearance: async (params) => {
+      calls.setAppearance.push(params);
+      const next = {
+        ...currentSnapshot,
+        appearance: params.preference,
       };
       emitSnapshot(next);
       return { ok: true, value: next };

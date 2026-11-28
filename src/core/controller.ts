@@ -541,22 +541,6 @@ export class McpGatewayController implements GatewayController {
     });
   }
 
-  restartServer(name: string, operation?: GatewayOperation) {
-    return this.cancellable(this.operationSignal(operation), async (control) => {
-      this.ensureOpen();
-      if (!this.ingress?.running)
-        throw failure('BackendFailure', 'Start the gateway before restarting a server.');
-      try {
-        await this.ingress.restart(name, control);
-        this.event('info', 'A backend endpoint was restarted.');
-      } catch (error) {
-        if (!isSelfProxyCancelled(error)) this.report(visible(error));
-        throw error;
-      }
-      return this.snapshot();
-    });
-  }
-
   // Not queued: Stop, a reload or a save must not wait behind a slow backend. Stop and
   // reconciliation reach the test through the ingress, which aborts it.
   async testServer(name: string, expectedRevision: string) {

@@ -203,6 +203,7 @@ export const Logs = ({ client, servers }: LogsProps) => {
     <section className="panel logs-panel" aria-label={t('logs.title')}>
       <div className="log-toolbar">
         <NativeSelect
+          className="w-fit shrink-0"
           aria-label={t('logs.level')}
           value={level}
           onChange={(event) =>
@@ -215,6 +216,7 @@ export const Logs = ({ client, servers }: LogsProps) => {
           ))}
         </NativeSelect>
         <NativeSelect
+          className="w-fit max-w-44 shrink-0"
           aria-label={t('logs.server')}
           value={server}
           onChange={(event) => setServer(event.target.value)}
@@ -231,7 +233,7 @@ export const Logs = ({ client, servers }: LogsProps) => {
               <NativeSelectOption key={value}>{value}</NativeSelectOption>
             ))}
         </NativeSelect>
-        <div className="min-w-44 flex-1">
+        <div className="min-w-28 flex-1">
           <Input
             ref={searchInputRef}
             aria-label={t('logs.search')}
@@ -303,21 +305,24 @@ export const Logs = ({ client, servers }: LogsProps) => {
               const copied = copiedId === entry.id;
               return (
                 <div key={entry.id} className="log-row">
-                  <time className="log-time">{entry.time}</time>
-                  <span className={`log-level-pill ${entry.level}`}>{entry.level}</span>
-                  <span className="log-source">{entry.server ?? t('logs.appSource')}</span>
-                  <span className="log-message">
+                  <div className="log-row-header">
+                    <time className="log-time">{entry.time}</time>
+                    <span className={`log-level-pill ${entry.level}`}>{entry.level}</span>
+                    <span className="log-source">{entry.server ?? t('logs.appSource')}</span>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="ml-auto"
+                      aria-label="Copy log entry"
+                      onClick={() => copyEntry(entry)}
+                    >
+                      {copied ? <Check /> : <Copy />}
+                    </Button>
+                  </div>
+                  <div className="log-message">
                     {entry.text}
                     {entry.truncated ? ` (${t('logs.truncated')})` : ''}
-                  </span>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    aria-label="Copy log entry"
-                    onClick={() => copyEntry(entry)}
-                  >
-                    {copied ? <Check /> : <Copy />}
-                  </Button>
+                  </div>
                 </div>
               );
             })}

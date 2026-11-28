@@ -4,7 +4,7 @@
 
 A server is either a local executable that speaks MCP over stdio, or an existing MCP endpoint reached over Streamable HTTP.
 Both kinds produce one endpoint per server, such as `/mcp/bear`.
-When the gateway stops a local command, for example on **Stop gateway**, a restart or quit, it sends `SIGTERM` to the command's process group once, then `SIGKILL` if the group is still running 5 seconds later.
+When the gateway stops a local command, for example on **Stop gateway**, disabling a server or quit, it sends `SIGTERM` to the command's process group once, then `SIGKILL` if the group is still running 5 seconds later.
 The same applies to programs the command started that keep running after the command exits.
 
 The server dialog asks for:
@@ -91,20 +91,18 @@ With **Allow session-based clients** on, it tests the session-based protocol tha
 It starts the command, or contacts the HTTP upstream, but calls no tool and changes no setting.
 One test runs at a time, and it stops after 30 seconds.
 When the button is unavailable, the detail line under the row says why.
-The result stays on the row until the configuration changes, the gateway stops or the server restarts.
+The result stays on the row until the configuration changes or the gateway stops.
 A passing test does not show that other devices can reach the gateway; see [Remote access](remote-access.md).
 
 **Error** means the gateway could not mount the server; the detail line shows the error message, and **Logs** has the redacted backend output.
 The enable/disable switch saves the server's enabled state immediately; the gateway starts separately.
 You can also toggle individual servers from the menu-bar icon menu.
-Use the restart button to restart one server.
 The delete button asks **Delete server?** in a native macOS dialog and saves the removal immediately, stopping the endpoint right away.
 The copy icon next to `/mcp/<name>` copies only the endpoint URL; **Copy client configuration** copies the JSON block with the endpoint and key and briefly displays **Copied**.
 
 Both copy buttons are disabled while **Authoritative configuration** has unsaved edits, and they work while the gateway is stopped.
 **Copy client configuration** refuses while the configuration has an error.
-The enable/disable switch, restart button and **Test connection** are disabled while **Authoritative configuration** has unsaved edits or there is a configuration error.
-Restart also needs the gateway running and the server enabled.
+The enable/disable switch and **Test connection** are disabled while **Authoritative configuration** has unsaved edits or there is a configuration error.
 
 ## The Bear preset
 

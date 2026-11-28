@@ -32,6 +32,7 @@ interface Alert {
 interface Field {
   label: string;
   help?: string;
+  layout?: 'stack' | 'row';
   children: ReactNode;
 }
 
@@ -41,7 +42,7 @@ export const Alert = ({ children, kind = 'error', onDismiss, label, role }: Aler
     <MacAlert
       variant={ALERT_VARIANT[kind]}
       role={role ?? (kind === 'success' ? 'status' : 'alert')}
-      className="flex items-center gap-2.5 text-mac-label"
+      className="mb-4 flex items-center gap-2.5 text-mac-label"
     >
       <span className="min-w-0 flex-1 wrap-anywhere">{children}</span>
       <Button
@@ -59,7 +60,7 @@ export const Alert = ({ children, kind = 'error', onDismiss, label, role }: Aler
 // Controls a Field can label: the macOS input and select.
 const FIELD_CONTROLS: unknown[] = [Input, NativeSelect];
 
-export const Field = ({ label, help, children }: Field) => {
+export const Field = ({ label, help, layout = 'stack', children }: Field) => {
   const id = useId();
   const associate = (node: ReactNode): ReactNode => {
     if (!isValidElement<{ id?: string; 'aria-describedby'?: string; children?: ReactNode }>(node))
@@ -75,6 +76,24 @@ export const Field = ({ label, help, children }: Field) => {
     const control = document.getElementById(id);
     if (control && !('labels' in control)) control.focus();
   };
+  if (layout === 'row') {
+    return (
+      <div className="field-row">
+        <div className="field-row-copy">
+          <Label
+            htmlFor={id}
+            id={`${id}-label`}
+            className="font-semibold"
+            onClick={focusUnlabelable}
+          >
+            {label}
+          </Label>
+          {help && <small id={`${id}-help`}>{help}</small>}
+        </div>
+        {Children.map(children, associate)}
+      </div>
+    );
+  }
   return (
     <div className="field">
       <Label htmlFor={id} id={`${id}-label`} className="font-semibold" onClick={focusUnlabelable}>

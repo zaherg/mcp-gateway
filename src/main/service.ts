@@ -28,6 +28,8 @@ import {
   parseLanguagePreference,
 } from '@mcp-gateway/shared/i18n';
 import {
+  APPEARANCE_PREFERENCES,
+  type AppearancePreference,
   type AppResult,
   type LoginStatus,
   needsLoginRetry,
@@ -71,6 +73,7 @@ const PreviewRequest = z.strictObject({ text: z.string() });
 const AutomaticRequest = z.strictObject({ automatic: z.boolean() });
 const SocialLinkRequest = z.strictObject({ target: z.enum(SOCIAL_LINK_TARGETS) });
 const LanguageRequest = z.strictObject({ preference: z.string() });
+const AppearanceRequest = z.strictObject({ preference: z.enum(APPEARANCE_PREFERENCES) });
 
 const decode = <A>(schema: z.ZodType<A>, input: unknown) => {
   const result = schema.safeParse(input);
@@ -230,6 +233,8 @@ interface DesktopActions {
   retireKeyReminder: () => Promise<void>;
   language: () => LanguageState;
   setLanguage: (preference: LanguagePreference) => Promise<void>;
+  appearance: () => AppearancePreference;
+  setAppearance: (preference: AppearancePreference) => Promise<void>;
 }
 
 /** Runtime-validated local RPC boundary. No exception may echo a raw request. */
@@ -268,6 +273,7 @@ export class AppService {
       update: this.updates.status(),
       whatsNew: this.desktop.whatsNew(),
       language: this.desktop.language(),
+      appearance: this.desktop.appearance(),
     };
   }
 
@@ -357,13 +363,6 @@ export class AppService {
         await this.controller.stop();
         return this.snapshot();
       }),
-    restartServer: (input: unknown) => {
-      const operation = this.controller.operation();
-      return this.run(async () => {
-        await this.controller.restartServer(serverName(input), operation);
-        return this.snapshot();
-      });
-    },
     testServer: (input: unknown) =>
       // Not queued: Stop and Quit must not wait behind a slow backend; Stop aborts the test.
       this.lifecycle(async () => {
@@ -626,6 +625,13 @@ export class AppService {
         const preference = parseLanguagePreference(requested, this.desktop.language().available);
         if (!preference) throw new RequestError('The selected language is not available.');
         await this.desktop.setLanguage(preference);
+        return this.snapshot();
+      }),
+    setAppearance: (input: unknown) =>
+      this.run(async () => {
+        const { preference } = decode(AppearanceRequest, input);
+        this.assertIdle('The appearance was not changed.');
+        await this.desktop.setAppearance(preference);
         return this.snapshot();
       }),
     updatesRestart: (input?: unknown) =>

@@ -35,6 +35,7 @@ import {
 import type { LanguagePreference } from '@mcp-gateway/shared/i18n';
 import type {
   AppClient,
+  AppearancePreference,
   AppResult,
   AppSnapshot,
   MenuCommand,
@@ -45,6 +46,7 @@ import type {
   ConfigFile,
   GatewaySnapshot,
   KeyMigration as KeyMigrationSlots,
+  VisibleError,
 } from '@mcp-gateway/shared/types';
 import changelog from '../../../CHANGELOG.md?raw';
 
@@ -85,6 +87,7 @@ export interface GatewayViewContextValue {
   busy: boolean;
   updateBusy: boolean;
   error: string | null;
+  operationalError: VisibleError | null;
   configurationLocked: boolean;
   quitting: boolean;
   quitStatus: QuitStatus;
@@ -103,6 +106,7 @@ export interface GatewayViewContextValue {
   setEditorError: (error: string | null) => void;
   changeEditor: (patch: Partial<Editor>) => void;
   clearError: () => void;
+  dismissOperationalError: () => void;
   commitConfig: (nextConfig: ConfigFile, rename?: Rename) => Promise<boolean>;
   saveRawConfig: (text?: string, expectedRevision?: string) => Promise<boolean>;
   discardRawConfig: () => Promise<void>;
@@ -117,6 +121,7 @@ export interface GatewayViewContextValue {
   toggleServer: (name: string, disabled: boolean) => Promise<void>;
   deleteServer: (name: string) => Promise<void>;
   changeLanguage: (preference: LanguagePreference) => void;
+  changeAppearance: (preference: AppearancePreference) => void;
   revealConfig: () => void;
   openConfigInEditor: () => void;
   importExternalServers: () => Promise<number | null>;
@@ -146,6 +151,7 @@ export const GatewayViewProvider = ({ client, children }: GatewayViewProviderPro
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null);
   const [doc, setDocState] = useState<Document | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [dismissedOpErrorId, setDismissedOpErrorId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [updateBusy, setUpdateBusy] = useState(false);
   const [activeModal, setActiveModal] = useState<ActiveModal>(null);
@@ -176,6 +182,26 @@ export const GatewayViewProvider = ({ client, children }: GatewayViewProviderPro
   useEffect(() => {
     if (snapshotLocale) setLocale(snapshotLocale);
   }, [snapshotLocale, setLocale]);
+  const snapshotAppearance = snapshot?.appearance ?? 'system';
+  useEffect(() => {
+    const root = document.documentElement;
+    if (snapshotAppearance === 'light' || snapshotAppearance === 'dark') {
+      root.dataset.appearance = snapshotAppearance;
+      return;
+    }
+    const media =
+      typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+        ? window.matchMedia('(prefers-color-scheme: dark)')
+        : null;
+    const sync = () => {
+      root.dataset.appearance = media?.matches ? 'dark' : 'light';
+    };
+    sync();
+    media?.addEventListener?.('change', sync);
+    return () => {
+      media?.removeEventListener?.('change', sync);
+    };
+  }, [snapshotAppearance]);
   useEffect(() => {
     setUnsavedRawConfigChecker(() => Boolean(docRef.current?.dirty));
     return () => setUnsavedRawConfigChecker(() => false);
@@ -244,7 +270,18 @@ export const GatewayViewProvider = ({ client, children }: GatewayViewProviderPro
     }, t('quit.restartRequested'));
   };
 
-  const clearError = useCallback(() => setError(null), []);
+  const rawOperationalError = snapshot?.gateway.operationalError ?? null;
+  const operationalError =
+    rawOperationalError && rawOperationalError.occurrenceId !== dismissedOpErrorId && !error
+      ? rawOperationalError
+      : null;
+  const dismissOperationalError = useCallback(() => {
+    if (rawOperationalError) setDismissedOpErrorId(rawOperationalError.occurrenceId);
+  }, [rawOperationalError]);
+  const clearError = useCallback(() => {
+    setError(null);
+    if (rawOperationalError) setDismissedOpErrorId(rawOperationalError.occurrenceId);
+  }, [rawOperationalError]);
 
   useEffect(() => {
     let cancelled = false;
@@ -439,6 +476,11 @@ export const GatewayViewProvider = ({ client, children }: GatewayViewProviderPro
     void run(() => client.setLanguage({ preference }), '');
   };
 
+  const changeAppearance = (preference: AppearancePreference) => {
+    if (busy || configurationLocked) return;
+    void run(() => client.setAppearance({ preference }), '');
+  };
+
   const changeEditor = (patch: Partial<Editor>) => {
     if (configurationLocked) return;
     setActiveModal((previous) =>
@@ -629,6 +671,7 @@ export const GatewayViewProvider = ({ client, children }: GatewayViewProviderPro
     busy,
     updateBusy,
     error,
+    operationalError,
     configurationLocked,
     quitting,
     quitStatus,
@@ -647,6 +690,7 @@ export const GatewayViewProvider = ({ client, children }: GatewayViewProviderPro
     setEditorError,
     changeEditor,
     clearError,
+    dismissOperationalError,
     commitConfig,
     saveRawConfig,
     discardRawConfig,
@@ -661,6 +705,7 @@ export const GatewayViewProvider = ({ client, children }: GatewayViewProviderPro
     toggleServer,
     deleteServer,
     changeLanguage,
+    changeAppearance,
     revealConfig,
     openConfigInEditor,
     importExternalServers,

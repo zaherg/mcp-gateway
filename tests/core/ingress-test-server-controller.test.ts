@@ -778,19 +778,6 @@ describe('GatewayIngress admission guards and lifecycle', () => {
     expect(acquired).toBe(1);
     expect(released).toBe(1);
 
-    // Restart succeeds for enabled server, rejects for disabled or unknown server
-    await ingress.restart('delta');
-    await expectAsyncGatewayError(
-      () => ingress.restart('alpha'),
-      'BackendFailure',
-      'Select an enabled configured server to restart.',
-    );
-    await expectAsyncGatewayError(
-      () => ingress.restart('missing'),
-      'BackendFailure',
-      'Select an enabled configured server to restart.',
-    );
-
     // Turning keepAwake back on and closing releases the assertion on close
     await ingress.reconcile(updatedConfig);
     expect(acquired).toBe(2);
@@ -1076,6 +1063,7 @@ describe('checkEndpoint', () => {
         }),
       );
     });
+    const rpcLogs = new LogBuffer();
     await expectAsyncGatewayError(
       () =>
         checkEndpoint({
@@ -1083,14 +1071,23 @@ describe('checkEndpoint', () => {
           token: GLOBAL_TOKEN,
           server: { command: process.execPath, legacyProtocol: true },
           stopped: new AbortController().signal,
+          onDiagnostic: (level, values) =>
+            rpcLogs.append({ server: 'bad-rpc', level, source: 'controller' }, values),
         }),
       'BackendFailure',
       'The server did not complete the MCP handshake. See Logs.',
     );
+    const rpcEntries = rpcLogs.read({ after: 0 }).entries;
+    expect(rpcEntries).toHaveLength(1);
+    expect(rpcEntries[0]?.server).toBe('bad-rpc');
+    expect(rpcEntries[0]?.level).toBe('error');
+    expect(rpcEntries[0]?.text).toContain('HTTP 200');
+    expect(rpcEntries[0]?.text).toContain('JSON-RPC -32600: Invalid Request');
 
     const nonJsonPort = await startMockServer((_req, res) => {
       res.writeHead(200, { 'content-type': 'text/plain' }).end('not-json');
     });
+    const nonJsonLogs = new LogBuffer();
     await expectAsyncGatewayError(
       () =>
         checkEndpoint({
@@ -1098,14 +1095,20 @@ describe('checkEndpoint', () => {
           token: GLOBAL_TOKEN,
           server: { command: process.execPath, legacyProtocol: false },
           stopped: new AbortController().signal,
+          onDiagnostic: (level, values) =>
+            nonJsonLogs.append({ server: 'non-json', level, source: 'controller' }, values),
         }),
       'BackendFailure',
       'The server did not complete the MCP handshake. See Logs.',
     );
+    const nonJsonEntries = nonJsonLogs.read({ after: 0 }).entries;
+    expect(nonJsonEntries).toHaveLength(1);
+    expect(nonJsonEntries[0]?.text).toContain('HTTP 200, text/plain');
 
-    // Pre-aborted stopped signal reports Cancelled
+    // Pre-aborted stopped signal reports Cancelled without logging an error diagnostic
     const aborted = new AbortController();
     aborted.abort();
+    const cancelledLogs = new LogBuffer();
     await expectAsyncGatewayError(
       () =>
         checkEndpoint({
@@ -1113,10 +1116,13 @@ describe('checkEndpoint', () => {
           token: GLOBAL_TOKEN,
           server: { command: process.execPath },
           stopped: aborted.signal,
+          onDiagnostic: (level, values) =>
+            cancelledLogs.append({ server: 'cancelled', level, source: 'controller' }, values),
         }),
       'Cancelled',
       'The test stopped because the gateway or this server changed.',
     );
+    expect(cancelledLogs.read({ after: 0 }).entries).toHaveLength(0);
   });
 });
 
@@ -1206,7 +1212,7 @@ describe('McpGatewayController lifecycle and invariants', () => {
     ).toBe(true);
   });
 
-  test('supports autoStart, start, testServer, restartServer, readLogs/clearLogs, and stop', async () => {
+  test('supports autoStart, start, testServer, readLogs/clearLogs, and stop', async () => {
     const upstreamPort = await startModernMcpUpstream();
     const port = await reservePort();
     const configPath = await createTempConfigPath();
@@ -1252,11 +1258,6 @@ describe('McpGatewayController lifecycle and invariants', () => {
       () => controller.testServer('modern', 'stale-revision'),
       'StaleRevision',
     );
-
-    // restartServer restarts enabled server and rejects disabled/unknown server
-    const restarted = await controller.restartServer('modern');
-    expect(restarted.running).toBe(true);
-    await expectAsyncGatewayError(() => controller.restartServer('off'), 'BackendFailure');
 
     // readLogs and clearLogs
     const initialLogs = controller.readLogs({ after: 0 });
@@ -1560,11 +1561,6 @@ describe('McpGatewayController lifecycle and invariants', () => {
     await expectAsyncGatewayError(() => controller.stop(), 'Closed', 'The controller is closed.');
     await expectAsyncGatewayError(
       () => controller.saveConfig('{}', snap.revision),
-      'Closed',
-      'The controller is closed.',
-    );
-    await expectAsyncGatewayError(
-      () => controller.restartServer('alpha'),
       'Closed',
       'The controller is closed.',
     );

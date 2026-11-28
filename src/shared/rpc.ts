@@ -53,6 +53,15 @@ export interface UpdateStatus {
   checkedAt: string | null;
 }
 
+export const APPEARANCE_PREFERENCES = ['system', 'light', 'dark'] as const;
+
+export type AppearancePreference = (typeof APPEARANCE_PREFERENCES)[number];
+
+export const parseAppearancePreference = (value: unknown): AppearancePreference | undefined =>
+  typeof value === 'string' && (APPEARANCE_PREFERENCES as readonly string[]).includes(value)
+    ? (value as AppearancePreference)
+    : undefined;
+
 export interface AppSnapshot {
   gateway: GatewaySnapshot;
   login: LoginStatus;
@@ -62,6 +71,7 @@ export interface AppSnapshot {
   /** Show the Overview reminder: keys can move to Keychain and the user has not retired it. */
   keyReminder: boolean;
   language: LanguageState;
+  appearance: AppearancePreference;
 }
 
 export const SOCIAL_LINK_TARGETS = ['docs', 'github', 'x'] as const;
@@ -96,7 +106,6 @@ export type AppRPC = {
       quitStatus: { params: undefined; response: AppResult<QuitStatus> };
       start: { params: undefined; response: AppResult<AppSnapshot> };
       stop: { params: undefined; response: AppResult<AppSnapshot> };
-      restartServer: { params: { name: string }; response: AppResult<AppSnapshot> };
       testServer: {
         params: { name: string; expectedRevision: string };
         response: AppResult<ServerCheckResult>;
@@ -132,6 +141,10 @@ export type AppRPC = {
       };
       setLanguage: {
         params: { preference: LanguagePreference };
+        response: AppResult<AppSnapshot>;
+      };
+      setAppearance: {
+        params: { preference: AppearancePreference };
         response: AppResult<AppSnapshot>;
       };
       updatesRestart: {

@@ -4,7 +4,7 @@ import type * as React from 'react';
 import { cn } from '@mcp-gateway/mainview/lib/utils';
 
 type NativeSelectProps = Omit<React.ComponentProps<'select'>, 'size'> & {
-  size?: 'sm' | 'default';
+  size?: 'sm' | 'md' | 'default';
 };
 
 // The browser's own <select>, dressed as a macOS pop-up button. It opens
@@ -23,7 +23,7 @@ function NativeSelect({ className, size = 'default', ...props }: NativeSelectPro
       <select
         data-slot="native-select"
         data-size={size}
-        className="h-9 w-full min-w-0 cursor-default appearance-none rounded-lg bg-mac-control py-0 pr-7 pl-3 text-mac-body font-medium text-mac-label outline-none select-none focus-visible:mac-focus-ring active:bg-mac-control-pressed disabled:pointer-events-none aria-invalid:mac-focus-ring data-[size=sm]:h-5 data-[size=sm]:rounded-[5px] data-[size=sm]:pl-2.5 data-[size=sm]:text-mac-subheadline"
+        className="h-9 w-full min-w-0 cursor-default appearance-none rounded-lg bg-mac-control py-0 pr-7 pl-3 text-mac-body font-medium text-mac-label outline-none select-none focus-visible:mac-focus-ring active:bg-mac-control-pressed disabled:pointer-events-none aria-invalid:mac-focus-ring data-[size=md]:h-7 data-[size=md]:rounded-mac-control data-[size=sm]:h-5 data-[size=sm]:rounded-[5px] data-[size=sm]:pl-2.5 data-[size=sm]:text-mac-subheadline"
         {...props}
       />
       <ChevronsUpDownIcon

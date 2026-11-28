@@ -12,7 +12,12 @@ import { QuitCoordinator } from '@mcp-gateway/main/lifecycle';
 import { AppService, type LoginManager } from '@mcp-gateway/main/service';
 import { MAX_CONFIG_BYTES } from '@mcp-gateway/shared/config-document';
 import { CATALOG_LOCALES, type LanguagePreference, languageState } from '@mcp-gateway/shared/i18n';
-import type { LoginStatus, QuitStatus, UpdateStatus } from '@mcp-gateway/shared/rpc';
+import type {
+  AppearancePreference,
+  LoginStatus,
+  QuitStatus,
+  UpdateStatus,
+} from '@mcp-gateway/shared/rpc';
 import type {
   GatewayConfig,
   GatewayController,
@@ -193,6 +198,7 @@ const createServiceHarness = (options: HarnessOpts = {}) => {
     whatsNew: options.whatsNew !== undefined ? options.whatsNew : '0.9.0',
     keyReminderRetired: options.keyReminderRetired ?? false,
     language: languageState('system', 'en_US', [...CATALOG_LOCALES]),
+    appearance: 'system' as AppearancePreference,
     logPage: { entries: [], cursor: 0, generation: 1, gap: false, hasMore: false } as LogPage,
     testServerResult: { protocolVersion: '2025-11-25' } as ServerCheckResult,
   };
@@ -209,7 +215,6 @@ const createServiceHarness = (options: HarnessOpts = {}) => {
     operation: mock(() => ({ signal: new AbortController().signal })),
     start: mock(async (_op?: GatewayOperation) => setSnap({ running: true })),
     stop: mock(async () => setSnap({ running: false })),
-    restartServer: mock(async (_name: string, _op?: GatewayOperation) => state.snapshot),
     testServer: mock(async (_name: string, _rev: string) => state.testServerResult),
     saveConfig: mock(async (configText: string, _rev: string, _op?: GatewayOperation) =>
       setSnap({ configText }),
@@ -257,6 +262,10 @@ const createServiceHarness = (options: HarnessOpts = {}) => {
     language: mock(() => state.language),
     setLanguage: mock(async (preference: LanguagePreference) => {
       state.language = languageState(preference, state.language.system, state.language.available);
+    }),
+    appearance: mock(() => state.appearance),
+    setAppearance: mock(async (preference: AppearancePreference) => {
+      state.appearance = preference;
     }),
   };
 
@@ -317,9 +326,6 @@ describe('AppService — RPC parameter validation & error sanitization', () => {
       () => h.readLogs({ after: 1.5 }),
       () => h.readLogs({ after: Number.NaN }),
       () => h.readLogs({ after: 0, extra: 1 }),
-      () => h.restartServer({ name: 123 }),
-      () => h.restartServer({ name: '../bad' }),
-      () => h.restartServer({ name: '__proto__' }),
       () => h.testServer({ name: 'alpha' }),
       () => h.testServer({ name: 'alpha', expectedRevision: 'bad' }),
       () => h.testServer({ name: 'a/b', expectedRevision: rev }),
@@ -341,6 +347,8 @@ describe('AppService — RPC parameter validation & error sanitization', () => {
       () => h.updatesSetAutomatic({ automatic: 'true' }),
       () => h.setLanguage({ preference: 123 }),
       () => h.setLanguage({ preference: 'ja_JP' }),
+      () => h.setAppearance({ preference: 123 }),
+      () => h.setAppearance({ preference: 'sepia' }),
     ]) {
       const result = await invoke();
       expect(result.ok).toBe(false);
@@ -428,6 +436,7 @@ describe('AppService — assertIdle guards, gateway control, logs, and lifecycle
         h.openConfigInEditor(),
         h.importExternalServers({ expectedRevision: VALID_REVISION }),
         h.setLanguage({ preference: 'fr_FR' }),
+        h.setAppearance({ preference: 'light' }),
       ]);
 
       for (const result of guardedResults) {
@@ -444,6 +453,7 @@ describe('AppService — assertIdle guards, gateway control, logs, and lifecycle
     expect(controller.testServer).not.toHaveBeenCalled();
     expect(desktop.openExternal).not.toHaveBeenCalled();
     expect(desktop.setLanguage).not.toHaveBeenCalled();
+    expect(desktop.setAppearance).not.toHaveBeenCalled();
 
     const beforeCalls = login.status.mock.calls.length;
     state.quitStatus = { attempt: 1, phase: 'pending', error: null };
@@ -472,8 +482,6 @@ describe('AppService — assertIdle guards, gateway control, logs, and lifecycle
     expect(controller.start.mock.calls[0]?.[0]?.signal).toBeInstanceOf(AbortSignal);
     const stopRes = await h.stop();
     expect(stopRes.ok && stopRes.value.gateway.running).toBe(false);
-    expect((await h.restartServer({ name: 'alpha' })).ok).toBe(true);
-    expect(controller.restartServer.mock.calls[0]?.[0]).toBe('alpha');
 
     const page = { entries: [], cursor: 1, generation: 1, gap: false, hasMore: false };
     state.logPage = page;
@@ -497,6 +505,10 @@ describe('AppService — assertIdle guards, gateway control, logs, and lifecycle
 
     const fr = await h.setLanguage({ preference: 'fr_FR' });
     expect(fr.ok && fr.value.language).toMatchObject({ preference: 'fr_FR', locale: 'fr_FR' });
+    const light = await h.setAppearance({ preference: 'light' });
+    expect(light.ok && light.value.appearance).toBe('light');
+    const dark = await h.setAppearance({ preference: 'dark' });
+    expect(dark.ok && dark.value.appearance).toBe('dark');
     const sys = await h.setLanguage({ preference: 'system' });
     expect(sys.ok && sys.value.language).toMatchObject({ preference: 'system', locale: 'en_US' });
 

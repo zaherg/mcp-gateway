@@ -176,7 +176,6 @@ export interface GatewayController {
   operation(): GatewayOperation;
   start(operation?: GatewayOperation): Promise<GatewaySnapshot>;
   stop(): Promise<GatewaySnapshot>;
-  restartServer(name: string, operation?: GatewayOperation): Promise<GatewaySnapshot>;
   /** One MCP handshake through the saved, mounted endpoint, as a client would send it. */
   testServer(name: string, expectedRevision: string): Promise<ServerCheckResult>;
   saveConfig(

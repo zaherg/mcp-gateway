@@ -18,7 +18,7 @@ Structured edits save immediately:
 - Text fields in **Settings** (**Interface / address**, **Port**, **Allowed client ranges**, **Global bearer token**) save when you leave the field or press `Return`.
 
 Draft mode applies only to **Authoritative configuration** in **Settings**.
-While you have unsaved raw edits there, **Start gateway**, copy buttons, server toggles, restart, **Test connection** and import stay disabled until you save or reset them.
+While you have unsaved raw edits there, **Start gateway**, copy buttons, server toggles, **Test connection** and import stay disabled until you save or reset them.
 When a configuration error occurs, or when the configuration file changes on disk while you have unsaved raw edits, a red blocker bar appears above the workspace with a button to open **Authoritative configuration** or **Reset**.
 When macOS login registration does not match the saved setting, **Retry login registration** appears under **Settings → General**.
 

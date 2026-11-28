@@ -1,4 +1,4 @@
-import { Check, Code2, Copy, RefreshCw, Server, Trash2 } from 'lucide-react';
+import { Check, Code2, Copy, Loader2, Pencil, PlugZap, Server, Trash2, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import { Button } from '@mcp-gateway/mainview/components/mac/button';
@@ -32,7 +32,9 @@ export const Overview = () => {
     snapshot,
     dirty,
     error,
+    operationalError,
     clearError,
+    dismissOperationalError,
     openKeyMigration,
     dismissKeyReminder,
     configurationLocked,
@@ -47,8 +49,7 @@ export const Overview = () => {
   const { t } = useI18n();
   const serverCount = config ? Object.keys(config.mcpServers).length : 0;
   const [test, setTest] = useState<ServerTest | null>(null);
-  const [copiedKey, setCopiedKey] = useState<string | null>(null);
-  const [dismissedOpErrorId, setDismissedOpErrorId] = useState<string | null>(null);
+  const [copiedServer, setCopiedServer] = useState<string | null>(null);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // A reply that arrives after a newer test or after leaving Overview is dropped.
   const testGeneration = useRef(0);
@@ -59,21 +60,15 @@ export const Overview = () => {
     },
     [],
   );
-  const markCopied = (key: string) => {
-    if (copyTimer.current !== null) clearTimeout(copyTimer.current);
-    setCopiedKey(key);
-    copyTimer.current = setTimeout(() => {
-      copyTimer.current = null;
-      setCopiedKey((previous) => (previous === key ? null : previous));
-    }, 1_500);
-  };
-  const copyEndpoint = async (name: string) => {
-    const ok = await run(() => client.copyEndpoint({ name }), '');
-    if (ok) markCopied(`endpoint:${name}`);
-  };
   const copyClientConfig = async (name: string) => {
     const ok = await run(() => client.copyClientConfig({ name }), '');
-    if (ok) markCopied(`client:${name}`);
+    if (!ok) return;
+    if (copyTimer.current !== null) clearTimeout(copyTimer.current);
+    setCopiedServer(name);
+    copyTimer.current = setTimeout(() => {
+      copyTimer.current = null;
+      setCopiedServer((previous) => (previous === name ? null : previous));
+    }, 1_500);
   };
   const revision = gateway?.revision;
   const testing = test?.state === 'testing';
@@ -111,20 +106,13 @@ export const Overview = () => {
     }
     if (generation === testGeneration.current) setTest(next);
   };
-  const operationalError =
-    gateway?.operationalError &&
-    gateway.operationalError.occurrenceId !== dismissedOpErrorId &&
-    !error
-      ? gateway.operationalError
-      : null;
-
   const listenerAddress = config ? `${config.gateway.host}:${config.gateway.port}` : null;
 
   return (
     <>
       {error && <Alert onDismiss={clearError}>{error}</Alert>}
       {operationalError && (
-        <Alert onDismiss={() => setDismissedOpErrorId(operationalError.occurrenceId)}>
+        <Alert onDismiss={dismissOperationalError}>
           {operationalError.code}: {operationalError.message}
         </Alert>
       )}
@@ -189,8 +177,7 @@ export const Overview = () => {
                         : undefined;
               const testReason = configurationLocked ? undefined : testBlocked;
               const testReasonId = `test-reason-${name}`;
-              const endpointCopied = copiedKey === `endpoint:${name}`;
-              const clientCopied = copiedKey === `client:${name}`;
+              const clientCopied = copiedServer === name;
               return (
                 <article
                   className={status === 'error' ? 'server-row error' : 'server-row'}
@@ -201,19 +188,35 @@ export const Overview = () => {
                       <span className={`led ${state.led}`} title={t(state.label)} />
                       <strong>{name}</strong>
                       <span className="server-transport-badge">{http ? 'HTTP' : 'STDIO'}</span>
+                      {shown && (
+                        <span
+                          role="status"
+                          title={shown.message}
+                          className={`inline-flex shrink-0 items-center ${
+                            shown.state === 'passed'
+                              ? 'text-mac-green'
+                              : shown.state === 'failed'
+                                ? 'text-mac-red-ink'
+                                : 'text-mac-label-secondary'
+                          }`}
+                        >
+                          {shown.state === 'testing' ? (
+                            <Loader2
+                              className="size-3.5 motion-safe:animate-spin"
+                              aria-hidden="true"
+                            />
+                          ) : shown.state === 'passed' ? (
+                            <Check className="size-3.5" aria-hidden="true" />
+                          ) : (
+                            <X className="size-3.5" aria-hidden="true" />
+                          )}
+                          <span className="sr-only">{shown.message}</span>
+                        </span>
+                      )}
                     </div>
                     <div className="server-cell-target">
                       <div className="server-endpoint-line">
                         <span className="mono">/mcp/{name}</span>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          aria-label={t('overview.copyEndpoint', { name })}
-                          disabled={!live || dirty}
-                          onClick={() => void copyEndpoint(name)}
-                        >
-                          {endpointCopied ? <Check /> : <Copy />}
-                        </Button>
                       </div>
                       <p className="server-detail mono" title={http ? server.url : server.command}>
                         {http ? server.url : server.command}
@@ -230,55 +233,46 @@ export const Overview = () => {
                     </div>
                     <div className="server-cell-actions">
                       <Button
-                        variant="outline"
+                        variant="ghost"
+                        size="icon"
                         aria-label={t('overview.testConnectionFor', { name })}
                         aria-describedby={testReason ? testReasonId : undefined}
-                        title={testReason}
+                        title={testReason ?? t('overview.testConnection')}
                         disabled={configurationLocked || testBlocked !== undefined || testing}
                         onClick={() => void testServer(name)}
                       >
-                        {t('overview.testConnection')}
+                        <PlugZap />
                       </Button>
+                      {testReason && (
+                        <span id={testReasonId} className="sr-only">
+                          {testReason}
+                        </span>
+                      )}
                       <Button
                         variant="ghost"
                         size="icon"
-                        aria-label={t('overview.restart', { name })}
-                        disabled={
-                          configurationLocked ||
-                          dirty ||
-                          !gateway?.running ||
-                          server.disabled ||
-                          !!gateway?.configError
-                        }
-                        onClick={() => {
-                          if (!testing && test?.name === name) setTest(null);
-                          void run(
-                            () => client.restartServer({ name }),
-                            t('overview.restarted', { name }),
-                          );
-                        }}
-                      >
-                        <RefreshCw />
-                      </Button>
-                      <Button
-                        variant="ghost"
+                        aria-label={t('overview.copyClientConfig')}
+                        title={clientCopied ? 'Copied' : t('overview.copyClientConfig')}
                         disabled={!live || dirty}
                         onClick={() => void copyClientConfig(name)}
                       >
                         {clientCopied ? <Check /> : <Copy />}
-                        {clientCopied ? 'Copied' : t('overview.copyClientConfig')}
                       </Button>
                       <Button
                         variant="ghost"
+                        size="icon"
+                        aria-label={t('common.editServer')}
+                        title={t('common.editServer')}
                         disabled={configurationLocked}
                         onClick={() => openServerEditor(name)}
                       >
-                        {t('common.editServer')}
+                        <Pencil />
                       </Button>
                       <Button
                         variant="ghost"
                         size="icon"
                         aria-label={t('overview.delete', { name })}
+                        title={t('overview.delete', { name })}
                         disabled={configurationLocked}
                         onClick={() => {
                           if (!configurationLocked) void deleteServer(name);
@@ -288,26 +282,9 @@ export const Overview = () => {
                       </Button>
                     </div>
                   </div>
-                  {(live?.error || shown || testReason) && (
+                  {live?.error && (
                     <div className="server-row-detail">
-                      {live?.error && <p className="inline-error">{live.error.message}</p>}
-                      {shown && (
-                        <p
-                          role="status"
-                          className={
-                            shown.state === 'failed'
-                              ? 'm-0 text-[12px] text-mac-red-ink'
-                              : 'm-0 text-[12px] text-mac-label-secondary'
-                          }
-                        >
-                          {shown.message}
-                        </p>
-                      )}
-                      {testReason && !shown && (
-                        <p id={testReasonId} className="m-0 text-[11px] text-mac-label-secondary">
-                          {testReason}
-                        </p>
-                      )}
+                      <p className="inline-error">{live.error.message}</p>
                     </div>
                   )}
                 </article>

@@ -41,7 +41,7 @@ The detail line below the row shows the error message; open **Logs** and read th
 
 If the message says that backend cleanup did not complete, a process from that server's previous run is still running.
 Other servers keep working and accept configuration changes, but **Stop gateway** and quit fail until that process exits.
-Quit the process, for example in Activity Monitor, then use the restart button on that server's row.
+Quit the process, for example in Activity Monitor, then toggle that server off and back on.
 Cleanup completion alone does not remount the server; a later configuration change may also recover it.
 
 **Mounted** with failing tools also points at the backend; check **Logs** for its output.
@@ -75,7 +75,7 @@ See [Commands that work in Terminal but not in the app](servers.md#commands-that
 For example, a Laravel Herd MCP entry whose **Command** is `php` passes in Terminal but fails in the app, because the app does not get your shell's `PATH`.
 Enter the full path that `command -v php` prints, submit the server dialog and test again.
 
-A failed test also marks the row with the gateway's own error, which stays until you save a change to that server or restart it.
+A failed test also marks the row with the gateway's own error, which stays until you save a change to that server or toggle it off and on.
 
 ## A referenced environment variable is not defined
 

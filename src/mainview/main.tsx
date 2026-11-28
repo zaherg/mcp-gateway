@@ -8,6 +8,12 @@ import './styles/styles.css';
 
 // The renderer shows document.title as the app name; index.html holds the production name.
 if (import.meta.env.VITE_APP_NAME) document.title = import.meta.env.VITE_APP_NAME;
+if (typeof window.matchMedia === 'function') {
+  document.documentElement.dataset.appearance = window.matchMedia('(prefers-color-scheme: dark)')
+    .matches
+    ? 'dark'
+    : 'light';
+}
 const root = document.getElementById('root');
 if (!root) throw new Error('Missing application root.');
 createRoot(root).render(
