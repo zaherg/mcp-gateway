@@ -15,7 +15,8 @@
         "release:test": "bun scripts/build.ts stable-test",
         "release:all": "bun scripts/publish-release.ts",
         "changelog": "bun scripts/changelog.ts",
-        "test": "bun test",
+        "test": "bun test --path-ignore-patterns='tests/effect-logs/**'",
+        "test:effect": "vitest run --config vitest.effect.config.ts",
         "typecheck": "tsc --noEmit",
         "lint": "biome check src tests scripts *.ts",
         "format": "biome check --write --linter-enabled=false src tests scripts *.ts *.json",
@@ -35,6 +36,10 @@
         "@codemirror/legacy-modes": "^6.5.5",
         "@codemirror/state": "^6.7.6",
         "@codemirror/view": "^6.44.0",
+        "@effect/ui": "https://pkg.pr.new/Effect-TS/ui/@effect/ui@82a1750",
+        "@effect/ui-devtools": "https://pkg.pr.new/Effect-TS/ui/@effect/ui-devtools@82a1750",
+        "@effect/ui-kit": "https://pkg.pr.new/Effect-TS/ui/@effect/ui-kit@82a1750",
+        "@effect/vitest": "^4.1.6",
         "@lezer/highlight": "^1.2.5",
         "@tailwindcss/vite": "^4.3.5",
         "@testing-library/react": "^16.3.3",
@@ -44,6 +49,7 @@
         "@vitejs/plugin-react": "^6.3.0",
         "class-variance-authority": "^0.7.1",
         "clsx": "^2.1.1",
+        "effect": "^4.1.6",
         "electrobun": "^2.0.7",
         "git-cliff": "2.14.2",
         "happy-dom": "^21.0.4",
@@ -54,6 +60,7 @@
         "tailwindcss": "^4.3.5",
         "typescript": "^7.0.2",
         "vite": "^8.3.8",
+        "vitest": "^5.1.2",
         "zod": "4.6.7"
     }
 }
